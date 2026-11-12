@@ -129,6 +129,12 @@ the run a new direction. It carries your answer into the run's record word for w
 lists it under **Resumed on an answer** — if you see an answer there you never gave, the agent
 resumed itself.
 
+In a project on the staging flow, a run ends where the task lands on the staging branch, or where its
+pull request into the staging branch waits for a review: the task is then **parked**. The run does not
+approve that pull request, does not land it without a review unless you said so, and never prepares
+it for prod. It cannot start again on a parked task: when QA asks for a fix, you take the task back
+with `jig task resume <id>` (or tell the agent to), and a new run can do the fix.
+
 ### Taking a stopped run over
 
 You can finish a stopped task yourself, or tell the agent to go on with it without autopilot. Say so
@@ -209,7 +215,7 @@ third is what the agent needs, chose, or how the run ended. The mark says which:
 |---|---|
 | `⏸` | The run stopped and is waiting for your answer |
 | `⛔` | A run without stops stopped — nothing waits for you; it ends as a draft pull request |
-| `✅` | The run ended: merged, not merged and why, or ready for your commit — with the number of small review findings left open and the task that holds them (`2 open findings → task fix-login-redirect-findings`), and the pull request link, when there are any |
+| `✅` | The run ended: merged, not merged and why, pushed for your CI to land on the staging branch (`git.staging_land: external`, no pull request), or ready for your commit — with the number of small review findings left open and the task that holds them (`2 open findings → task fix-login-redirect-findings`), and the pull request link, when there are any |
 | `🤖` | A run without stops approved its own design, or decided something for you |
 | `👤` | A person took a stopped run over; the message quotes their words |
 
@@ -355,7 +361,7 @@ request, in plain words:
 | Approving the design of a risky task | Approves its own design. One line under **Approved by the agent, not a human** says what was approved and names the decision record the task wrote; the design itself is not pasted into the pull request |
 | A decision nobody has made | Picks the most careful option, the one easiest to undo. Listed under **Decided without you** |
 | Something that would destroy data or history | Never does it. It finds another way or leaves that part out, and says so under **Decided without you** |
-| A problem still there after two attempts to fix it | Stops working and opens a **draft** pull request that starts with **Not finished** and says why. A draft is never merged, and the run never resumes itself for more attempts |
+| A problem still there after two attempts to fix it | Stops working and opens a **draft** pull request that starts with **Not finished** and says why. A draft is never merged — with `git.staging_land: external`, where your CI lands whatever is pushed, it is committed and kept on your machine instead, not pushed — and the run never resumes itself for more attempts |
 | The task turns out smaller than its design approval assumed | Keeps the risky task's route. Only a person can lower a task out of the classes that need a design approval |
 
 A task you work on by hand, with no autopilot run of its own, is still yours to approve:

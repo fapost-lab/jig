@@ -42,9 +42,17 @@ the last run's lines (`hklog_ids`) to tell `jig queue next` which dependencies h
 forge cache and `task` reads it, and both find it through `_task_borrowed_tasks_root`. A subject large enough to crowd out its command gets a library of its own even
 with a single caller: `lib/bootstrap.sh` (carrying state into a new worktree, with
 `tests/bootstrap.t.sh`) is sourced by `lib/task.sh` alone, which keeps that file about the task
-lifecycle. `lib/prgitlab.sh` is the same for `jig pr`: the GitLab half of it (glab and its
+lifecycle; so is `lib/land.sh`, landing a task's pull request on the staging branch — the approval,
+the merge on the forge, the direct merge in a temporary tree, the unforced push
+(adr-20261111-a-task-lands-on-staging-through-its-pull-request), tested in `tests/task.t.sh` with the
+ship it ends. `lib/prgitlab.sh` is the same for `jig pr`: the GitLab half of it (glab and its
 account, the merge request, its diff, the read-back and the post) is sourced by `lib/pr.sh` alone
-and tested through `tests/pr.t.sh`.
+and tested through `tests/pr.t.sh`. `lib/promote.sh` ("prepare for prod": `jig task promote`, with
+`tests/promote.t.sh`) follows the same rule; it reads a task's staging state through common.sh's
+`jig_staging_branch_problems` and `jig_staging_states` and never recomputes them.
+`jig_staging_branch_problems` and `jig_branch_carries_staging` answer the same question — is this a
+clean task branch — for promote and for ship and land; until they are one walk (task
+unify-clean-branch-walks) a change to that rule goes into both.
 `lib/checkout.sh`, which the dispatcher sources for every command, holds one such answer of its
 own: `jig_checkout_occupants` ("who occupies this checkout's HEAD"), the one rule `task start` and
 `upgrade` both refuse on (adr-20260930-an-upgrade-is-a-unit-of-work, amended 2026-10-05), and
@@ -55,7 +63,16 @@ own: `jig_checkout_occupants` ("who occupies this checkout's HEAD"), the one rul
 its command (`jig writes`, what waits and carrying it further), and `housekeeping` and `status` read
 it; it sources nothing and calls the `jig_ship_*` steps every ship takes.
 A helper that two commands must never disagree about lives in `lib/common.sh` instead —
-`jig_git_touched_files` ("what did this task touch"), `jig_task_base` and `jig_base_ref`
+`jig_git_touched_files` ("what did this task touch"), `jig_staging_in_use` and `jig_staging_states`
+("is this project on a sound staging flow, and which tasks' work is on its staging branch" —
+`task list --json`, `status` and housekeeping all show it), `jig_parked_states` ("which of these
+task branches wait at the staging branch, and why" — from git and the forge cache, laid over by
+task.sh's `_task_parked_read` with what only the owner knows, which `task current`, `task list`,
+`task resume` and `status` all ask, and whose ids `task start` and `status` hand to
+`jig_checkout_occupants`, which sources no command library;
+adr-20261112-a-task-waiting-at-staging-is-parked-and-resuming-it-is-its-status), `jig_branch_carries_staging` ("what does this task
+branch carry that was merged into it from anything but the base and clean task branches" — `task
+ship` and `task land` refuse on it), `jig_task_base` and `jig_base_ref`
 ("which branch is this task judged against, and by which ref"), `jig_spec_link` and `jig_spec_epic`
 ("which spec does this task follow, and is it on an epic" — `task start` and `spec` both read them),
 `jig_task_ref`, `jig_task_ref_dir` and `jig_task_links` ("which task or spec in a neighbouring

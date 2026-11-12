@@ -1031,6 +1031,831 @@ jig_base_ref() {
   return 0
 }
 
+# jig_staging_states <staging-branch> <rows> — "<id><TAB>on|behind" for each
+# task of <rows> ("<id><TAB><branch><TAB><base>" lines) whose own work reached
+# origin's <staging-branch>; nothing for any other task. Derived from git by
+# branch name on every call and stored nowhere (ADR-0005), so a colleague, a CI
+# runner and the owner read the same answer from the same refs.
+#
+# A task's own commits are those its branch reaches and its base does not (the
+# base resolved as jig_base_ref does, origin first). A merge commit whose every
+# parent but the first is in the base or the staging branch brings those in and
+# is not the task's own work, so a task does not read "behind" the moment its
+# base is merged into it at promotion (adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone), and staging merged into a task branch ("Update branch" on a pull request
+# into staging) neither makes the task behind nor puts it on staging: staging
+# is reached only along the task's own commits. The tip is the
+# local branch, else origin's, as housekeeping resolves it: commits the owner
+# has not pushed are commits after staging too.
+#   on      some own commit is in origin/<staging-branch>, and every own commit
+#           not in it is a merge of the base
+#   behind  some own commit is in origin/<staging-branch>, and another own
+#           commit is not
+# Nothing when no own commit is there: the task never reached staging, has no
+# branch or no work of its own, or its base or origin's staging branch is not
+# here. A squash merge into staging leaves the branch's commits out of it, so
+# such a task reads as not on staging (docs/known-issues.mdx).
+#
+# The processes it starts do not grow with the tasks (conventions/shell.md):
+# one for-each-ref, and per distinct base one rev-list of every tip's own
+# commits with their parents and one of staging's commits the base lacks; the
+# graph is walked in awk (_jig_staging_walk).
+jig_staging_states() {
+  local staging="$1" rows="$2" stip
+  [ -n "$staging" ] && [ -n "$rows" ] || return 0
+  stip=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/remotes/origin/$staging^{commit}" 2>/dev/null) || return 0
+  [ -n "$stip" ] || return 0
+  _jig_staging_walk "$stip" "$rows" | awk -F '\t' '$1 == "state" { print $2 "\t" $3 }'
+}
+
+# jig_parked_states <staging-branch> <staging-land> <rows> <cache> [<states>]
+# — "<id><TAB>review|signal" for each task of <rows> that waits at the staging branch: it
+# is parked. Nothing for any other task. <rows> are "<id><TAB><branch><TAB>
+# <base><TAB><pr-url><TAB><promote-url>[<TAB><park-resumed-at>]" lines, `-`
+# for a value the caller does not know or have; a row whose
+# <park-resumed-at> is set is a task a person took back for a fix, and is not
+# parked whatever git and the forge say; <cache> is the forge cache's lines (forgecache_read), passed in so
+# this file needs no forge cache of its own; <states>, when given, is
+# jig_staging_states' answer for the same rows, already asked by the caller.
+# Derived on every call from git
+# (jig_staging_states) and the forge cache, written nowhere
+# (adr-20261112-a-task-waiting-at-staging-is-parked-and-resuming-it-is-its-status):
+#   1. a pull request from the branch into its base that is open or merged —
+#      the newest the cache has, or the one <promote-url> names, which counts
+#      as open until the cache has it — ends parking: the task left the
+#      staging side of the flow;
+#   2. its own work on origin's staging branch (`on`) is `signal`: it waits for
+#      "prepare for prod";
+#   3. an open pull request into the staging branch is `review`: the one
+#      <pr-url> names when it goes there (open until the cache has it, and only
+#      when <staging-land> is `pr`), else the newest the cache has;
+#   4. anything else — work after staging with no pull request open, nothing
+#      on staging — is not parked.
+# The links are the owner's (task state); a caller without a workspace passes
+# `-` and reads the cache alone. Status, `agent.git` and an autopilot run are
+# never asked here: they are the owner's, laid over this answer by the caller.
+# One jig_staging_states call and two awk passes, whatever the number of rows.
+jig_parked_states() {
+  local staging="$1" land="$2" rows="$3" cache="$4" states
+  [ -n "$staging" ] && [ -n "$rows" ] || return 0
+  if [ $# -ge 5 ]; then
+    states=$5
+  else
+    states=$(jig_staging_states "$staging" "$(printf '%s\n' "$rows" | cut -f1-3)")
+  fi
+  {
+    printf '%s\n' "$rows" | awk -F '\t' 'NF >= 3 && $1 != "" { print "Q\t" $0 }'
+    [ -z "$states" ] || printf '%s\n' "$states" | awk '{ print "S\t" $0 }'
+    [ -z "$cache" ] || printf '%s\n' "$cache" | awk '{ print "P\t" $0 }'
+  } | awk -F '\t' -v st="$staging" -v land="$land" '
+    $1 == "S" { on[$2] = ($3 == "on"); next }
+    $1 == "P" {
+      # <head> <base> <state> <ci> <fetched_at> <head-commit> <url> [<mergeable>],
+      # newest first (lib/forgecache.sh); a line may end before <url>.
+      key = $2 SUBSEP $3
+      if (!(key in first)) first[key] = $4
+      if ($8 != "" && $8 != "-" && !($8 in byurl)) { byurl[$8] = $4; urlbase[$8] = $3 }
+      next
+    }
+    $1 == "Q" { n++; id[n] = $2; br[n] = $3; bs[n] = $4; pr[n] = $5; pm[n] = $6; rs[n] = $7; next }
+    END {
+      for (i = 1; i <= n; i++) {
+        if (rs[i] != "" && rs[i] != "-") continue
+        s = first[br[i] SUBSEP bs[i]]
+        if (s == "open" || s == "merged") continue
+        p = pm[i]
+        if (p != "" && p != "-") {
+          if (!(p in byurl)) continue
+          if (byurl[p] == "open" || byurl[p] == "merged") continue
+        }
+        if (on[id[i]]) { print id[i] "\tsignal"; continue }
+        u = pr[i]; s = ""
+        if (u != "" && u != "-" && (!(u in byurl) || urlbase[u] == st)) {
+          if (u in byurl) s = byurl[u]
+          else if (land == "pr") s = "open"
+        } else {
+          s = first[br[i] SUBSEP st]
+        }
+        if (s == "open") print id[i] "\treview"
+      }
+    }'
+}
+
+# _jig_staging_walk <staging-sha> <rows> — jig_staging_states' walk, judged
+# against the commit <staging-sha> rather than origin's staging branch: what
+# "prepare for prod" asks of the tested staging commit
+# (adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone). <rows>
+# are "<id><TAB><branch><TAB><base>[<TAB><tip-sha>]" lines; a fourth field
+# names the tip to judge instead of the local branch, else origin's. Prints,
+# tagged by their first field:
+#   state<TAB><id><TAB>on|behind   as jig_staging_states describes it
+#   own<TAB><id><TAB><sha>         an own commit of the task <staging-sha> does
+#                                  not have (what makes it behind, or what is
+#                                  not on staging at all)
+#   carry<TAB><id><TAB><sha>       a merge on the task's branch that brings in
+#                                  commits of <staging-sha> the base does not
+#                                  have: staging merged into the task branch
+#   reach<TAB><id><TAB><sha>       a commit of <staging-sha> the walk of the
+#                                  task's own work stopped at: where its work
+#                                  is on staging (jig_staging_drift dates it)
+# `own`, `carry` and `reach` lines are printed whether the task's work reached
+# <staging-sha> or not.
+_jig_staging_walk() {
+  local stip="$1" rows="$2" t=$'\t' resolved line base bsha tips
+  local -a bases=()
+  [ -n "$stip" ] && [ -n "$rows" ] || return 0
+  # Each task's tip and base from one listing of the refs: "T<TAB>id<TAB>tip
+  # <TAB>base<TAB>base-sha" lines.
+  resolved=$({
+    git -C "$JIG_PROJECT" for-each-ref --format='R%09%(refname)%09%(objectname)' \
+      refs/heads refs/remotes/origin 2>/dev/null || true
+    printf '%s\n' "$rows" | awk -F '\t' 'NF >= 3 && $1 != "" && $2 != "" && $3 != "" { print "Q\t" $0 }'
+  } | awk -F '\t' '
+    function tip(name) {
+      if (("refs/heads/" name) in ref) return ref["refs/heads/" name]
+      if (("refs/remotes/origin/" name) in ref) return ref["refs/remotes/origin/" name]
+      return ""
+    }
+    function base(name) {
+      if (("refs/remotes/origin/" name) in ref) return ref["refs/remotes/origin/" name]
+      if (("refs/heads/" name) in ref) return ref["refs/heads/" name]
+      return ""
+    }
+    $1 == "R" { ref[$2] = $3; next }
+    $1 == "Q" { n++; id[n] = $2; br[n] = $3; bs[n] = $4; et[n] = $5; next }
+    END {
+      for (i = 1; i <= n; i++) {
+        tp = (et[i] != "") ? et[i] : tip(br[i]); b = base(bs[i])
+        if (tp != "" && b != "") print "T\t" id[i] "\t" tp "\t" bs[i] "\t" b
+      }
+    }') || return 0
+  # The distinct bases, each with its sha.
+  while IFS="$t" read -r line _ _ base bsha; do
+    [ "$line" = T ] || continue
+    case " ${bases[*]-} " in *" $base:$bsha "*) ;; *) bases+=("$base:$bsha") ;; esac
+  done <<EOF
+$resolved
+EOF
+  [ ${#bases[@]} -gt 0 ] || return 0
+  {
+    printf '%s\n' "$resolved"
+    for line in "${bases[@]}"; do
+      base=${line%:*}
+      bsha=${line##*:}
+      tips=$(printf '%s\n' "$resolved" | awk -F '\t' -v b="$base" '$1 == "T" && $4 == b { print $3 }')
+      # shellcheck disable=SC2086 # one argument per tip, each a hexadecimal sha
+      git -C "$JIG_PROJECT" rev-list --parents $tips "^$bsha" 2>/dev/null \
+        | awk -v b="$base" '{ print "C\t" b "\t" $0 }' || true
+      git -C "$JIG_PROJECT" rev-list "$stip" "^$bsha" 2>/dev/null \
+        | awk -v b="$base" '{ print "N\t" b "\t" $0 }' || true
+    done
+  } | awk -F '\t' '
+    $1 == "T" { n++; id[n] = $2; tp[n] = $3; bs[n] = $4; next }
+    $1 == "C" {
+      k = split($3, a, " ")
+      key = $2 SUBSEP a[1]
+      own[key] = 1
+      np[key] = k - 1
+      for (j = 2; j <= k; j++) par[key, j - 1] = a[j]
+      next
+    }
+    $1 == "N" { on[$2 SUBSEP $3] = 1; next }
+    END {
+      for (i = 1; i <= n; i++) {
+        b = bs[i]
+        # A tip the base already has: no work of its own to be anywhere.
+        if (!((b SUBSEP tp[i]) in own)) continue
+        split("", seen)
+        sp = 0; stack[++sp] = tp[i]; reached = 0; behind = 0
+        while (sp > 0) {
+          c = stack[sp--]
+          if (c in seen) continue
+          seen[c] = 1
+          key = b SUBSEP c
+          # On staging, and so is everything it reaches.
+          if (key in on) { reached = 1; print "reach\t" id[i] "\t" c; continue }
+          # Own work unless it is a merge that only brings the base or the
+          # staging branch in (GitHub'"'"'s "Update branch" on a pull request into
+          # staging). Such a parent is not followed either: staging reached
+          # only through it is not the task'"'"'s own work on staging.
+          mine = (np[key] <= 1)
+          for (j = 2; j <= np[key]; j++) {
+            p = b SUBSEP par[key, j]
+            if ((p in own) && !(p in on)) mine = 1
+          }
+          if (mine) { behind = 1; print "own\t" id[i] "\t" c }
+          for (j = 1; j <= np[key]; j++) {
+            p = par[key, j]
+            if (!((b SUBSEP p) in own) || (p in seen)) continue
+            if (j > 1 && ((b SUBSEP p) in on)) continue
+            stack[++sp] = p
+          }
+        }
+        if (reached) print "state\t" id[i] "\t" (behind ? "behind" : "on")
+        # Staging merged into the task branch: a merge on its first-parent
+        # line that brings in commits of the staging commit the base lacks,
+        # whether or not that merge itself later reached staging.
+        c = tp[i]
+        while ((b SUBSEP c) in own) {
+          key = b SUBSEP c
+          for (j = 2; j <= np[key]; j++) {
+            p = b SUBSEP par[key, j]
+            if ((p in own) && (p in on)) { print "carry\t" id[i] "\t" c; break }
+          }
+          if (np[key] < 1) break
+          c = par[key, 1]
+        }
+      }
+    }'
+}
+
+# jig_staging_drift <staging-branch> <stale-after> <rows> <cache> — the staging
+# drift report (adr-20261112-the-staging-drift-report-is-read-from-git-by-branch-name), as tagged lines for
+# `jig status` and housekeeping to word (jig_staging_drift_lines).
+# <stale-after> is `git.staging_stale_after` as jig_staging_stale_after reads
+# it, empty when it is not a duration; <rows> this checkout's live tasks,
+# "<id><TAB><branch><TAB><base><TAB><promote_url>"; <cache> the forge cache's
+# lines (forgecache_read), empty when there is none. Prints, in this order:
+#   invalid<TAB><value>
+#       git.staging_stale_after is not a duration: no task is named unpromoted.
+#   unpromoted<TAB><id><TAB><branch><TAB><base><TAB><days><TAB><here>
+#       the task's work is on origin's staging branch (jig_staging_states: on
+#       or behind) and has been for <stale-after> or longer, with no promotion:
+#       the cache's newest pull request from <branch> into <base> is neither
+#       open nor merged (a promotion merged by a squash leaves the task's own
+#       commits outside the base, and it waits for no promotion), or, where the
+#       cache knows none, this checkout records no promote_url for it. <here>
+#       is `here` for a task of this checkout, empty for one known only by its
+#       branch (a colleague's, promoted from any checkout or by its owner). The time counted from is that of the commit on
+#       staging's first-parent line that last brought the task's work in — its
+#       landing merge, or the commit itself when staging was fast-forwarded.
+#   conflicting<TAB><id><TAB><branch><TAB><base><TAB><fetched_at><TAB><url>
+#       a promotion this checkout opened (promote_url) that the forge cache
+#       has open and conflicting with <base>, as of <fetched_at>.
+#   unowned<TAB><count><TAB><command>
+#       <count> commits, merges left out, are on origin's staging branch and
+#       not in the base (git.base_branch, origin first), and no live task
+#       branch — here or on origin — holds them; <command> lists exactly
+#       those: the count is that command's.
+# Read from git by branch name: the tasks are every branch
+# `git.branch_template` names, here or on origin, and this checkout's own; a
+# branch no workspace knows is judged against git.base_branch. The workspace
+# adds a base and promote_url, never more: a report of this checkout's tasks
+# alone would read a colleague's work as orphaned. Only what the staging
+# branch has and the base does not is counted, so a promoted task whose branch
+# was deleted after it landed is nobody's drift (the same ADR).
+#
+# The processes it starts do not grow with the tasks or the commits
+# (conventions/shell.md): one for-each-ref, _jig_staging_walk's, one rev-list
+# of staging's own commits with their parents and times, one of those no task
+# branch holds, and one `date`.
+jig_staging_drift() {
+  local staging="$1" stale="$2" rows="$3" cache="$4" t=$'\t'
+  local stip dbase base_ref bsha template prefix="" suffix="" kind a b c d e
+  local all="" rows3="" stale_s=-1 now walk landing shown shown_cmd
+  local -a excl=()
+  stip=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/remotes/origin/$staging^{commit}" 2>/dev/null) || return 0
+  [ -n "$stip" ] || return 0
+  cfg_v dbase git.base_branch main
+  base_ref=$(jig_base_ref "$dbase")
+  [ -n "$base_ref" ] || return 0
+  bsha=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$base_ref^{commit}" 2>/dev/null) || return 0
+  if [ -n "$stale" ]; then
+    stale_s=$(jig_duration_seconds "$stale")
+  else
+    printf 'invalid\t%s\n' "$(cfg git.staging_stale_after 14d)"
+  fi
+  template=$(cfg git.branch_template "task/{id}")
+  case "$template" in
+    *'{id}'*)
+      prefix=${template%%'{id}'*}
+      suffix=${template#*'{id}'}
+      ;;
+  esac
+  # The task branches, from one listing of the refs: `X<TAB><ref>` for a
+  # branch of this checkout's tasks the template does not name, and
+  # `R<TAB><id><TAB><branch><TAB><base><TAB><here|-><TAB><promote_url>` for
+  # each task, this checkout's first (the possibly empty field last: read
+  # splits on a run of tabs as on one). A template with nothing before `{id}`
+  # names no branch by itself (jig_branch_is_jigs): then only this checkout's
+  # tasks are known.
+  if [ -n "$prefix" ]; then
+    excl+=("--branches=$prefix*$suffix" "--remotes=origin/$prefix*$suffix")
+  fi
+  while IFS="$t" read -r kind a b c d e; do
+    case "$kind" in
+      X) excl+=("$a") ;;
+      R)
+        [ "$d" = here ] || d=""
+        all="$all$a$t$b$t$c$t$e$t$d
+"
+        rows3="$rows3$a$t$b$t$c
+" ;;
+    esac
+  done < <(_jig_staging_drift_refs "$rows" "$prefix" "$suffix" "$staging" "$dbase")
+  now=$(date +%s)
+  walk=$(_jig_staging_walk "$stip" "$rows3")
+  landing=$(git -C "$JIG_PROJECT" rev-list --parents --timestamp "$stip" "^$bsha" 2>/dev/null) || landing=""
+  {
+    printf '%s\n' "$all" | awk -F '\t' 'NF >= 3 && $1 != "" { print "R\t" $0 }'
+    printf '%s\n' "$walk" | awk -F '\t' '$1 == "state" || $1 == "reach" { print "W\t" $0 }'
+    printf '%s\n' "$landing" | awk '$0 != "" { print "L\t" $0 }'
+    printf '%s\n' "$cache" | awk -F '\t' 'NF >= 3 && $1 != "" { print "C\t" $0 }'
+  } | awk -F '\t' -v stip="$stip" -v now="$now" -v stale="$stale_s" '
+    $1 == "R" { n++; id[n] = $2; br[n] = $3; bs[n] = $4; pu[n] = $5; hr[n] = $6; next }
+    $1 == "W" && $2 == "state" { st[$3] = $4; next }
+    $1 == "W" && $2 == "reach" { reach[$3] = reach[$3] " " $4; next }
+    $1 == "L" {
+      k = split($2, f, " ")
+      ts[f[2]] = f[1]; np[f[2]] = k - 2
+      for (j = 3; j <= k; j++) par[f[2], j - 2] = f[j]
+      next
+    }
+    $1 == "C" {
+      key = $2 SUBSEP $3
+      if (key in cst) next
+      cst[key] = $4; cat[key] = $6; cmg[key] = $9
+      next
+    }
+    END {
+      # Staging'"'"'s first-parent line, oldest first: each commit lands itself
+      # and whatever of staging its other parents bring in that nothing
+      # earlier on the line did.
+      m = 0; c = stip
+      while (c in ts) { fp[++m] = c; if (np[c] < 1) break; c = par[c, 1] }
+      for (k = m; k >= 1; k--) {
+        f0 = fp[k]; land[f0] = ts[f0]; sp = 0
+        for (j = 2; j <= np[f0]; j++) stack[++sp] = par[f0, j]
+        while (sp > 0) {
+          c = stack[sp--]
+          if (!(c in ts) || (c in land)) continue
+          land[c] = ts[f0]
+          for (j = 1; j <= np[c]; j++) stack[++sp] = par[c, j]
+        }
+      }
+      for (i = 1; i <= n; i++) {
+        key = br[i] SUBSEP bs[i]
+        # A merged promotion waits for none: by a squash, its commits stay
+        # on staging outside the base until the task is closed.
+        if (key in cst) prom = (cst[key] == "open" || cst[key] == "merged"); else prom = (pu[i] != "")
+        if (stale >= 0 && (id[i] in st)) {
+          last = 0
+          k = split(reach[id[i]], r, " ")
+          for (j = 1; j <= k; j++) if ((r[j] in land) && land[r[j]] > last) last = land[r[j]]
+          if (last > 0 && now - last >= stale && !prom)
+            print "unpromoted\t" id[i] "\t" br[i] "\t" bs[i] "\t" int((now - last) / 86400) "\t" hr[i]
+        }
+      }
+      for (i = 1; i <= n; i++) {
+        key = br[i] SUBSEP bs[i]
+        if (pu[i] != "" && (key in cst) && cst[key] == "open" && cmg[key] == "conflicting")
+          print "conflicting\t" id[i] "\t" br[i] "\t" bs[i] "\t" cat[key] "\t" pu[i]
+      }
+    }'
+  # Staging's own commits no live task branch holds: one rev-list, with the
+  # same exclusions as the `git log` printed for them, so the two agree — the
+  # template's branches by glob (git's `*` crosses `/`, as the template match
+  # in _jig_staging_drift_refs does), and this checkout's other branches by ref.
+  shown=$(git -C "$JIG_PROJECT" rev-list --count --no-merges "$stip" "^$bsha" --not ${excl[@]+"${excl[@]}"} 2>/dev/null) || shown=0
+  if [ "${shown:-0}" -gt 0 ]; then
+    case "$base_ref" in
+      refs/remotes/*) b=${base_ref#refs/remotes/} ;;
+      *) b=${base_ref#refs/heads/} ;;
+    esac
+    shown_cmd="git log --no-merges origin/$staging ^$b"
+    if [ ${#excl[@]} -gt 0 ]; then
+      shown_cmd="$shown_cmd --not"
+      for a in "${excl[@]}"; do
+        case "$a" in
+          --*=*) shown_cmd="$shown_cmd ${a%%=*}='${a#*=}'" ;;
+          *) shown_cmd="$shown_cmd $a" ;;
+        esac
+      done
+    fi
+    printf 'unowned\t%s\t%s\n' "$shown" "$shown_cmd"
+  fi
+}
+
+# _jig_staging_drift_refs <rows> <prefix> <suffix> <staging> <base> —
+# jig_staging_drift's listing of the task branches, from one for-each-ref.
+_jig_staging_drift_refs() {
+  {
+    git -C "$JIG_PROJECT" for-each-ref --format='F%09%(refname)%09%(objectname)' \
+      refs/heads refs/remotes/origin 2>/dev/null || true
+    printf '%s\n' "$1" | awk -F '\t' 'NF >= 3 && $1 != "" && $2 != "" { print "Q\t" $0 }'
+  } | awk -F '\t' -v pre="$2" -v suf="$3" -v st="$4" -v base="$5" '
+    $1 == "Q" {
+      own[$3] = 1; seen[$2] = 1
+      print "R\t" $2 "\t" $3 "\t" ($4 == "" ? base : $4) "\there\t" $5
+      next
+    }
+    $1 == "F" { ref[++n] = $2; sha[n] = $3; next }
+    END {
+      for (i = 1; i <= n; i++) {
+        name = ref[i]
+        if (index(name, "refs/heads/") == 1) name = substr(name, 12)
+        else if (index(name, "refs/remotes/origin/") == 1) name = substr(name, 21)
+        else continue
+        if (name == st || name == base || name == "HEAD") continue
+        id = ""; tmpl = 0
+        if (pre != "" && index(name, pre) == 1 && length(name) > length(pre) + length(suf) \
+            && (suf == "" || substr(name, length(name) - length(suf) + 1) == suf)) {
+          tmpl = 1
+          id = substr(name, length(pre) + 1, length(name) - length(pre) - length(suf))
+          if (id !~ /^[A-Za-z0-9_][A-Za-z0-9._-]*$/) id = ""
+        }
+        # A branch the template does not name is excluded by its ref; the
+        # caller excludes those the template names by glob.
+        if (!tmpl && (name in own)) print "X\t" ref[i]
+        if (id != "" && !(id in seen)) { seen[id] = 1; print "R\t" id "\t" name "\t" base "\t-\t" }
+      }
+    }'
+}
+
+# jig_staging_drift_lines <staging-branch> <records> — jig_staging_drift's
+# records in words, one `staging: ` line each: what `jig status` and
+# housekeeping print.
+jig_staging_drift_lines() {
+  local staging="$1" kind a b c d e t=$'\t'
+  while IFS="$t" read -r kind a b c d e; do
+    case "$kind" in
+      invalid)
+        printf "staging: git.staging_stale_after: '%s' is not a duration (e.g. 14d); tasks waiting on %s are not named\n" "$a" "$staging" ;;
+      unpromoted)
+        if [ "$e" = here ]; then
+          printf 'staging: %s has waited on %s %s day(s) with no promotion (jig task promote %s)\n' "$a" "$staging" "$d" "$a"
+        else
+          printf 'staging: %s has waited on %s %s day(s) with no promotion (jig task promote %s, from any checkout, or ask its owner)\n' "$a" "$staging" "$d" "$a"
+        fi ;;
+      unowned)
+        printf 'staging: %s commit(s) on %s that no live task branch holds (%s)\n' "$a" "$staging" "$b" ;;
+      conflicting)
+        printf 'staging: the promotion of %s conflicts with %s as of %s (run jig task promote %s again)\n' "$a" "$c" "$d" "$a" ;;
+    esac
+  done <<EOF
+$2
+EOF
+}
+
+# jig_staging_branch_problems <branch> <tip> <base> <staging> [<depth>] [<via>] —
+# whether the line of <branch> up to <tip> is a clean task branch in the
+# staging flow: cut from <base>, with nothing of <staging> merged into it. A
+# task branch reaches the base from its own commits, never through the
+# staging branch (adr-20261111-a-task-lands-on-staging-through-its-pull-request;
+# decided by the person, 2026-11-11). Prints tagged lines, nothing when the line is clean:
+#   bad<TAB><text>          what makes it unclean, in words for a person:
+#                           `<branch> is cut from <staging> (<sha>)`, `<branch>
+#                           is cut from <name>` (a dependency only), `a merge of
+#                           <name> into <branch> (<sha>)`, and for a merged task
+#                           branch that is unclean its own lines, then `a merge
+#                           of <dep> into <branch> (<sha>), which carries the above`
+#   dep<TAB><dep-branch><TAB><merge-sha>
+#                           a clean branch of another task merged into the line,
+#                           at any depth, or (at <depth> 1 and more) one a merged
+#                           dependency was cut from: its commits reach the base
+#                           with it. <via> is the merge that brought the
+#                           dependency in, named for a branch it was cut from
+# The judgement walks the first-parent line of <tip> down to the base
+# (origin's, jig_base_ref):
+#   - cut from staging: a commit of that line is on the first-parent line of
+#     origin/<staging>. Jig lands a task on staging by a merge commit, so a
+#     task's own commits are second parents there, never on that line, while
+#     a branch cut from staging carries staging's landing merges on its own.
+#   - cut from another branch (at <depth> 1 and more, a merged dependency): the
+#     line holds the tip of an origin branch that is neither a task branch
+#     (git.branch_template), the base nor staging. It misses a branch whose
+#     tip moved on after the cut or that origin no longer has.
+#   - cut from another task's branch (at every depth, the task's own line
+#     included): the line holds the tip of that branch, local or origin's. It
+#     is named as a dependency and judged the same way. Like the case above,
+#     it misses a branch whose tip moved on after the cut, or that neither
+#     this clone nor origin has any more: that task's work then reaches the
+#     base under this task's name.
+#   - each merge on the line: a parent the base has is the base merged in; a
+#     parent on staging's first-parent line is staging merged in; a parent on
+#     the first-parent line of another task branch is that task's branch,
+#     judged the same way, down to <depth> 5; anything else is named by git
+#     name-rev and refused.
+# Whether the commits of the line are in a tested commit is not asked here:
+# _jig_staging_walk answers that. The processes it starts grow with the
+# merges on the line and the refs that contain them, one rev-list per ref,
+# never per commit (conventions/shell.md).
+jig_staging_branch_problems() {
+  local branch="$1" tip="$2" base="$3" staging="$4" depth="${5:-0}" via="${6:-}"
+  local t=$'\t' base_ref base_sha s_sha fp sfp="" found line c p short name ref dep dep_name
+  local template prefix suffix sub one others=""
+  base_ref=$(jig_base_ref "$base")
+  [ -n "$base_ref" ] && [ -n "$tip" ] || return 0
+  base_sha=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$base_ref^{commit}" 2>/dev/null) || return 0
+  s_sha=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/remotes/origin/$staging^{commit}" 2>/dev/null) || s_sha=""
+  fp=$(git -C "$JIG_PROJECT" rev-list --first-parent --parents "$tip" "^$base_sha" 2>/dev/null) || fp=""
+  [ -n "$fp" ] || return 0
+  [ -z "$s_sha" ] || sfp=$(git -C "$JIG_PROJECT" rev-list --first-parent "$s_sha" "^$base_sha" 2>/dev/null) || sfp=""
+  template=$(cfg git.branch_template "task/{id}")
+  case "$template" in *'{id}'*) ;; *) template="task/{id}" ;; esac
+  prefix=${template%%'{id}'*}
+  suffix=${template#*'{id}'}
+  # The tips of origin's other branches, for a dependency cut from one.
+  if [ "$depth" -gt 0 ]; then
+    while IFS="$t" read -r name one; do
+      case "$name" in HEAD | "$base" | "$staging" | "$prefix"*"$suffix") continue ;; esac
+      others="${others}R$t$name$t$one"$'\n'
+    done < <(git -C "$JIG_PROJECT" for-each-ref --format="%(refname:strip=3)$t%(objectname)" refs/remotes/origin 2>/dev/null)
+  fi
+  # The tips of other tasks' branches, at every depth: a branch cut from
+  # another task's branch, the task's own included, carries that task's work.
+  while IFS="$t" read -r name one; do
+    case "$name" in
+      refs/heads/*) name=${name#refs/heads/} ;;
+      refs/remotes/origin/*) name=${name#refs/remotes/origin/} ;;
+      *) continue ;;
+    esac
+    [ "$name" != "$branch" ] || continue
+    case "$name" in "$prefix"*"$suffix") ;; *) continue ;; esac
+    [ "$one" != "$tip" ] || continue
+    others="${others}T$t$name$t$one"$'\n'
+  done < <(git -C "$JIG_PROJECT" for-each-ref --format="%(refname)$t%(objectname)" refs/heads refs/remotes/origin 2>/dev/null)
+  # Cut from staging, or from another branch: one pass over the line.
+  found=$({
+    [ -z "$sfp" ] || printf '%s\n' "$sfp" | awk '{ print "S\t" $1 }'
+    [ -z "$others" ] || printf '%s' "$others"
+    printf '%s\n' "$fp" | awk '{ print "F\t" $1 }'
+  } | awk -F '\t' '
+    $1 == "S" { s[$2] = 1; next }
+    $1 == "R" { r[$3] = $2; next }
+    $1 == "T" { if (!($3 in tk)) tk[$3] = $2; next }
+    $1 == "F" {
+      if (!st && ($2 in s)) { st = 1; print "staging\t" $2 }
+      if (($2 in r) && !(r[$2] in seen)) { seen[r[$2]] = 1; print "other\t" r[$2] }
+      if (($2 in tk) && !(tk[$2] in seen)) { seen[tk[$2]] = 1; print "task\t" tk[$2] "\t" $2 }
+    }')
+  while IFS="$t" read -r one c p; do
+    case "$one" in
+      staging) printf 'bad\t%s is cut from %s (%s)\n' "$branch" "$staging" "$(git -C "$JIG_PROJECT" rev-parse --short "$c")" ;;
+      other) printf 'bad\t%s is cut from %s\n' "$branch" "$c" ;;
+      task)
+        # Cut from another task's branch: that task reaches the base too.
+        if [ "$depth" -ge 5 ]; then
+          printf 'bad\t%s is cut from %s, whose own line goes deeper than can be judged\n' "$branch" "$c"
+          continue
+        fi
+        sub=$(jig_staging_branch_problems "$c" "$p" "$base" "$staging" $((depth + 1)) "${via:-$p}")
+        case $'\n'"$sub" in
+          *$'\n'"bad$t"*)
+            printf '%s\n' "$sub" | awk -F '\t' '$1 == "bad"'
+            printf 'bad\t%s is cut from %s, which carries the above\n' "$branch" "$c"
+            ;;
+          *)
+            [ -z "$sub" ] || printf '%s\n' "$sub"
+            printf 'dep\t%s\t%s\n' "$c" "${via:-$p}"
+            ;;
+        esac
+        ;;
+    esac
+  done <<EOF
+$found
+EOF
+  # Each merge on the line, by what it brought in.
+  while IFS= read -r line; do
+    set -f
+    # shellcheck disable=SC2086 # the commit and its parents, hexadecimal
+    set -- $line
+    set +f
+    [ $# -gt 2 ] || continue
+    c=$1
+    short=$(git -C "$JIG_PROJECT" rev-parse --short "$c")
+    shift 2
+    for p in "$@"; do
+      if git -C "$JIG_PROJECT" merge-base --is-ancestor "$p" "$base_sha" 2>/dev/null; then continue; fi
+      if [ -n "$sfp" ] && jig_has_line "$p" "$sfp"; then
+        printf 'bad\ta merge of %s into %s (%s)\n' "$staging" "$branch" "$short"
+        continue
+      fi
+      dep=""
+      while IFS= read -r ref; do
+        case "$ref" in
+          refs/heads/*) dep_name=${ref#refs/heads/} ;;
+          refs/remotes/origin/*) dep_name=${ref#refs/remotes/origin/} ;;
+          *) continue ;;
+        esac
+        [ "$dep_name" != "$branch" ] || continue
+        case "$dep_name" in "$prefix"*"$suffix") ;; *) continue ;; esac
+        one=${dep_name#"$prefix"}
+        jig_valid_id "${one%"$suffix"}" || continue
+        # Merged as that task's branch: on its own first-parent line, not
+        # only reachable through something it merged later.
+        jig_has_line "$p" "$(git -C "$JIG_PROJECT" rev-list --first-parent "$ref" "^$base_sha" 2>/dev/null)" || continue
+        dep=$dep_name
+        break
+      done < <(git -C "$JIG_PROJECT" for-each-ref --contains "$p" --format='%(refname)' refs/heads refs/remotes/origin 2>/dev/null)
+      if [ -z "$dep" ]; then
+        name=$(git -C "$JIG_PROJECT" name-rev --name-only --no-undefined \
+          --exclude="refs/heads/$branch" --exclude="refs/remotes/origin/$branch" --exclude='refs/tags/*' "$p" 2>/dev/null) || name=$p
+        name=${name#remotes/origin/}
+        name=${name%%[~^]*}
+        printf 'bad\ta merge of %s into %s (%s)\n' "$name" "$branch" "$short"
+        continue
+      fi
+      if [ "$depth" -ge 5 ]; then
+        printf 'bad\ta merge of %s into %s (%s), whose own merges go deeper than can be judged\n' "$dep" "$branch" "$short"
+        continue
+      fi
+      sub=$(jig_staging_branch_problems "$dep" "$p" "$base" "$staging" $((depth + 1)) "$c")
+      case $'\n'"$sub" in
+        *$'\n'"bad$t"*)
+          printf '%s\n' "$sub" | awk -F '\t' '$1 == "bad"'
+          printf 'bad\ta merge of %s into %s (%s), which carries the above\n' "$dep" "$branch" "$short"
+          ;;
+        *)
+          [ -z "$sub" ] || printf '%s\n' "$sub"
+          printf 'dep\t%s\t%s\n' "$dep" "$c"
+          ;;
+      esac
+    done
+  done <<EOF
+$fp
+EOF
+  return 0
+}
+
+# jig_branch_carries_staging <tip> <base-ref> <staging-ref> [<merge-head>...] —
+# what a task branch at <tip> carries that it may not: the clean-branch rule of
+# the staging flow (adr-20261111-a-task-lands-on-staging-through-its-pull-request).
+# A task branch is cut from the base and stays clean until it reaches the base:
+# only the base and clean task branches may be merged into it. One line per
+# commit at fault, "<sha><TAB><merge><TAB><what>":
+#   - <merge> `-`, <what> `cut from <staging>`: the branch itself is cut from
+#     (or rebased onto) the staging branch; the lines are the commits of its
+#     first-parent line that are on the staging branch's own;
+#   - otherwise <merge> is the merge on the branch that brought the commit in —
+#     `the merge in progress` for the <merge-head>s given, the heads of a merge
+#     not committed yet (MERGE_HEAD), judged as the commit that will conclude
+#     it — and <what> what was merged: the staging branch's name, a branch's
+#     name, a commit, or `<task-branch>, which itself <why>` for a task branch
+#     that is not clean (`is cut from <x>`, `carries <what>`, `is nested too
+#     deep to judge`).
+# Nothing when the branch is clean. Exit 1, printing nothing, when <tip>,
+# <base-ref> or <staging-ref> names no commit here: a guard built on it refuses
+# then, never reads "clean".
+#
+# A branch is judged by its first-parent line, from its tip down to the first
+# commit the base has:
+#   - it is cut from the staging branch when a commit of that line is on the
+#     staging branch's own first-parent line: Jig lands only by merge commits,
+#     so a task's own commits are second parents there, while a branch cut
+#     from or rebased onto staging carries staging's landing merges on its own
+#     line;
+#   - each further parent of a merge on that line that the base lacks is the
+#     staging branch when it is on staging's first-parent line; a task branch
+#     when it is on the first-parent line of a `task/*` branch here or on
+#     origin (that task's own work, never a branch it merged in), and clean by
+#     this same rule — judged at the commit that was merged, not at its branch's tip, and
+#     as a dependency, so also not clean when its first-parent line holds the
+#     tip of an origin branch that is neither `task/*` nor the base (cut from a
+#     feature branch) — and allowed then, even when its commits are on staging
+#     already (the person's decision of 2026-11-11); anything else is refused.
+# Dependencies are judged four deep; deeper is not clean. The task's own
+# commits that landed on staging stay its own, and a merge of the base never
+# counts.
+#
+# What the walk cannot see. A staging branch landed on by fast-forward (an
+# external lander's plain `git merge`) puts a task's own commits on staging's
+# first-parent line, and the task then reads as cut from staging: whoever lands
+# outside Jig lands by merge commits (`--no-ff`). A branch cut from a feature
+# branch is caught only for a dependency, and only while that feature branch's
+# tip on origin is still on its line: once the feature branch moved on, was
+# deleted on origin or was never pushed, the dependency reads clean; the task
+# branch itself is never checked for it.
+#
+# Processes: per branch judged one rev-list of its first-parent line, and per
+# merged parent the base lacks a few git calls; never one per commit.
+jig_branch_carries_staging() {
+  local tip base stage
+  tip=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$1^{commit}" 2>/dev/null) || return 1
+  base=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$2^{commit}" 2>/dev/null) || return 1
+  stage=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$3^{commit}" 2>/dev/null) || return 1
+  [ -n "$tip" ] && [ -n "$base" ] && [ -n "$stage" ] || return 1
+  _JIG_BCS_STAGING=${3#refs/remotes/origin/}
+  _JIG_BCS_STAGING=${_JIG_BCS_STAGING#refs/heads/}
+  _JIG_BCS_BASE=${2#refs/remotes/origin/}
+  _JIG_BCS_BASE=${_JIG_BCS_BASE#refs/heads/}
+  _JIG_BCS_TOP=$tip
+  # Staging's own first-parent line, and the tips of origin's branches that
+  # are neither task branches nor the base: read once for the whole judgement.
+  _JIG_BCS_SFP=$(git -C "$JIG_PROJECT" rev-list --first-parent "$stage" "^$base" 2>/dev/null || true)
+  _JIG_BCS_TIPS=$(git -C "$JIG_PROJECT" for-each-ref --format='%(objectname) %(refname)' refs/remotes/origin 2>/dev/null \
+    | awk -v b="refs/remotes/origin/$_JIG_BCS_BASE" '$2 != b && $2 != "refs/remotes/origin/HEAD" && index($2, "refs/remotes/origin/task/") != 1' || true)
+  shift 3
+  _jig_bcs_judge "$tip" "$base" "$stage" 0 "$@"
+}
+
+# What jig_branch_carries_staging reads once and its helpers share.
+_JIG_BCS_STAGING=""
+_JIG_BCS_BASE=""
+_JIG_BCS_TOP=""
+_JIG_BCS_SFP=""
+_JIG_BCS_TIPS=""
+
+# _jig_bcs_judge <commit> <base> <stage> <depth> [<merge-head>...] — the lines
+# of jig_branch_carries_staging for the branch at <commit>; depth 0 is the task
+# branch, above it a dependency.
+_jig_bcs_judge() {
+  local c="$1" base="$2" stage="$3" depth="$4" line m first rest p what label cut
+  shift 4
+  line=$(git -C "$JIG_PROJECT" rev-list --first-parent --parents "$c" "^$base" 2>/dev/null || true)
+  # Cut from the staging branch: its line meets staging's own.
+  cut=$(printf '%s\n' "$line" | _JIG_BCS_V="$_JIG_BCS_SFP" awk '
+    BEGIN { n = split(ENVIRON["_JIG_BCS_V"], a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "") s[a[i]] = 1 }
+    NF && ($1 in s) { print $1 }')
+  if [ -n "$cut" ]; then
+    printf '%s\n' "$cut" | awk -v w="cut from $_JIG_BCS_STAGING" 'NF { print $1 "\t-\t" w }'
+    return 0
+  fi
+  # A dependency cut from another branch of origin's.
+  if [ "$depth" -gt 0 ] && [ -n "$_JIG_BCS_TIPS" ]; then
+    cut=$(printf '%s\n' "$line" | _JIG_BCS_V="$_JIG_BCS_TIPS" awk '
+      BEGIN { n = split(ENVIRON["_JIG_BCS_V"], a, "\n"); for (i = 1; i <= n; i++) { split(a[i], f, " "); if (f[1] != "") t[f[1]] = f[2] } }
+      NF && ($1 in t) { r = t[$1]; sub(/^refs\/remotes\/origin\//, "", r); print $1 "\t" r; exit }')
+    if [ -n "$cut" ]; then
+      printf '%s\t-\tcut from %s\n' "${cut%%$'\t'*}" "${cut#*$'\t'}"
+      return 0
+    fi
+  fi
+  [ $# -eq 0 ] || line="MERGE $c $*
+$line"
+  while read -r m first rest; do
+    [ -n "$m" ] && [ -n "$rest" ] || continue
+    for p in $rest; do
+      ! git -C "$JIG_PROJECT" merge-base --is-ancestor "$p" "$base" 2>/dev/null || continue
+      what=$(_jig_bcs_what "$p" "$base" "$stage" "$depth") || continue
+      label=$m
+      [ "$m" != MERGE ] || label="the merge in progress"
+      git -C "$JIG_PROJECT" rev-list "$p" "^$base" "^$first" 2>/dev/null \
+        | awk -v m="$label" -v w="$what" '{ print $1 "\t" m "\t" w }' || true
+    done
+  done <<EOF
+$line
+EOF
+}
+
+# _jig_bcs_what <parent> <base> <stage> <depth> — what the merged parent
+# <parent> is, printed; non-zero when it is a clean task branch and allowed.
+# Task branches containing the task's own tip, or standing on its first-parent
+# line, are the task's own (here and on origin), never a dependency.
+_jig_bcs_what() {
+  local p="$1" base="$2" stage="$3" depth="$4" ref sha dep="" name sub why
+  if printf '%s\n' "$_JIG_BCS_SFP" | grep -Fx -- "$p" >/dev/null; then
+    printf '%s\n' "$_JIG_BCS_STAGING"
+    return 0
+  fi
+  while IFS= read -r ref; do
+    [ -n "$ref" ] || continue
+    sha=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$ref^{commit}" 2>/dev/null) || continue
+    ! git -C "$JIG_PROJECT" merge-base --is-ancestor "$_JIG_BCS_TOP" "$sha" 2>/dev/null || continue
+    ! git -C "$JIG_PROJECT" rev-list --first-parent "$_JIG_BCS_TOP" "^$base" 2>/dev/null | grep -Fx -- "$sha" >/dev/null || continue
+    # That task's own work only: the merged commit on its first-parent line,
+    # never a branch it merged in itself (a feature branch is a second parent
+    # there, whatever it did since).
+    git -C "$JIG_PROJECT" rev-list --first-parent "$sha" "^$base" 2>/dev/null | grep -Fx -- "$p" >/dev/null || continue
+    name=${ref#refs/remotes/origin/}
+    name=${name#refs/heads/}
+    # The one whose tip is the merged commit, else the first that holds it.
+    if [ -z "$dep" ] || [ "$sha" = "$p" ]; then dep=$name; fi
+  done <<EOF
+$(git -C "$JIG_PROJECT" for-each-ref --format='%(refname)' --contains "$p" refs/heads/task refs/remotes/origin/task 2>/dev/null || true)
+EOF
+  if [ -n "$dep" ]; then
+    if [ "$depth" -ge 4 ]; then
+      printf '%s, which itself is nested too deep to judge\n' "$dep"
+      return 0
+    fi
+    # Judged at the commit that was merged.
+    sub=$(_jig_bcs_judge "$p" "$base" "$stage" $((depth + 1)))
+    [ -n "$sub" ] || return 1
+    why=$(printf '%s\n' "$sub" | awk -F '\t' 'NF { print $3; exit }')
+    case "$why" in
+      "cut from "*) printf '%s, which itself is %s\n' "$dep" "$why" ;;
+      *", which itself is nested too deep to judge") printf '%s, which itself is nested too deep to judge\n' "$dep" ;;
+      *) printf '%s, which itself carries %s\n' "$dep" "$why" ;;
+    esac
+    return 0
+  fi
+  if git -C "$JIG_PROJECT" merge-base --is-ancestor "$p" "$stage" 2>/dev/null; then
+    printf '%s\n' "$_JIG_BCS_STAGING"
+    return 0
+  fi
+  # Named by a branch at it, else one that holds it and is no task's (a
+  # feature branch that moved on), else by the commit.
+  name=$(git -C "$JIG_PROJECT" for-each-ref --format='%(refname)' --points-at "$p" refs/heads refs/remotes/origin 2>/dev/null \
+    | grep -v -e '^refs/heads/task/' -e '^refs/remotes/origin/task/' | sed -n 1p || true)
+  [ -n "$name" ] || name=$(git -C "$JIG_PROJECT" for-each-ref --format='%(refname)' --contains "$p" refs/heads refs/remotes/origin 2>/dev/null \
+    | grep -v -e '^refs/heads/task/' -e '^refs/remotes/origin/task/' -e '^refs/remotes/origin/HEAD$' \
+      -e "^refs/heads/$_JIG_BCS_BASE\$" -e "^refs/remotes/origin/$_JIG_BCS_BASE\$" \
+      -e "^refs/heads/$_JIG_BCS_STAGING\$" -e "^refs/remotes/origin/$_JIG_BCS_STAGING\$" | sed -n 1p || true)
+  name=${name#refs/remotes/origin/}
+  name=${name#refs/heads/}
+  printf '%s\n' "${name:-commit $(git -C "$JIG_PROJECT" rev-parse --short "$p" 2>/dev/null)}"
+}
+
 # jig_git_show_path <ref> <path> — the content of <path> as committed at <ref>,
 # on stdout; non-zero when <ref> names no commit or <path> is not in it.
 # The ref is resolved to a commit SHA first and git is handed `<sha>:<path>`,
@@ -1089,15 +1914,15 @@ _jig_toml_version() {
     }'
 }
 
-# _jig_release_fork <base> — the point HEAD forked from <base>: the later of
-# its merge-bases with origin/<base> and the local <base>, so a stale
-# remote-tracking ref does not take a raise merged in from a fresher local
-# base for the task's own. Nothing when neither answers.
+# _jig_release_fork <base> [<ref>] — the point <ref> (HEAD by default) forked
+# from <base>: the later of its merge-bases with origin/<base> and the local
+# <base>, so a stale remote-tracking ref does not take a raise merged in from
+# a fresher local base for the task's own. Nothing when neither answers.
 _jig_release_fork() {
-  local ref fork="" f
+  local ref fork="" f head="${2:-HEAD}"
   for ref in "refs/remotes/origin/$1" "refs/heads/$1"; do
     git -C "$JIG_PROJECT" rev-parse --verify --quiet "$ref^{commit}" >/dev/null 2>&1 || continue
-    f=$(git -C "$JIG_PROJECT" merge-base "$ref" HEAD 2>/dev/null) || continue
+    f=$(git -C "$JIG_PROJECT" merge-base "$ref" "$head" 2>/dev/null) || continue
     [ -n "$f" ] || continue
     if [ -z "$fork" ] || git -C "$JIG_PROJECT" merge-base --is-ancestor "$fork" "$f" 2>/dev/null; then
       fork="$f"
@@ -1106,8 +1931,10 @@ _jig_release_fork() {
   printf '%s\n' "$fork"
 }
 
-# jig_release_raise <base> — whether HEAD raises the version the project
-# declares, against the point it forked from the branch <base>
+# jig_release_raise <base> [<ref>] — whether <ref> (HEAD by default; a commit
+# the promotion of a task names, which a CI runner has not checked out)
+# raises the version the project declares, against the point it forked from
+# the branch <base>
 # (_jig_release_fork: what the forge's pull request compares). Prints
 # `<file><TAB><old><TAB><new><TAB><level>` or nothing. The first file of
 # JIG_VERSION_FILES whose version went up decides; a file that declared no
@@ -1118,11 +1945,11 @@ _jig_release_fork() {
 # merged as a lesser release. Anything git cannot answer is "not a release" —
 # the ship goes on as it did before.
 jig_release_raise() {
-  local fork f new old o n level
-  fork=$(_jig_release_fork "$1")
+  local fork f new old o n level head="${2:-HEAD}"
+  fork=$(_jig_release_fork "$1" "$head")
   [ -n "$fork" ] || return 0
   for f in $JIG_VERSION_FILES; do
-    new=$(jig_git_show_path HEAD "$f" 2>/dev/null | _jig_version_in "$f")
+    new=$(jig_git_show_path "$head" "$f" 2>/dev/null | _jig_version_in "$f")
     [ -n "$new" ] || continue
     old=$(jig_git_show_path "$fork" "$f" 2>/dev/null | _jig_version_in "$f")
     [ -n "$old" ] && [ "$old" != "$new" ] || continue
@@ -1450,6 +2277,77 @@ jig_fetch_branches() {
     fi
   done
   return 0
+}
+
+# jig_fetch_fresh <name>... — fetch each branch from origin as
+# jig_fetch_branches does, but stop at the first that cannot be fetched,
+# printing its name and returning 1: for a step that must act on origin's
+# branch as it is now, never on the refs this checkout last saw (a merge into
+# the staging branch, adr-20261111-a-task-lands-on-staging-through-its-pull-request).
+# No origin at all is a failure too. Through jig_git_origin, as the clone's
+# account: the caller names it first (jig_git_origin_account), in its own
+# shell, since this is called in `$()`.
+jig_fetch_fresh() {
+  local name
+  if ! git -C "$JIG_PROJECT" remote get-url origin >/dev/null 2>&1; then
+    printf '%s\n' "${1:-origin}"
+    return 1
+  fi
+  for name in "$@"; do
+    [ -n "$name" ] || continue
+    if ! jig_net jig_git_origin fetch --quiet origin \
+         "+refs/heads/$name:refs/remotes/origin/$name" >/dev/null 2>&1; then
+      printf '%s\n' "$name"
+      return 1
+    fi
+  done
+  return 0
+}
+
+# jig_on_ci_runner — exit 0 when this process runs on a CI runner: the
+# environment variable CI is set and is not `false` or `0`, as GitHub Actions,
+# GitLab CI and most others set it. A runner has no `agent.git` (a local-only
+# key), so what the team's pipeline runs is decided by the flow, not by a
+# person's rights (adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone).
+jig_on_ci_runner() {
+  case "${CI:-}" in
+    '' | 0 | false | False | FALSE) return 1 ;;
+  esac
+  return 0
+}
+
+# jig_merge_conflicts <into> <from> — the paths a merge of the commit <from>
+# into the commit <into> leaves in conflict, one per line, into
+# JIG_MERGE_CONFLICTS; empty when it merges cleanly. Called directly, never in
+# `$()`: its temporary directory is registered for the exit cleanup, which a
+# subshell would lose (conventions/shell.md). Asked in a temporary detached worktree, never in a
+# checkout: nothing is committed, the merge is aborted and the worktree
+# removed by `git worktree remove` without `--force` (RULES.md), its mktemp
+# directory with the exit cleanup. Exit 1 when the question could not be
+# asked (the worktree could not be made, or the merge failed for another
+# reason than a conflict). Merge conflicts are symmetric, so this also says
+# whether <into> merges cleanly into <from>.
+# shellcheck disable=SC2034 # JIG_MERGE_CONFLICTS is read by the caller
+JIG_MERGE_CONFLICTS=""
+jig_merge_conflicts() {
+  local into="$1" from="$2" tmp wt out="" rc=0
+  JIG_MERGE_CONFLICTS=""
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/jig-merge.XXXXXX") || return 1
+  jig_cleanup_add -d "$tmp"
+  wt="$tmp/tree"
+  git -C "$JIG_PROJECT" worktree add -q --detach "$wt" "$into" >/dev/null 2>&1 || return 1
+  # Without the person's rerere: a recorded resolution would stage the paths,
+  # and the conflict would read as a merge that failed for another reason.
+  if ! git -C "$wt" -c user.name=jig -c user.email=jig@localhost -c rerere.enabled=false \
+       merge -q --no-commit --no-ff "$from" >/dev/null 2>&1; then
+    out=$(git -C "$wt" diff --name-only --diff-filter=U 2>/dev/null) || out=""
+    [ -n "$out" ] || rc=1
+  fi
+  git -C "$wt" merge --abort >/dev/null 2>&1 || true
+  git -C "$JIG_PROJECT" worktree remove "$wt" >/dev/null 2>&1 || true
+  # shellcheck disable=SC2034 # JIG_MERGE_CONFLICTS is read by the caller
+  JIG_MERGE_CONFLICTS=$out
+  return "$rc"
 }
 
 # --- forge -------------------------------------------------------------------
@@ -2091,7 +2989,10 @@ jig_glab_fields() {
 # `agent.git: merge`, is jig_ship_merge below, and it merges only a pull
 # request whose checks all passed, at the commit that was shipped, through the
 # forge's own rules — never --admin, never --auto
-# (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci).
+# (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci). The one
+# exception is not a ship's: `jig task promote` with git.promote_merge: auto
+# switches the forge's auto-merge on where CI gates the base (promote.sh,
+# adr-20261112-a-promotion-merges-itself-only-where-ci-gates-it).
 
 # Referenced from the EXIT trap jig_ship_pr sets for the pull request body it
 # cuts from a commit message, so it is script-global rather than `local`
@@ -2327,15 +3228,18 @@ $out"
 }
 
 # jig_ship_pr <who> <head> <base> <message-file> [<title>] [<body-file>] [<draft>]
-# — open a pull request from <head> into <base> through whichever forge this
-# checkout uses (jig_forge_kind), or report the one already open from <head>
-# rather than opening a second. The title defaults to the message's first
+# [<match-base>] — open a pull request from <head> into <base> through
+# whichever forge this checkout uses (jig_forge_kind), or report the one
+# already open from <head> rather than opening a second. With <match-base> 1
+# only one open from <head> into <base> counts: "prepare for prod" must not
+# take a task's open pull request into the staging branch for its promotion
+# (adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone). The title defaults to the message's first
 # line, the body to the rest of it; <draft> 1 opens it as a draft. With no
 # usable forge it says the pull request is the human's and returns 0. Leaves
 # the URL in JIG_SHIP_URL, so it is called directly, never in `$()`.
 # shellcheck disable=SC2034 # JIG_SHIP_URL is read by the caller
 jig_ship_pr() {
-  local who="$1" head="$2" base="$3" message_file="$4" title="${5:-}" body_file="${6:-}" draft="${7:-0}" kind
+  local who="$1" head="$2" base="$3" message_file="$4" title="${5:-}" body_file="${6:-}" draft="${7:-0}" match="${8:-0}" kind
   _jig_ship_outward "$who"
   JIG_SHIP_URL=""
   kind=$(jig_forge_kind) || exit 1
@@ -2353,19 +3257,21 @@ jig_ship_pr() {
   case "$kind" in
     github)
       jig_gh_require "$who"
-      _jig_ship_pr_github "$who" "$head" "$base" "$title" "$body_file" "$draft"
+      _jig_ship_pr_github "$who" "$head" "$base" "$title" "$body_file" "$draft" "$match"
       ;;
-    gitlab) _jig_ship_pr_gitlab "$who" "$head" "$base" "$title" "$body_file" "$draft" ;;
+    gitlab) _jig_ship_pr_gitlab "$who" "$head" "$base" "$title" "$body_file" "$draft" "$match" ;;
   esac
 }
 
-# _jig_ship_pr_github <who> <head> <base> <title> <body-file> <draft>
+# _jig_ship_pr_github <who> <head> <base> <title> <body-file> <draft> <match-base>
 # shellcheck disable=SC2034 # JIG_SHIP_URL is read by the caller
 _jig_ship_pr_github() {
-  local who="$1" head="$2" base="$3" title="$4" body_file="$5" draft="$6" url out
-  local extra=""
+  local who="$1" head="$2" base="$3" title="$4" body_file="$5" draft="$6" match="${7:-0}" url out
+  local extra="" only=""
   [ "$draft" != 1 ] || extra="--draft"
-  url=$(jig_net jig_gh pr list --head "$head" --state open --json url --jq '.[0].url' 2>/dev/null || printf '')
+  [ "$match" != 1 ] || only="--base"
+  # shellcheck disable=SC2086 # $only is one flag or nothing, its value follows
+  url=$(jig_net jig_gh pr list --head "$head" ${only:+$only "$base"} --state open --json url --jq '.[0].url' 2>/dev/null || printf '')
   case "$url" in '' | null) url="" ;; esac
   if [ -n "$url" ]; then
     JIG_SHIP_URL="$url"
@@ -2382,15 +3288,16 @@ $(jig_gh_asked_as)"
   printf 'pr %s\n' "$url"
 }
 
-# _jig_ship_pr_gitlab <who> <head> <base> <title> <body-file> <draft> — the
-# same through `glab`, whose JSON is read by jig_glab_fields, the reader
-# housekeeping uses.
+# _jig_ship_pr_gitlab <who> <head> <base> <title> <body-file> <draft>
+# <match-base> — the same through `glab`, whose JSON is read by
+# jig_glab_fields, the reader housekeeping uses.
 # shellcheck disable=SC2034 # JIG_SHIP_URL is read by the caller
 _jig_ship_pr_gitlab() {
-  local who="$1" head="$2" base="$3" title="$4" body_file="$5" draft="$6" out url desc
-  local extra=""
+  local who="$1" head="$2" base="$3" title="$4" body_file="$5" draft="$6" match="${7:-0}" out url desc
+  local extra="" only=""
   [ "$draft" != 1 ] || extra="--draft"
-  out=$(jig_net glab mr list --source-branch "$head" --output json 2>/dev/null || printf '')
+  [ "$match" != 1 ] || only="--target-branch"
+  out=$(jig_net glab mr list --source-branch "$head" ${only:+$only "$base"} --output json 2>/dev/null || printf '')
   url=$(printf '%s' "$out" | jig_glab_fields web_url | head -n 1)
   if [ -n "$url" ]; then
     JIG_SHIP_URL="$url"
@@ -2449,15 +3356,18 @@ _jig_ship_last_check() {
 #   2. not a draft, and its head is <sha>;
 #   3. a merge method the repository allows: `any` takes a merge commit, else
 #      squash, else rebase; `merge-commit` takes a merge commit or nothing (an
-#      epic: squash and rebase break the ancestry its tasks are judged by,
-#      ADR-0040);
+#      epic, and a task landing on the staging branch: squash and rebase
+#      break the ancestry their tasks are judged by, ADR-0040 and
+#      adr-20261111-a-task-lands-on-staging-through-its-pull-request);
 #   4. at least one check, and every check passed, within agent.ci_timeout
 #      minutes — none, a red one or the timeout leaves it open;
 #   5. the forge merges it at <sha> (GitHub `--match-head-commit`, GitLab
 #      `--sha`) and agrees to: a refusal — branch protection, a required
 #      review — leaves it open.
 # Never `--admin`, never `--auto`: nothing here overrides the forge or asks it
-# to merge later, when nobody is watching the conditions. Leaves the answer in
+# to merge later, when nobody is watching the conditions. The one `--auto` is
+# the promotion's, only where CI gates the base (promote.sh,
+# adr-20261112-a-promotion-merges-itself-only-where-ci-gates-it). Leaves the answer in
 # JIG_SHIP_MERGED, so it is called directly, never in `$()`.
 jig_ship_merge() {
   local who="$1" url="$2" sha="$3" policy="$4" kind timeout
@@ -2586,7 +3496,7 @@ EOF
   fi
   if [ -z "$method" ]; then
     if [ "$policy" = merge-commit ] && [ -n "$allowed" ]; then
-      printf 'not merged: the repository does not allow merge commits, and an epic merges only with one\n'
+      printf 'not merged: the repository does not allow merge commits, and this merge keeps its ancestry only with one\n'
     else
       printf 'not merged: could not tell which merge method the repository allows\n'
     fi
@@ -2656,7 +3566,10 @@ EOF
 
 # _jig_ship_merge_gitlab <url> <sha> <policy> <timeout> — the same through
 # `glab`. GitLab sets the method per project (merge_method, squash_option):
-# `merge-commit` needs a merge commit and a squash that is off by default.
+# `merge-commit` needs a merge commit and a squash that is off by default, and
+# plain `merge`: semi-linear history (`rebase_merge`) merges only a source
+# branch level with the target, and its "Rebase" rewrites the commits whose
+# ancestry the merge is kept for.
 # shellcheck disable=SC2034 # JIG_SHIP_MERGED is read by the caller
 _jig_ship_merge_gitlab() {
   local url="$1" sha="$2" policy="$3" timeout="$4" iid json project mm so squash="" state out
@@ -2678,10 +3591,9 @@ _jig_ship_merge_gitlab() {
   mm=$(printf '%s' "$project" | sed -n 's/.*"merge_method":[[:space:]]*"\([^"]*\)".*/\1/p')
   so=$(printf '%s' "$project" | sed -n 's/.*"squash_option":[[:space:]]*"\([^"]*\)".*/\1/p')
   case "$policy:$mm:$so" in
-    merge-commit:merge:never | merge-commit:merge:default_off \
-      | merge-commit:rebase_merge:never | merge-commit:rebase_merge:default_off) ;;
+    merge-commit:merge:never | merge-commit:merge:default_off) ;;
     merge-commit:?*:?*)
-      printf 'not merged: the project does not merge with a merge commit, and an epic merges only with one\n'
+      printf 'not merged: the project does not merge with a merge commit, and this merge keeps its ancestry only with one\n'
       return 0 ;;
     any:?*:always | any:?*:default_on) squash="--squash" ;;
     any:?*:?*) ;;
@@ -2824,6 +3736,135 @@ _jig_pr_state_no_forge() {
   else
     printf '%s is not signed in: %s auth status failed\n' "$cli" "$cli"
   fi
+}
+
+# --- what landing on the staging branch asks the forge -------------------------
+#
+# adr-20261111-a-task-lands-on-staging-through-its-pull-request. Three questions
+# about one open pull request, each answered `unknown` (or a failure) whenever
+# the forge cannot say: an unknown is never read as approved, as clean, or as
+# commented. On GitHub each asks through jig_gh, as this clone's account
+# (adr-20261110-a-clone-names-its-github-account); the caller resolves it first,
+# in its own shell (land_task: jig_gh_require), since these run in `$()`.
+
+# jig_pr_approval <url> — approved|changes|none|unknown: whether somebody
+# approved the pull request. GitHub: `reviewDecision` when branch protection
+# asks for reviews; when it does not, the decision is empty even for an
+# approved pull request, so the latest review of each reviewer decides —
+# changes requested by anyone wins over an approval. GitLab: who approved
+# (`approved_by`), never `approved`, which is true with no approval at all
+# when the project requires none.
+jig_pr_approval() {
+  local url="$1" kind out decision reviews iid
+  [ -n "$url" ] || { printf 'unknown\n'; return 0; }
+  kind=$(jig_forge_kind) || exit 1
+  case "$kind" in
+    github)
+      out=$(jig_net jig_gh pr view "$url" --json reviewDecision,latestReviews \
+        --jq '"\(.reviewDecision // "")|\([.latestReviews[]?.state] | join(","))"' 2>/dev/null) \
+        || { printf 'unknown\n'; return 0; }
+      decision=${out%%|*}
+      reviews=${out#*|}
+      case "$decision" in
+        APPROVED) printf 'approved\n' ;;
+        CHANGES_REQUESTED) printf 'changes\n' ;;
+        REVIEW_REQUIRED) printf 'none\n' ;;
+        '' | null)
+          case ",$reviews," in
+            *,CHANGES_REQUESTED,*) printf 'changes\n' ;;
+            *,APPROVED,*) printf 'approved\n' ;;
+            *) printf 'none\n' ;;
+          esac ;;
+        *) printf 'unknown\n' ;;
+      esac ;;
+    gitlab)
+      iid=$(_jig_ship_glab_mr "$url")
+      [ -n "$iid" ] || { printf 'unknown\n'; return 0; }
+      out=$(jig_net glab api "projects/:id/merge_requests/$iid/approvals" 2>/dev/null | tr -d ' \n') \
+        || { printf 'unknown\n'; return 0; }
+      case "$out" in
+        *'"approved_by":[]'*) printf 'none\n' ;;
+        *'"approved_by":[{'*) printf 'approved\n' ;;
+        *) printf 'unknown\n' ;;
+      esac ;;
+    *) printf 'unknown\n' ;;
+  esac
+}
+
+# _jig_pr_mergeable_once <kind> <url> — clean|conflict|draft|unknown, one look.
+_jig_pr_mergeable_once() {
+  local kind="$1" url="$2" out iid draft state
+  case "$kind" in
+    github)
+      out=$(jig_net jig_gh pr view "$url" --json isDraft,mergeable --jq '"\(.isDraft) \(.mergeable)"' 2>/dev/null) \
+        || { printf 'unknown\n'; return 0; }
+      read -r draft state <<EOF
+$out
+EOF
+      if [ "$draft" = true ]; then printf 'draft\n'; return 0; fi
+      case "$state" in
+        MERGEABLE) printf 'clean\n' ;;
+        CONFLICTING) printf 'conflict\n' ;;
+        *) printf 'unknown\n' ;;
+      esac ;;
+    gitlab)
+      iid=$(_jig_ship_glab_mr "$url")
+      [ -n "$iid" ] || { printf 'unknown\n'; return 0; }
+      out=$(jig_net glab mr view "$iid" --output json 2>/dev/null | tr -d ' \n') \
+        || { printf 'unknown\n'; return 0; }
+      case "$out" in
+        *'"draft":true'* | *'"work_in_progress":true'*) printf 'draft\n'; return 0 ;;
+      esac
+      state=$(printf '%s' "$out" | sed -n 's/.*"detailed_merge_status":"\([^"]*\)".*/\1/p')
+      case "$out:$state" in
+        *'"has_conflicts":true'*) printf 'conflict\n' ;;
+        *:conflict) printf 'conflict\n' ;;
+        *:checking | *:unchecked | *:preparing | *:approvals_syncing) printf 'unknown\n' ;;
+        *'"has_conflicts":false'*) printf 'clean\n' ;;
+        *) printf 'unknown\n' ;;
+      esac ;;
+    *) printf 'unknown\n' ;;
+  esac
+}
+
+# jig_pr_mergeable <url> — clean|conflict|draft|unknown: whether the pull
+# request merges into its base without a conflict, as the forge, which would
+# merge it, computes it. The forge works it out a little after a push, so an
+# unknown is looked at again every _JIG_CI_POLL seconds for up to a minute —
+# no longer than agent.ci_timeout allows, and once at a timeout of 0.
+jig_pr_mergeable() {
+  local url="$1" kind timeout start limit state
+  [ -n "$url" ] || { printf 'unknown\n'; return 0; }
+  kind=$(jig_forge_kind) || exit 1
+  timeout=$(jig_ci_timeout) || timeout=0
+  limit=60
+  [ $((timeout * 60)) -ge "$limit" ] || limit=$((timeout * 60))
+  start=$SECONDS
+  while :; do
+    state=$(_jig_pr_mergeable_once "$kind" "$url")
+    [ "$state" = unknown ] || break
+    [ $((SECONDS - start + _JIG_CI_POLL)) -le "$limit" ] || break
+    sleep "$_JIG_CI_POLL"
+  done
+  printf '%s\n' "$state"
+}
+
+# jig_pr_comment <url> <body-file> — add a comment to the pull request. Non-zero,
+# printing the forge's first line, when it cannot: a comment is said, never
+# retried, and what it carries is also in git.
+jig_pr_comment() {
+  local url="$1" body="$2" kind out iid
+  kind=$(jig_forge_kind) || exit 1
+  case "$kind" in
+    github)
+      out=$(jig_net jig_gh pr comment "$url" --body-file "$body" 2>&1) || { _jig_ship_first_line "$out"; return 1; } ;;
+    gitlab)
+      iid=$(_jig_ship_glab_mr "$url")
+      [ -n "$iid" ] || { printf 'not a merge request: %s\n' "$url"; return 1; }
+      out=$(jig_net glab mr note "$iid" --message "$(cat "$body")" 2>&1) || { _jig_ship_first_line "$out"; return 1; } ;;
+    *) printf 'no forge available\n'; return 1 ;;
+  esac
+  return 0
 }
 
 # --- merged branches ---------------------------------------------------------
@@ -4573,10 +5614,10 @@ jig_duration_seconds() {
   n=${d%[dhms]}; unit=${d#"$n"}
   case "$n" in ''|*[!0-9]*) jig_die "invalid duration: $d" ;; esac
   case "$unit" in
-    d|'') printf '%d\n' $((n * 86400)) ;;
-    h) printf '%d\n' $((n * 3600)) ;;
-    m) printf '%d\n' $((n * 60)) ;;
-    s) printf '%d\n' "$n" ;;
+    d|'') printf '%d\n' $((10#$n * 86400)) ;;
+    h) printf '%d\n' $((10#$n * 3600)) ;;
+    m) printf '%d\n' $((10#$n * 60)) ;;
+    s) printf '%d\n' $((10#$n)) ;;
   esac
 }
 

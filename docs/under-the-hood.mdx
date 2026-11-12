@@ -146,12 +146,16 @@ project sets it, is run by both after the share and the carry:
 | `git stash push -u` | pausing a task with `--stash`; resuming applies the stash and keeps it |
 | delete a branch | when starting a worktree fails, only the branch that attempt just created, while it still points where it was created; and, unless `git.delete_merged_branches` is `false`, a branch of Jig's own once its work has landed — after a merge Jig made (`jig task ship`, `jig upgrade --land`) and in housekeeping when a finished task is cleaned up — only when every commit on it is merged (`git branch -d`, or the hosting site's merged head when the remote copy is gone), and on origin only at the commit that was merged and only when `agent.git` is `push` or higher |
 | `git worktree add`, `git worktree remove --force`, `git update-ref` | a write from a program (`jig spec item`, `jig knowledge accept --json` and the like): the worktree commands only on Jig's own tree under the git directory, never a worktree of yours. At the write's commit, `update-ref` fast-forwards the write's branch in that tree to the base that already holds it or to origin's copy of it, checking the old value first; `jig writes ship` creates the write's branch in your clone at origin's tip when you deleted it there, only where no such branch exists and only when origin holds every edit the write made; and it deletes your clone's remote-tracking ref of that branch (`refs/remotes/origin/<branch>`) when origin no longer has the branch — what `git fetch --prune` would do |
+| `git worktree add --detach`, `git merge`, `git commit`, `git worktree remove --force` | on the staging flow, `jig task land` when a task's pull request conflicts with the staging branch: a temporary worktree of origin's staging branch beside your project (`<project>.worktrees/.land-<id>`), never your checkout; the merge is committed there with the resolution's note, and the tree is removed once the merge is pushed or the landing is given up (`--abort`) |
 | `git worktree remove` (never `--force`) | cleaning up a closed task's worktree, only when Git lists it with the task's branch, it lies under `git.worktree_root`, it has no uncommitted changes or lock, and no repository inside its ignored files holds work that is nowhere else |
 
 **No script commits or pushes on its own** — apart from the Windows installer's first commit in a
 repository it created, the only ones that do are `jig task ship`, `jig spec ship` and the writes from a program
-(`jig spec item`, `jig knowledge accept|reject|reviewed --json`, `jig writes ship`), and only as
-far as `agent.git` in your `.ai/config.local.yaml` allows (`none` by default: they do nothing). They
+(`jig spec item`, `jig knowledge accept|reject|reviewed --json`, `jig writes ship`), and on the
+staging flow `jig task land` (a merge into the staging branch, pushed there) and `jig task promote`
+(it pushes the task branch and opens the pull request into the main branch), and only as
+far as `agent.git` in your `.ai/config.local.yaml` allows (`none` by default: they do nothing). On a
+CI runner, which has no `agent.git`, `jig task promote` follows the flow alone. They
 commit what is staged, push without `--force`, never skip hooks, and open a pull request with `gh`
 or `glab`. With nothing staged, `jig task ship` stages the changes to tracked files itself and lists
 them, and refuses while a new file is neither staged nor ignored — a new file is never staged for

@@ -893,3 +893,101 @@ EOF
 
   rm -rf "$src" "$bin" "$stub"
 }
+
+# --- the git flow -------------------------------------------------------------
+
+_flow_doctor() {
+  run jig doctor
+  FLOW_LINES=$(printf '%s\n' "$OUT" | grep 'git flow' || true)
+}
+
+test_git_flow_direct_is_the_default_and_doctor_says_nothing() {
+  fixture_jig_repo
+  _flow_doctor
+  assert_eq "" "$FLOW_LINES"
+}
+
+test_git_flow_staging_without_a_branch_fails_doctor() {
+  fixture_jig_repo
+  printf 'git.flow: staging\n' >> .ai/config.yaml
+  _flow_doctor
+  assert_contains "$FLOW_LINES" "the staging flow needs the name of the staging branch"
+  assert_eq 1 "$RC"
+}
+
+test_git_flow_staging_branch_may_not_be_the_base_branch() {
+  fixture_jig_repo
+  printf 'git.flow: staging\ngit.staging_branch: main\n' >> .ai/config.yaml
+  _flow_doctor
+  assert_contains "$FLOW_LINES" "'main' is the base branch"
+}
+
+test_git_flow_rejects_a_name_git_rejects() {
+  fixture_jig_repo
+  printf 'git.flow: staging\ngit.staging_branch: bad..name\n' >> .ai/config.yaml
+  _flow_doctor
+  assert_contains "$FLOW_LINES" "git rejects the name 'bad..name'"
+}
+
+test_git_flow_rejects_an_unknown_flow_and_unknown_bricks() {
+  fixture_jig_repo
+  printf 'git.flow: trunk\n' >> .ai/config.yaml
+  _flow_doctor
+  assert_contains "$FLOW_LINES" "'trunk' is not a flow"
+
+  fixture_jig_repo
+  printf 'git.flow: staging\ngit.staging_branch: stage\ngit.staging_land: x\ngit.staging_review: y\ngit.promote_merge: z\n' >> .ai/config.yaml
+  _flow_doctor
+  assert_contains "$FLOW_LINES" "git.staging_land: 'x'"
+  assert_contains "$FLOW_LINES" "git.staging_review: 'y'"
+  assert_contains "$FLOW_LINES" "git.promote_merge: 'z'"
+}
+
+test_git_flow_staging_takes_the_flows_defaults_and_overrides() {
+  fixture_jig_repo
+  printf 'git.flow: staging\ngit.staging_branch: stage\n' >> .ai/config.yaml
+  _flow_doctor
+  assert_contains "$FLOW_LINES" "staging, through stage (land: pr, review: ask, promote: human)"
+
+  printf 'git.staging_review: require\ngit.promote_merge: auto\n' >> .ai/config.yaml
+  _flow_doctor
+  assert_contains "$FLOW_LINES" "(land: pr, review: require, promote: auto)"
+}
+
+test_git_flow_direct_warns_about_a_brick_it_does_not_read() {
+  fixture_jig_repo
+  printf 'git.staging_branch: stage\n' >> .ai/config.yaml
+  _flow_doctor
+  assert_contains "$FLOW_LINES" "git.staging_branch is set, and the direct flow does not read it"
+}
+
+test_git_flow_doctor_offers_a_staging_branch_on_origin_until_a_flow_is_named() {
+  fixture_jig_repo
+  git update-ref refs/remotes/origin/stage HEAD
+  git update-ref refs/remotes/origin/staging HEAD
+  _flow_doctor
+  assert_contains "$FLOW_LINES" "origin has a branch named stage staging"
+
+  printf 'git.flow: direct\n' >> .ai/config.yaml
+  _flow_doctor
+  assert_eq "" "$FLOW_LINES"
+}
+
+test_git_flow_a_local_branch_is_not_offered() {
+  fixture_jig_repo
+  git update-ref refs/heads/stage HEAD
+  _flow_doctor
+  assert_eq "" "$FLOW_LINES"
+}
+
+test_git_flow_staging_branch_may_not_be_written_as_a_ref() {
+  fixture_jig_repo
+  printf 'git.flow: staging\ngit.staging_branch: refs/heads/main\n' >> .ai/config.yaml
+  _flow_doctor
+  assert_contains "$FLOW_LINES" "'refs/heads/main' is a ref"
+
+  fixture_jig_repo
+  printf 'git.flow: staging\ngit.staging_branch: origin/staging\n' >> .ai/config.yaml
+  _flow_doctor
+  assert_contains "$FLOW_LINES" "'origin/staging' is a ref"
+}

@@ -42,6 +42,8 @@ Reference: ADR-0005, ADR-0008. Written only through `jig task`, atomically
 | `setup` | `jig task start --worktree`, `jig task bootstrap` | the outcome of the project's `worktree.setup` in the task's worktree: `ok`, `failed (exit <n>)` or `timed out (<duration>)`; absent when the project has none or no bootstrap ran it. A failure is shown by `jig status` (`setup=…`) and `jig task route` until a bootstrap succeeds. `task set` refuses it |
 | `notes_through` | `jig task set` | the full sha of the default branch's commit a release's notes describe, recorded by the notes task once its notes cover everything up to it. `jig task ship` adds it to the commit as a `Release-Notes-Through:` trailer, and refuses a change that raises the version while the base has commits after it (adr-20261112-release-notes-name-the-commit-they-describe). `task set` refuses a value that is not a commit here |
 | `pr_url` | `jig task ship` | the `https://` address of the pull request `ship` opened or found open. A fact about what `ship` did, not a merge state: whether it was merged is still derived by housekeeping every run (ADR-0005). `task set` refuses it |
+| `promote_url` | `jig task promote` | the `https://` address of the pull request into the base branch that "prepare for prod" opened or found open, in a project on the staging flow; written only where the task has a workspace (a CI runner has none). `pr_url` stays the address of the pull request into the staging branch. A fact about what the command did, not a merge state (ADR-0005). `task set` refuses it (adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone) |
+| `park_resumed_at` | `jig task resume` | UTC ISO time a person took a task parked at the staging branch back for a fix (written with `status: active`, in one write). While it is set the task is not parked, through the fix's own verify (`ready` again); the next `jig task ship` into the staging branch that is not a draft removes it at every `agent.git` level — after the push, or, at `none` and `commit`, before it hands the commit or the push to the person — and the task is parked again once git or the forge gives a reason. It records only that the task was taken back: why a task waits is never stored. `task set` refuses it (adr-20261112-a-task-waiting-at-staging-is-parked-and-resuming-it-is-its-status) |
 | `triage_task` | `jig task ship` | the id of the triage task (`<id>-findings`) this task's open P2/P3 were handed to when a ship opened its pull request. Read by a repeated ship, which files no second one, by `jig task findings` (`handed to …`) and by the autopilot's `end` message. The ledger keeps the findings `open`: the review's receipt pins it. `task set` refuses it (adr-20261029-a-ship-hands-open-findings-to-one-triage-task) |
 | `triage_of` | `jig task ship` | on a triage task, the id of the task whose open P2/P3 it holds. A task at `<id>-findings` without it is somebody else's, and a ship leaves it alone. While the triage task has no class and no branch, it has no route: `jig task set <id>-findings status consolidated` closes it and writes `knowledge_consolidated: true` with the close. `task set` refuses it |
 | `route_depth` | `jig task new --lean`, or `jig task set` | `full` or `lean`: how much of its class's route this task runs. Absent means the person's `route.depth` answers (default `full`); an invalid value reads as `full`. `jig task route <id>` prints the route at this depth, and `jig status` marks a lean task `depth=lean`. No gate reads it (adr-20261002-route-depth-is-a-personal-choice) |
@@ -72,7 +74,14 @@ route and is refused. Only a task with `route_evidence: required` is refused; an
 
 Pause is orthogonal to `status`: a task paused while `ready` resumes as `ready`. A task
 is a candidate for `jig task current` when its `branch` matches the checkout, its status
-is `active` or `ready`, and `paused` is absent.
+is `active` or `ready`, `paused` is absent, and it is not parked at the staging branch.
+
+Parked is not written here: it is derived from git and the forge cache on every read, and only
+a `ready` task without `park_resumed_at` can be parked. `jig task resume` of a parked task that is
+not paused writes `status: active` and `park_resumed_at`; verify writes `ready` again before the
+fix ships, and the next `jig task ship` into the staging branch removes `park_resumed_at` at any
+`agent.git` level
+(adr-20261112-a-task-waiting-at-staging-is-parked-and-resuming-it-is-its-status).
 
 Remote merge state (`merged`, `open`, `closed`, `unknown`) is never written here; it is
 derived by housekeeping on each run.

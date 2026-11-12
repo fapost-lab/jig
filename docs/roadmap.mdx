@@ -66,6 +66,15 @@ All of it is in 0.42.0; from 0.44.0 each finding carries its severity and a numb
 is installed for you, so it works in any clone. What is left is checking GitLab's posting, the
 follow-up and the severity layout on a live merge or pull request.
 
+**Git flows.** A project picks how its tasks travel: `direct`, straight to the main branch, or
+`staging`, where a task lands on a staging branch through a reviewed pull request, waits there
+parked while QA tests it, and reaches the main branch on "prepare for prod", said by a person or run
+by CI. All of it is on the main branch and goes out in the next release. What is left is running
+it on a real project, GitLab included (task `staging-flow-field-check`); deciding whether an epic's
+work passes through the staging branch, once a real epic meets one (task `epic-in-staging-flow`); and
+telling a squash merge, into the staging branch or out of it, from work that is not there
+([Known issues](/known-issues)).
+
 **Project hooks.** A way for a project to bind its own rules and its own checks to stages of the
 route, so that what a project insists on is asked at the stage it belongs to rather than remembered.
 
@@ -107,5 +116,8 @@ read, the settings as JSON, the knowledge waiting for a person, its decisions an
 leave your checkout alone are in 0.40.0; from 0.41.0 a finished task leaves the queue, so the board
 shows only the work left, and an upgrade from unreleased Jig is refused as `unreleased-source`; from
 0.43.0 an upgrade whose pull request is still open is refused as `not-merged`, not `failed`, and a
-refused close says why GitHub or GitLab could not be asked. Its plans
+refused close says why GitHub or GitLab could not be asked; from the next release, on the staging flow,
+each task in `jig task list --json` says whether it is on the staging branch and why it is parked, and
+`jig task promote` is the command a card moved from Staging to Ready can run, with no agent unless
+the main branch conflicts. Its plans
 live in its own repository, and its documentation at [jig-ui.fapost.in](https://jig-ui.fapost.in).

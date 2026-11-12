@@ -313,6 +313,82 @@ lines under it. `jig status` only reads that answer, it does not work it out aga
 `jig context --task <id>` gives the agent working on the task the same facts as `queue:` lines.
 Without a queue, none of this appears and the output looks as it always has.
 
+In a project on the staging flow (`git.flow: staging`), `jig status` names the flow before the task
+lines and says, on each task line, whether the task's work is on the staging branch:
+
+```text
+flow: staging via staging; on staging: 2, behind staging: 1
+task booking-form class=T2 status=active staging=on
+task booking-message class=T2 status=active staging=behind
+```
+
+`staging=behind` means the task has commits of its own that are not on the staging branch yet, such
+as a fix QA asked for; bringing the base branch into the task does not count. Jig reads this from
+git each time, by the task's branch, comparing it with origin's staging branch — `git fetch` to see
+what colleagues merged. When the flow cannot work, the line says so instead
+(`flow: staging, not usable: … (jig doctor)`). `jig housekeeping` puts the same word in its report
+(`on staging: …`, `behind staging: …`), and a task waiting on the staging branch is never archived
+as stale. With `git.staging_land: external`, where your CI merges tasks into the staging branch and
+no pull request goes there, this is how you see what CI landed: the same words, read the same way. On
+the default `direct` flow none of this appears.
+
+A shipped task that waits at the staging branch is **parked**, and it leaves the task lines for one
+line of its own:
+
+```text
+parked: booking-form (signal), booking-report (review, landing)
+```
+
+`review` waits for a review of its pull request into the staging branch — `landing` when you land it
+yourself (`agent.git` below `merge`) — and `signal` waits on the staging branch for "prepare for
+prod". `jig task list` marks it `parked=signal`. A parked task is not the current task, `jig queue
+next` does not offer it, and another task may start in the checkout it was landed from.
+`jig task resume <id>` takes it back for a fix: it becomes `active` and appears among the tasks
+again until its next `jig task ship` into the staging branch, verify included — at any
+`agent.git`, also when that ship leaves the commit or the push to you.
+
+`signal` is read from the staging branch as your checkout last fetched it. With
+`git.staging_land: external`, a task you shipped is listed as an ordinary task — and stays your
+current task — until a fetch (`jig housekeeping`, or `git fetch`) shows that CI merged it; with
+pull requests there is no such gap, since the open pull request keeps it parked for `review` until
+the housekeeping run that hears of the merge also fetches.
+
+A task parked for the signal stays on that line however long it waits; once it has waited
+`git.staging_stale_after`, the drift report below names it as well, since nobody promoted it.
+
+### The staging drift report
+
+On the staging flow `jig status` and `jig housekeeping` also say where the staging branch drifts
+from the base branch, a `staging:` line each:
+
+```text
+staging: booking-form has waited on staging 20 day(s) with no promotion (jig task promote booking-form)
+staging: the promotion of booking-message conflicts with main as of 2026-11-12T09:00:00Z (run jig task promote booking-message again)
+staging: 2 commit(s) on staging that no live task branch holds (git log --no-merges origin/staging ^origin/main --not --branches='task/*' --remotes='origin/task/*')
+```
+
+- **Waiting with no promotion.** A task's work has been on the staging branch for
+  `git.staging_stale_after` (14 days unless you set it) and no pull request into the base branch is
+  open or merged for it. The days count from the commit that last brought its work onto the staging branch —
+  the landing merge — so shipping a fix QA asked for starts them again. Every task branch counts,
+  here or on origin, so a colleague's task is named too — with `(jig task promote <id>, from any
+  checkout, or ask its owner)`: a task is promoted by its id from any checkout whose `agent.git` allows
+  it, or from CI, workspace or not.
+- **A promotion that conflicts.** A promotion this checkout opened (`jig task promote`) that the
+  forge, at the last housekeeping run, called conflicting with the base branch. Running the command
+  again names the files to resolve, and pushes the merge once you have resolved it.
+- **Work no task owns.** Commits on the staging branch that the base branch does not have and that
+  no task branch — yours or anyone's on origin — holds: something committed onto the staging branch
+  directly, or a task whose branch was deleted before its work reached the base branch. Only what the
+  staging branch has and the base branch does not counts, so a task whose promotion was merged with a
+  merge commit and whose branch was deleted leaves nothing here; a squash-merged one still does (see
+  [Known issues](/known-issues)). The command in brackets lists exactly the commits counted.
+
+All of it is read from git and from the forge cache housekeeping keeps, never from the forge
+directly; without a forge the line about conflicts does not appear. The status page and
+`jig status --json` show the same facts as items. Jig takes nothing off the staging branch: what to
+do with work on it stays your team's call.
+
 ## Inspect the change and its review
 
 ```bash
@@ -453,6 +529,12 @@ Personal settings live in the ignored `.ai/config.local.yaml`.
 Ask the agent to verify the result and record what the project should remember before shipping it.
 `jig task ship` follows your personal permissions and checks the task's completion records.
 After the change lands, confirm whether the task can close.
+
+On the staging flow, `jig task land <id>` lands the task's open pull request on the staging branch
+when you allow `merge`: after an approval, on the forge, or by a direct merge when it conflicts
+([how a task ships](/agent-ships)). It exits 3 when you decide — no approval yet, or a push the
+staging branch refused — and 5 when a conflict waits in its temporary worktree for
+`jig task land <id> --resolved --note-file <file>`; `--abort` gives the landing up.
 
 <Tip>
   `jig help` lists the full command surface. Use [Skills](/skills) for the agent procedures,

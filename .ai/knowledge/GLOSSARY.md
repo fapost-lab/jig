@@ -216,6 +216,44 @@ The branch a task was cut from and has to land on, recorded as `base_branch` in 
 judgement of whether a task landed is made against it; work merged anywhere else is flagged
 `wrong-base` (ADR-0039). Informal synonyms: base, target branch.
 
+## Git Flow
+
+How a project's tasks travel to the base branch, named by `git.flow`: `direct` (straight there, the default) or `staging` (through a Staging Branch first). A flow is assembled from bricks, the `git.staging_*` and `git.promote_merge` keys, and a project picks a named flow rather than assembling one. Jig's own branches and `agent.git` are the same in every flow.
+
+## Staging Branch
+
+The branch `git.staging_branch` names, on which a task lands for testing before the base branch in the `staging` Git Flow. Nothing reaches the base branch from it: a task goes there from its own branch. Informal synonyms: stage, staging.
+
+## On Staging
+
+A task in the `staging` Git Flow whose own work is on origin's Staging Branch, with nothing of its own
+after it. Own work is what the task's branch reaches and its base does not; a merge that only brings
+in the base or the Staging Branch is not own work. Derived from git by branch name, never stored.
+
+## Behind Staging
+
+A task in the `staging` Git Flow that is On Staging except for commits of its own the Staging Branch
+does not have yet — a fix QA asked for, pushed or not.
+
+## Staging Drift
+
+How origin's Staging Branch has moved away from the base branch, as `jig status` and housekeeping
+name it on `staging: ` lines: a task On Staging or Behind Staging for `git.staging_stale_after` with
+no promotion open, commits on the Staging Branch the base lacks that no live task branch holds, and
+an open promotion the forge calls conflicting with the base. Read from git by branch name and from
+the forge cache, never stored (adr-20261112-the-staging-drift-report-is-read-from-git-by-branch-name).
+Not the drift of an install (`jig status`'s `drift:` line).
+
+## Parked
+
+A `ready` task in the `staging` Git Flow that waits at the Staging Branch: its pull request into
+the Staging Branch is open (reason `review`; `landing` in the owner's checkout when their
+`agent.git` is below `merge`), or it is On Staging and waits for "prepare for prod" (reason
+`signal`), and it has no pull request into its base yet. Derived from git and the forge cache,
+never stored; it is not the current task, not advised by the queue, and `jig task resume` takes it
+back to `active` for a fix, recording only that (`park_resumed_at`, until the next `jig task ship`) (adr-20261112-a-task-waiting-at-staging-is-parked-and-resuming-it-is-its-status).
+Not a pause, which a person writes. Informal synonyms: waiting on staging.
+
 ## Epic Branch
 
 `epic/<spec-id>`: the branch a Specification released once, at the end, is built on. Its phases'

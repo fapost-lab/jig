@@ -79,7 +79,7 @@ project's and record it with `jig config set --local github.account <login>`.
 
 `jig-setup` asks a person, one question at a time, how far their agent may go on its own and
 writes the answers to their gitignored `.ai/config.local.yaml` through
-`jig config set --local`; it never writes `.ai/config.yaml`.
+`jig config set --local`; the one thing it writes to `.ai/config.yaml` is the team's git flow, after a yes.
 
 `jig-upgrade` brings a project's copy of Jig up to the version on the machine: `jig self-update`
 when a newer release is out, `jig upgrade`, and the steps the release asks for by hand; what would

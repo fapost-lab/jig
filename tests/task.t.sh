@@ -1343,7 +1343,7 @@ test_task_resume_json_success_has_the_task_and_what_resume_found() {
   assert_contains "$OUT" '"data":{"task":{"id":"T-1"'
   assert_contains "$OUT" '"paused":false'
   # No stash, a clean tree on the task's branch, overlap checked and empty.
-  assert_contains "$OUT" ',"resume":{"paused_days":0,"stash":null,"uncommitted":0,"overlap":[]}}'
+  assert_contains "$OUT" ',"resume":{"paused_days":0,"stash":null,"uncommitted":0,"overlap":[],"parked":null}}'
   assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "paused: true"
   # The task in the data is the one a listing prints after the resume.
   local in_data
@@ -1418,7 +1418,7 @@ test_task_resume_json_not_paused_is_refused() {
   _tr_json T-1
   assert_eq 1 "$RC"
   assert_eq not-paused "$(_tr_code)"
-  assert_contains "$OUT" "not paused: T-1"
+  assert_contains "$OUT" "not paused or parked: T-1"
 }
 
 test_task_resume_json_bad_arguments_are_usage() {
@@ -5293,9 +5293,15 @@ test_task_ship_unknown_task_dies() {
 #   gh-repo      merge-commit, squash and rebase allowed (default: true true true)
 #   gh-merge.rc  the exit code of `pr merge` (default: 0)
 #   gh-existing  the pull request `pr list` finds open (default: none)
+#   gh-review    `<reviewDecision>|<latest review states, comma-separated>`
+#                for the approval read (default: `|`, no review)
+#   gh-mergeable `MERGEABLE`|`CONFLICTING`|`UNKNOWN` (default: MERGEABLE)
+#   gh-state     the pull request's state for `--json state` (default: the
+#                draft-and-head line every other `pr view` gets, read as unknown)
+#   gh-comment.rc the exit code of `pr comment` (default: 0)
 # `pr create` and `pr merge` record their arguments in gh-create.argv and
 # gh-merge.argv; `pr create` also copies the body it was given to
-# gh-create.body.
+# gh-create.body, and `pr comment` its body to gh-comment.body.
 mship_stub_gh() {
   local dir="$PWD"
   mkdir -p stub-bin
@@ -5306,7 +5312,11 @@ printf '%s\n' "\$*" >> "\$d/gh.log"
 val() { if [ -f "\$d/\$1" ]; then cat "\$d/\$1"; else printf '%s\n' "\$2"; fi; }
 case "\$1 \$2" in
   "auth status") exit 0 ;;
-  "pr list") val gh-existing null ;;
+  "pr list")
+    case "\$*" in
+      *baseRefName*) val gh-heads "" ;;
+      *) val gh-existing null ;;
+    esac ;;
   "pr create")
     # gh-hook.sh, when present, runs once: the base moving between the ship-time check and the merge.
     if [ -f "\$d/gh-hook.sh" ]; then mv "\$d/gh-hook.sh" "\$d/gh-hook.ran"; (cd "\$d" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE sh "\$d/gh-hook.ran") > "\$d/gh-hook.out" 2>&1; fi
@@ -5318,7 +5328,21 @@ case "\$1 \$2" in
     done
     printf 'https://github.com/example/example/pull/99\n' ;;
   "pr view")
-    printf '%s %s\n' "\$(val gh-draft false)" "\$(val gh-head "\$(git rev-parse HEAD)")" ;;
+    case "\$*" in
+      *reviewDecision*) val gh-review "|" ;;
+      *mergeable*) printf '%s %s\n' "\$(val gh-draft false)" "\$(val gh-mergeable MERGEABLE)" ;;
+      *"--json state "*) if [ -f "\$d/gh-state" ]; then cat "\$d/gh-state"; else printf '%s %s\n' "\$(val gh-draft false)" "\$(val gh-head "\$(git rev-parse HEAD)")"; fi ;;
+      *) printf '%s %s\n' "\$(val gh-draft false)" "\$(val gh-head "\$(git rev-parse HEAD)")" ;;
+    esac ;;
+  "pr comment")
+    shift 2
+    while [ \$# -gt 0 ]; do
+      if [ "\$1" = --body-file ]; then cat "\$2" > "\$d/gh-comment.body"; fi
+      shift
+    done
+    rc=\$(val gh-comment.rc 0)
+    [ "\$rc" -eq 0 ] || printf 'GraphQL: Resource not accessible by integration\n' >&2
+    exit "\$rc" ;;
   "repo view") val gh-repo "true true true" ;;
   "pr checks")
     # gh-hook-checks.sh runs once, during the CI poll.
@@ -5343,6 +5367,9 @@ STUB
 #   glab-draft     `true`|`false` (default: false)
 #   glab-project   merge_method and squash_option (default: merge default_off)
 #   glab-merge.rc  the exit code of `mr merge` (default: 0)
+#   glab-conflicts `true`|`false`, the merge request's has_conflicts (default: false)
+#   glab-approvals the approvals endpoint's answer (default: approved by nobody)
+# `mr note` records its arguments in glab-note.argv.
 mship_stub_glab() {
   local dir="$PWD"
   mkdir -p stub-bin
@@ -5361,7 +5388,9 @@ case "\$1 \$2" in
     if [ "\$p" = null ]; then pipe=null; else
       pipe="{\"id\":5,\"sha\":\"\$(val glab-psha "\$head")\",\"status\":\"\$p\",\"user\":{\"id\":1,\"state\":\"active\"}}"
     fi
-    printf '{"iid":99,"state":"opened","draft":%s,"sha":"%s","head_pipeline":%s}\n' "\$(val glab-draft false)" "\$head" "\$pipe" ;;
+    printf '{"iid":99,"state":"opened","draft":%s,"has_conflicts":%s,"sha":"%s","head_pipeline":%s}\n' "\$(val glab-draft false)" "\$(val glab-conflicts false)" "\$head" "\$pipe" ;;
+  "mr note") shift 2; printf '%s\n' "\$@" > "\$d/glab-note.argv" ;;
+  "api projects/:id/merge_requests/99/approvals") val glab-approvals '{"approved":true,"approvals_required":0,"approved_by":[]}' ;;
   "api projects/:id")
     read -r mm so <<EOF
 \$(val glab-project "merge default_off")
@@ -6128,6 +6157,1330 @@ test_task_ship_recognises_a_raised_composer_json() {
   assert_eq 0 "$RC"
   assert_contains "$OUT" "this change raises the version in composer.json: 2.0.0 -> 2.0.1"
   assert_no_file gh-merge.argv
+}
+
+# --- the staging flow (adr-20261111-in-the-staging-flow-a-task-ships-into-the-staging-branch)
+
+# sship_setup <agent.git level> [<flow lines>] — a project on `git.flow:
+# staging` (or on the config lines <flow lines> give) with the staging branch
+# `staging` on origin and GitHub stubbed (mship_stub_gh), committed on main
+# before T-1 is cut, with VERSION 1.0.0 declared; T-1 started, its route
+# done, the knowledge decision recorded and a change staged, shipping at
+# <level>. `gh pr list` for the base-aware query answers gh-heads.
+sship_setup() {
+  local lines="${2:-git.flow: staging
+git.staging_branch: staging}"
+  task_setup_clean
+  ship_cfg forge github
+  printf '%s\n' "$lines" >> .ai/config.yaml
+  printf '1.0.0\n' > VERSION
+  git add .ai/config.yaml VERSION
+  git commit -q -m "fixture: the staging flow"
+  git branch -q staging main
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git fetch -q origin
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  ship_exclude_fixture
+  printf 'Ship T-1\n\nBody line one.\nBody line two.\n' > msg.txt
+  mship_stub_gh
+  ship_cfg_local agent.git "$1"
+  ship_cfg_local agent.ci_timeout 0
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+}
+
+# assert_pr_base <branch> — the pull request was opened into <branch>.
+assert_pr_base() {
+  assert_contains "$(cat gh-create.argv)" "$(printf -- '--base\n%s\n' "$1")"
+}
+
+test_task_ship_staging_opens_the_pull_request_into_staging() {
+  sship_setup pr
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pushed task/T-1"
+  assert_contains "$OUT" "task ship: git flow staging: the pull request goes into staging, not main"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
+  assert_contains "$OUT" "task/T-1 is not on staging yet: landing the pull request is the human's"
+  assert_pr_base staging
+  assert_not_contains "$(cat gh-create.argv)" "$(printf -- '--base\nmain')"
+  assert_file_contains .ai/workspace/tasks/T-1/state "pr_url: https://github.com/example/example/pull/99"
+}
+
+test_task_ship_staging_draft_at_merge_is_never_merged() {
+  sship_setup merge
+
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 0 "$RC" "$OUT"
+  assert_pr_base staging
+  assert_contains "$(cat gh-create.argv)" "--draft"
+  assert_contains "$OUT" "not merged: a draft pull request is never merged"
+  assert_no_file gh-merge.argv
+}
+
+# A release is what reaches the base branch; a pull request into staging does
+# not, so a raised version neither holds nor drafts it.
+test_task_ship_staging_version_raise_is_not_a_release() {
+  sship_setup merge
+  printf 'APPROVED|APPROVED\n' > gh-review
+  ship_cfg_local release.merge human
+  printf '2.0.0\n' > VERSION
+  git add VERSION
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "raises the version"
+  assert_not_contains "$(cat gh-create.argv)" "--draft"
+  assert_pr_base staging
+}
+
+test_task_ship_staging_refuses_a_flow_with_no_staging_branch_named() {
+  sship_setup merge
+  sed '/^git.staging_branch:/d' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git add .ai/config.yaml
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: the project's git flow cannot be shipped through:"
+  assert_contains "$OUT" "git.staging_branch: the staging flow needs the name of the staging branch"
+  assert_contains "$OUT" "Nothing was committed."
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "the branch must not be pushed"
+  assert_no_file gh.log "the forge must not be asked anything"
+}
+
+# A flow nobody knows is not read as `direct`: it would ship into the base
+# branch what the team meant to send elsewhere. A draft is refused too.
+test_task_ship_refuses_an_unknown_flow() {
+  sship_setup pr
+  sed 's/^git.flow:.*/git.flow: stagin/' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git add .ai/config.yaml
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "git.flow: 'stagin' is not a flow: direct or staging"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+  assert_no_file gh.log "the forge must not be asked anything"
+}
+
+test_task_ship_staging_refuses_without_the_staging_branch() {
+  sship_setup pr
+  git branch -q -D staging
+  git push -q origin --delete staging
+  git branch -q -d -r origin/staging
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: the staging branch staging is neither here nor on origin"
+  assert_contains "$OUT" "Nothing was committed."
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "the branch must not be pushed"
+  assert_no_file gh.log "the forge must not be asked anything"
+}
+
+# At `commit` nothing goes near the staging branch, so its absence stops nothing.
+test_task_ship_staging_at_commit_needs_no_staging_branch() {
+  sship_setup commit
+  git branch -q -D staging
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "stopped at commit: push is the human's"
+}
+
+test_task_ship_staging_external_land_opens_no_pull_request() {
+  sship_setup merge
+  printf 'git.staging_land: external\n' >> .ai/config.yaml
+  git add .ai/config.yaml
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pushed task/T-1"
+  assert_contains "$OUT" "stopped at push: git.staging_land is external, so CI lands task/T-1 on staging; no pull request opened"
+  assert_no_file gh-create.argv
+  assert_no_file gh-merge.argv
+}
+
+# Under `external` Jig opens no pull request and merges nothing, so it asks the
+# forge nothing — not even for a pull request into another branch — and needs
+# no staging branch of its own: CI owns the landing.
+# F11: under external landing the ship still fetches the staging branch and
+# judges the clean-branch rule: a clone that never fetched staging does not
+# read a branch carrying it as clean.
+test_task_ship_staging_external_land_refuses_a_branch_carrying_staging_it_never_fetched() {
+  sship_setup push 'git.flow: staging
+git.staging_branch: staging
+git.staging_land: external'
+  sland_staging_commit staging.txt 'another task'
+  git fetch -q origin
+  git reset -q
+  git merge -q --no-ff --no-edit origin/staging
+  ship_stage_change
+  git branch -q -D staging
+  git update-ref -d refs/remotes/origin/staging
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "through a merge of staging into the branch"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "nothing pushed"
+}
+
+test_task_ship_staging_external_land_refuses_without_the_staging_branch_on_origin() {
+  sship_setup push 'git.flow: staging
+git.staging_branch: staging
+git.staging_land: external'
+  git push -q origin --delete staging
+  git update-ref -d refs/remotes/origin/staging
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: could not fetch staging from origin; whether task/T-1 carries staging cannot be told without it."
+  assert_contains "$OUT" "Nothing was committed."
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+}
+
+test_task_ship_staging_external_land_asks_the_forge_nothing() {
+  sship_setup pr
+  printf 'git.staging_land: external\n' >> .ai/config.yaml
+  git add .ai/config.yaml
+  git branch -q -D staging
+  local staging_before
+  staging_before=$(git ls-remote origin refs/heads/staging | cut -f1)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pushed task/T-1"
+  assert_contains "$OUT" "stopped at push: git.staging_land is external, so CI lands task/T-1 on staging; no pull request opened"
+  assert_not_contains "$OUT" "pr https://"
+  assert_no_file gh.log "the forge must not be asked anything"
+  assert_eq "$staging_before" "$(git ls-remote origin refs/heads/staging | cut -f1)" "nothing may be pushed to the staging branch"
+}
+
+# No pull request will list the open P2/P3 under `external`, and nobody opens
+# one later: they go to their triage task at once, and the output says why.
+test_task_ship_staging_external_land_hands_open_findings_to_triage() {
+  sship_setup merge
+  printf 'git.staging_land: external\n' >> .ai/config.yaml
+  git add .ai/config.yaml
+  triage_findings
+  task_route_done T-1
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: no pull request lists the open findings, so they go to their triage task"
+  assert_contains "$OUT" "task ship: 2 open finding(s) handed to task T-1-findings"
+  assert_file_contains .ai/workspace/tasks/T-1-findings/task.md \
+    "- Pull request: none: git.staging_land is external, so CI lands task/T-1 on staging"
+  assert_file_contains .ai/workspace/tasks/T-1/state "triage_task: T-1-findings"
+}
+
+# At `push` too no pull request ever goes into the staging branch under
+# `external`: the ship says CI lands it and hands the findings over.
+test_task_ship_staging_external_land_at_push_hands_open_findings_to_triage() {
+  sship_setup push
+  printf 'git.staging_land: external\n' >> .ai/config.yaml
+  git add .ai/config.yaml
+  triage_findings
+  task_route_done T-1
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pushed task/T-1"
+  assert_contains "$OUT" "stopped at push: git.staging_land is external, so CI lands task/T-1 on staging; no pull request opened"
+  assert_not_contains "$OUT" "the pull request is the human's"
+  assert_contains "$OUT" "task ship: 2 open finding(s) handed to task T-1-findings"
+  assert_no_file gh-create.argv
+}
+
+# CI lands whatever is pushed under `external`, so a draft — never merged —
+# is committed and kept here, and nothing reaches origin.
+test_task_ship_staging_external_land_keeps_a_draft_local() {
+  sship_setup merge
+  printf 'git.staging_land: external\n' >> .ai/config.yaml
+  git add .ai/config.yaml
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "stopped at commit: a draft is not pushed, since git.staging_land is external and CI lands whatever is pushed to task/T-1"
+  [ "$(git rev-parse HEAD)" != "$head_before" ] || fail "the draft was not committed"
+  assert_eq "Ship T-1" "$(git log -1 --format=%s)"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "a draft must not be pushed"
+  assert_no_file gh-create.argv
+  assert_not_contains "$OUT" "handed"
+}
+
+# Whether an epic's tasks pass through staging is an open question of the
+# spec: until it is answered, an epic task ships into its epic as before.
+test_task_ship_staging_epic_task_ships_into_its_epic() {
+  sship_setup pr
+  git branch -q epic/x main
+  git push -q origin epic/x
+  git fetch -q origin
+  sed 's|^base_branch:.*|base_branch: epic/x|' .ai/workspace/tasks/T-1/state > state.tmp
+  mv state.tmp .ai/workspace/tasks/T-1/state
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: T-1 is cut from epic/x, not the base branch; the staging flow does not apply to it, so it ships into epic/x"
+  assert_pr_base epic/x
+  assert_not_contains "$OUT" "is not on staging"
+}
+
+# `git.flow: direct` written out is the default, and ships as before.
+test_task_ship_direct_flow_written_out_ships_into_the_base() {
+  sship_setup merge 'git.flow: direct'
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "git flow staging"
+  assert_pr_base main
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+}
+
+# --- landing a task on staging
+# (adr-20261111-a-task-lands-on-staging-through-its-pull-request)
+
+# sland_tree — the temporary worktree a direct merge of T-1 is made in.
+sland_tree() {
+  printf '%s/%s.worktrees/.land-T-1\n' "$(cd -P .. && pwd -P)" "$(basename "$PWD")"
+}
+
+# sland_staging_commit <file> <text> — a commit of another task on origin's
+# staging branch, writing <file>, made from a clone of its own.
+sland_staging_commit() {
+  local other
+  other="$PWD.other.$RANDOM"
+  git clone -q origin.git "$other"
+  git -C "$other" checkout -q staging
+  printf '%s\n' "$2" > "$other/$1"
+  git -C "$other" add "$1"
+  git -C "$other" commit -q -m "staging: another task's $1"
+  git -C "$other" push -q origin staging
+  rm -rf "$other"
+}
+
+# sland_conflict_setup [level] — sship_setup at <level> (default merge) with
+# the pull request approved and reported conflicting, and origin's staging
+# branch writing ship.txt, the file T-1 adds, otherwise.
+sland_conflict_setup() {
+  sship_setup "${1:-merge}"
+  printf 'APPROVED|APPROVED\n' > gh-review
+  printf 'CONFLICTING\n' > gh-mergeable
+  sland_staging_commit ship.txt 'staging change'
+}
+
+# sland_resolve — resolve the conflict in the temporary tree and write the
+# agent's note beside the project.
+sland_resolve() {
+  local tree
+  tree=$(sland_tree)
+  printf 'ship change\nstaging change\n' > "$tree/ship.txt"
+  git -C "$tree" add ship.txt
+  printf 'Kept both lines of ship.txt: the task'"'"'s and staging'"'"'s.\n' > "$PWD.note"
+}
+
+# AC-01: below `merge` the ship stops at the open pull request, and `task
+# land` hands the landing to the person.
+test_task_land_below_merge_hands_landing_to_the_person() {
+  sship_setup pr
+  printf 'APPROVED|APPROVED\n' > gh-review
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task/T-1 is not on staging yet: landing the pull request is the human's"
+
+  run jig task land T-1
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "task land: landing T-1 on staging needs agent.git: merge (git level pr (agent.git)); https://github.com/example/example/pull/99 stays open, the person lands it"
+  assert_no_file gh-merge.argv
+}
+
+# AC-02: an approved pull request that merges cleanly is merged on the forge,
+# with a merge commit at the shipped head — never squashed.
+test_task_ship_staging_lands_an_approved_clean_pull_request_on_the_forge() {
+  sship_setup merge
+  printf 'APPROVED|APPROVED\n' > gh-review
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "landed https://github.com/example/example/pull/99 on staging (merged on the forge)"
+  assert_contains "$(cat gh-merge.argv)" "--merge"
+  assert_contains "$(cat gh-merge.argv)" "$(printf -- '--match-head-commit\n%s' "$(git rev-parse HEAD)")"
+  assert_eq task/T-1 "$(git symbolic-ref --short HEAD)"
+  git show-ref --verify --quiet refs/heads/task/T-1 || fail "the task's branch must stay until promotion"
+  assert_no_file gh-comment.body "an approved landing needs no comment"
+}
+
+test_task_land_never_squashes_into_staging() {
+  sship_setup merge
+  printf 'APPROVED|APPROVED\n' > gh-review
+  printf 'false true true\n' > gh-repo
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "not landed: the repository does not allow merge commits, and this merge keeps its ancestry only with one"
+  assert_no_file gh-merge.argv
+}
+
+# AC-03: red CI or a forge refusal on a clean pull request leaves it open; the
+# direct merge is never the way around them.
+test_task_land_red_ci_is_not_landed_and_not_merged_directly() {
+  sship_setup merge
+  printf 'APPROVED|APPROVED\n' > gh-review
+  printf 'fail\n' > gh-checks
+  local staging_before
+  staging_before=$(git rev-parse origin/staging)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "not landed: a check failed"
+  assert_no_file gh-merge.argv
+  assert_eq "$staging_before" "$(git ls-remote origin refs/heads/staging | cut -f1)"
+  [ ! -e "$(sland_tree)" ] || fail "no temporary tree for a clean pull request"
+}
+
+test_task_land_forge_refusal_is_not_landed() {
+  sship_setup merge
+  printf 'APPROVED|APPROVED\n' > gh-review
+  printf '1\n' > gh-merge.rc
+  local staging_before
+  staging_before=$(git rev-parse origin/staging)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "not landed: the forge refused: GraphQL: Base branch policy prohibits the merge"
+  assert_eq "$staging_before" "$(git ls-remote origin refs/heads/staging | cut -f1)"
+}
+
+# AC-04: `ask` without an approval, with a person to answer: a stop that names
+# both answers; landing without review is said, and said on the pull request.
+test_task_land_ask_without_approval_asks_the_person() {
+  sship_setup merge
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: https://github.com/example/example/pull/99 is not approved (no review). Ask the person: land without review — jig task land T-1 --without-review — or wait for review (the pull request stays open)"
+  assert_no_file gh-merge.argv
+
+  run jig task land T-1 --without-review
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task land: landing https://github.com/example/example/pull/99 without an approval (no review), at the person's word (--without-review)"
+  assert_contains "$OUT" "landed https://github.com/example/example/pull/99 on staging (merged on the forge)"
+  assert_file_contains gh-comment.body "Landed without an approval, at the person's word."
+}
+
+# sland_as_bob — make the sship_setup project read as GitHub's
+# example/example to Jig while git still reaches the bare origin.git, and its
+# gh hold two accounts, alice (active) and bob, the one this clone names:
+# mship_stub_gh still answers, behind a gh that logs every call but the
+# account questions to gh-token.log as `<arguments> GH_TOKEN=<value>`.
+sland_as_bob() {
+  local real_git dir="$PWD"
+  real_git=$(command -v git)
+  git remote set-url origin https://github.com/example/example.git
+  mv stub-bin/gh stub-bin/gh-inner
+  cat > stub-bin/gh <<STUB
+#!/usr/bin/env bash
+case "\$1 \$2" in
+  "auth status")
+    printf 'github.com\n'
+    printf '  Logged in to github.com account alice (keyring)\n  - Active account: true\n'
+    printf '  Logged in to github.com account bob (keyring)\n  - Active account: false\n'
+    exit 0 ;;
+  "auth token")
+    while [ \$# -gt 0 ]; do
+      if [ "\$1" = --user ]; then printf 'tok-%s\n' "\$2"; exit 0; fi
+      shift
+    done
+    exit 1 ;;
+esac
+printf '%s GH_TOKEN=%s\n' "\$*" "\${GH_TOKEN:-}" >> "$dir/gh-token.log"
+exec "$dir/stub-bin/gh-inner" "\$@"
+STUB
+  chmod +x stub-bin/gh
+  # git reaches GitHub's URL at the bare repository; `remote get-url` alone
+  # still shows the URL, which is how Jig tells the forge and its account.
+  cat > stub-bin/git <<STUB
+#!/usr/bin/env bash
+case " \$* " in
+  *" remote get-url "* | *" config "*) exec "$real_git" "\$@" ;;
+esac
+exec "$real_git" -c "url.$dir/origin.git.insteadOf=https://github.com/example/example.git" "\$@"
+STUB
+  chmod +x stub-bin/git
+  ship_cfg_local github.account bob
+}
+
+# Landing asks GitHub as the account this clone names, never as the active
+# one: the approval, whether it merges, the merge and the comment
+# (adr-20261110-a-clone-names-its-github-account).
+test_task_land_asks_github_as_the_account_the_clone_names() {
+  sship_setup merge
+  sland_as_bob
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC" "$OUT"
+  run jig task land T-1 --without-review
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "landed https://github.com/example/example/pull/99 on staging (merged on the forge)"
+  assert_contains "$(grep 'reviewDecision' gh-token.log)" "GH_TOKEN=tok-bob"
+  assert_contains "$(grep 'isDraft,mergeable' gh-token.log)" "GH_TOKEN=tok-bob"
+  assert_contains "$(grep '^pr merge' gh-token.log)" "GH_TOKEN=tok-bob"
+  assert_contains "$(grep '^pr comment' gh-token.log)" "GH_TOKEN=tok-bob"
+  assert_contains "$(grep '^pr list' gh-token.log)" "GH_TOKEN=tok-bob"
+  assert_not_contains "$(cat gh-token.log)" "GH_TOKEN=tok-alice"
+  assert_not_contains "$(cat gh-token.log)" "GH_TOKEN= "
+}
+
+test_task_land_ask_names_changes_requested() {
+  sship_setup merge
+  printf '|COMMENTED,CHANGES_REQUESTED,APPROVED\n' > gh-review
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "is not approved (changes requested). Ask the person"
+}
+
+# An approval GitHub reports with no review rule on the branch: the decision
+# is empty, the latest review says it.
+test_task_land_reads_an_approval_without_a_review_rule() {
+  sship_setup merge
+  printf '|APPROVED\n' > gh-review
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "landed https://github.com/example/example/pull/99 on staging (merged on the forge)"
+}
+
+# AC-05: nobody answers in an unattended run, and `require` always waits.
+test_task_land_unattended_waits_for_review() {
+  sship_setup merge
+  ship_cfg_local autopilot.unattended true
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "not landed: https://github.com/example/example/pull/99 is not approved (no review) and an unattended run waits; T-1 waits for review"
+  assert_no_file gh-merge.argv
+
+  run jig task land T-1 --without-review
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task land: --without-review: nobody answers in an unattended run, so https://github.com/example/example/pull/99 waits for review"
+}
+
+test_task_land_require_waits_for_an_approval() {
+  sship_setup merge 'git.flow: staging
+git.staging_branch: staging
+git.staging_review: require'
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "not landed: https://github.com/example/example/pull/99 is not approved (no review) and git.staging_review is require; T-1 waits for review"
+
+  run jig task land T-1 --without-review
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task land: --without-review: git.staging_review is require, so https://github.com/example/example/pull/99 waits for an approval"
+
+  printf 'APPROVED|APPROVED\n' > gh-review
+  run jig task land T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "landed https://github.com/example/example/pull/99 on staging (merged on the forge)"
+}
+
+# AC-06: `none` lands without asking the forge for an approval.
+test_task_land_review_none_lands_without_asking() {
+  sship_setup merge 'git.flow: staging
+git.staging_branch: staging
+git.staging_review: none'
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "landing https://github.com/example/example/pull/99 without an approval: git.staging_review is none"
+  assert_contains "$OUT" "landed https://github.com/example/example/pull/99 on staging (merged on the forge)"
+  assert_not_contains "$(cat gh.log)" "reviewDecision"
+}
+
+# AC-07: a conflict stops for the agent in a temporary tree of origin's staging
+# branch; the person's checkout is not touched.
+test_task_land_conflict_stops_in_a_temporary_tree() {
+  sland_conflict_setup
+  local tree
+  tree=$(sland_tree)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 5 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: task/T-1 conflicts with staging; resolve in $tree:"
+  assert_contains "$OUT" "  ship.txt"
+  assert_contains "$OUT" "jig task land T-1 --resolved --note-file <file>"
+  [ -n "$(git -C "$tree" rev-parse --verify --quiet MERGE_HEAD)" ] || fail "the merge must be in progress in the tree"
+  assert_eq "$(git rev-parse task/T-1)" "$(git -C "$tree" rev-parse MERGE_HEAD)"
+  assert_eq "$(git rev-parse origin/staging)" "$(git -C "$tree" rev-parse HEAD)"
+  assert_eq task/T-1 "$(git symbolic-ref --short HEAD)"
+  assert_eq "" "$(git status --porcelain --untracked-files=no)"
+  [ ! -e .git/MERGE_HEAD ] || fail "no merge in the person's checkout"
+  assert_no_file gh-merge.argv
+
+  # Asked again, the same stop: nothing started over.
+  run jig task land T-1
+  assert_eq 5 "$RC" "$OUT"
+  assert_contains "$OUT" "task land: task/T-1 conflicts with staging; resolve in $tree:"
+}
+
+# AC-08: `--resolved` takes only a finished resolution with a note.
+test_task_land_resolved_refuses_what_is_not_resolved() {
+  sland_conflict_setup
+  local tree
+  tree=$(sland_tree)
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 5 "$RC" "$OUT"
+  printf 'note\n' > "$PWD.note"
+
+  run jig task land T-1 --resolved --note-file "$PWD.note"
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "path(s) in $tree are still unmerged or not added:"
+  assert_contains "$OUT" "  ship.txt"
+
+  git -C "$tree" add ship.txt
+  run jig task land T-1 --resolved --note-file "$PWD.note"
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task land: conflict markers left in $tree:"
+
+  : > "$PWD.empty"
+  run jig task land T-1 --resolved --note-file "$PWD.empty"
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task land: --resolved needs --note-file with how each conflict was resolved"
+
+  sland_resolve
+  printf 'more\n' > more.txt
+  git add more.txt
+  git commit -q -m "T-1: more"
+  git push -q origin task/T-1
+  run jig task land T-1 --resolved --note-file "$PWD.note"
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task land: task/T-1 moved since the merge started"
+  assert_contains "$OUT" "run jig task land T-1 --abort, then land again"
+
+  run jig task land T-1 --abort
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task land: $tree removed; nothing was sent"
+  [ ! -e "$tree" ] || fail "--abort removes the tree"
+  run jig task land T-1 --resolved --note-file "$PWD.note"
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task land: nothing to resolve: no landing in progress for T-1; run jig task land T-1"
+}
+
+# Under a git.branch_template of the project's own, the direct merge and its
+# messages name the task's real branch, never `task/<id>`.
+test_task_land_names_the_branch_the_template_gave() {
+  sland_conflict_setup
+  git branch -q -m task/T-1 wip/T-1
+  sed 's|^branch: task/T-1$|branch: wip/T-1|' .ai/workspace/tasks/T-1/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/T-1/state
+  sed 's|^git.branch_template:.*|git.branch_template: wip/{id}|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  git add .ai/config.yaml
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 5 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: wip/T-1 conflicts with staging; resolve in"
+  sland_resolve
+
+  run jig task land T-1 --resolved --note-file "$PWD.note"
+  assert_eq 0 "$RC" "$OUT"
+  git fetch -q origin
+  assert_contains "$(git log -1 --format=%B origin/staging)" "Merge wip/T-1 into staging"
+  assert_not_contains "$(git log -1 --format=%B origin/staging)" "task/T-1"
+}
+
+# AC-09, AC-15: the resolution is committed on staging and pushed without
+# force; the merge commit and the pull request name it; the task branch is
+# not touched, and the task reads as on staging.
+test_task_land_resolved_pushes_the_direct_merge() {
+  sland_conflict_setup
+  local tree staging_before tip merged
+  tree=$(sland_tree)
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 5 "$RC" "$OUT"
+  staging_before=$(git rev-parse origin/staging)
+  tip=$(git rev-parse task/T-1)
+  sland_resolve
+
+  run jig task land T-1 --resolved --note-file "$PWD.note"
+  assert_eq 0 "$RC" "$OUT"
+  merged=$(git ls-remote origin refs/heads/staging | cut -f1)
+  assert_contains "$OUT" "landed https://github.com/example/example/pull/99 on staging by a direct merge $merged: the pull request conflicted with staging"
+  assert_contains "$OUT" "conflicts resolved in: ship.txt"
+  assert_contains "$OUT" "Kept both lines of ship.txt"
+  git fetch -q origin
+  assert_eq "$staging_before $tip" "$(git log -1 --format=%P "$merged")"
+  assert_contains "$(git log -1 --format=%B "$merged")" "Merge task/T-1 into staging"
+  assert_contains "$(git log -1 --format=%B "$merged")" "Conflicts resolved:"
+  assert_contains "$(git log -1 --format=%B "$merged")" "Kept both lines of ship.txt"
+  assert_file_contains gh-comment.body "Landed on staging by a direct merge $merged: this pull request conflicted with staging."
+  assert_file_contains gh-comment.body "Conflicts resolved in: ship.txt"
+  assert_file_contains gh-comment.body "Kept both lines of ship.txt"
+  [ ! -e "$tree" ] || fail "the tree goes once the merge is pushed"
+  assert_eq "$tip" "$(git rev-parse task/T-1)"
+  assert_eq "$tip" "$(git ls-remote origin refs/heads/task/T-1 | cut -f1)"
+  assert_eq task/T-1 "$(git symbolic-ref --short HEAD)"
+  assert_no_file .ai/workspace/tasks/T-1/land-note.md
+  assert_no_file gh-merge.argv
+
+  run jig task list --json
+  assert_contains "$OUT" '"branch":"task/T-1","base_branch":"main","staging":"on"'
+}
+
+# AC-10: origin's staging moved between the stop and `--resolved`: the push is
+# refused, never forced; a fresh fetch, the merge again with the resolution
+# replayed, and the push again.
+test_task_land_rejected_push_is_retried_from_a_fresh_fetch() {
+  sland_conflict_setup
+  local merged moved
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 5 "$RC" "$OUT"
+  sland_resolve
+  sland_staging_commit other.txt 'someone else'
+  moved=$(git ls-remote origin refs/heads/staging | cut -f1)
+
+  run jig task land T-1 --resolved --note-file "$PWD.note"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task land: origin has moved staging since the merge; merging again from a fresh fetch (push 2 of 3)"
+  assert_contains "$OUT" "landed https://github.com/example/example/pull/99 on staging by a direct merge"
+  merged=$(git ls-remote origin refs/heads/staging | cut -f1)
+  git fetch -q origin
+  git merge-base --is-ancestor "$moved" "$merged" || fail "the commit that moved staging must stay in it"
+  git merge-base --is-ancestor task/T-1 "$merged" || fail "the task must be on staging"
+  assert_eq "$(printf 'ship change\nstaging change')" "$(git show "$merged:ship.txt")"
+}
+
+# AC-11: origin refuses the push for another reason (a protected branch): no
+# retry, nothing forced, the tree kept for the person, and `--abort` takes it.
+test_task_land_refused_push_stops_and_keeps_the_tree() {
+  sland_conflict_setup
+  local tree staging_before
+  tree=$(sland_tree)
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 5 "$RC" "$OUT"
+  sland_resolve
+  cat > origin.git/hooks/pre-receive <<'HOOK'
+#!/bin/sh
+while read -r old new ref; do
+  if [ "$ref" = refs/heads/staging ]; then
+    echo "protected branch: staging" >&2
+    exit 1
+  fi
+done
+exit 0
+HOOK
+  chmod +x origin.git/hooks/pre-receive
+  staging_before=$(git ls-remote origin refs/heads/staging | cut -f1)
+
+  run jig task land T-1 --resolved --note-file "$PWD.note"
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "not landed: origin refused the push to staging:"
+  assert_contains "$OUT" "Nothing was forced; https://github.com/example/example/pull/99 stays open. The merge with the resolution is in $tree"
+  assert_not_contains "$OUT" "merging again"
+  assert_eq "$staging_before" "$(git ls-remote origin refs/heads/staging | cut -f1)"
+  [ -d "$tree" ] || fail "the tree with the resolution stays for the person"
+
+  run jig task land T-1 --abort
+  assert_eq 0 "$RC" "$OUT"
+  [ ! -e "$tree" ] || fail "--abort removes the tree"
+  assert_eq "" "$(git worktree list --porcelain | grep -F '.land-T-1' || true)"
+}
+
+# AC-12: what the forge cannot say, a closed or a draft pull request, and one
+# already landed.
+test_task_land_unknown_mergeability_is_not_landed() {
+  sship_setup merge
+  printf 'APPROVED|APPROVED\n' > gh-review
+  printf 'UNKNOWN\n' > gh-mergeable
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "not landed: the forge could not say whether https://github.com/example/example/pull/99 merges cleanly into staging; run jig task land T-1 again"
+  assert_no_file gh-merge.argv
+}
+
+test_task_land_closed_draft_and_merged_pull_requests() {
+  sship_setup pr
+  printf 'APPROVED|APPROVED\n' > gh-review
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  ship_cfg_local agent.git merge
+
+  printf 'CLOSED\n' > gh-state
+  run jig task land T-1
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task land: https://github.com/example/example/pull/99 is closed; ship T-1 again to open a new pull request into staging"
+
+  printf 'OPEN\n' > gh-state
+  printf 'true\n' > gh-draft
+  run jig task land T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "not landed: https://github.com/example/example/pull/99 is a draft; a draft is never landed"
+
+  printf 'MERGED\n' > gh-state
+  run jig task land T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "T-1 is already on staging (https://github.com/example/example/pull/99 merged)"
+  assert_no_file gh-merge.argv
+}
+
+# AC-13: GitLab — who approved, has_conflicts, a note on the merge request,
+# and the warning when it stays open after the direct merge.
+test_task_land_gitlab_reads_approved_by_not_approved() {
+  sship_setup merge
+  ship_cfg forge gitlab
+  git add .ai/config.yaml
+  mship_stub_glab
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "is not approved (no review). Ask the person"
+
+  printf '{"approved":true,"approvals_required":0,"approved_by":[{"user":{"id":7}}]}\n' > glab-approvals
+  run jig task land T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "landed https://gitlab.example/example/example/-/merge_requests/99 on staging (merged on the forge)"
+  assert_file glab-merge.argv
+}
+
+# Semi-linear history merges only a branch level with staging, and its
+# "Rebase" rewrites the commits the merge keeps the ancestry of: not a
+# merge-commit project.
+test_task_land_gitlab_does_not_land_on_a_semi_linear_project() {
+  sship_setup merge
+  ship_cfg forge gitlab
+  git add .ai/config.yaml
+  mship_stub_glab
+  printf '{"approved":true,"approved_by":[{"user":{"id":7}}]}\n' > glab-approvals
+  printf 'rebase_merge default_off\n' > glab-project
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "not landed: the project does not merge with a merge commit, and this merge keeps its ancestry only with one"
+  assert_no_file glab-merge.argv
+}
+
+test_task_land_gitlab_direct_merge_notes_the_merge_request() {
+  sship_setup merge
+  ship_cfg forge gitlab
+  git add .ai/config.yaml
+  mship_stub_glab
+  printf '{"approved":true,"approved_by":[{"user":{"id":7}}]}\n' > glab-approvals
+  printf 'true\n' > glab-conflicts
+  printf 'null\n' > glab-pipeline
+  sland_staging_commit ship.txt 'staging change'
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 5 "$RC" "$OUT"
+  sland_resolve
+  run jig task land T-1 --resolved --note-file "$PWD.note"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "landed https://gitlab.example/example/example/-/merge_requests/99 on staging by a direct merge"
+  assert_contains "$(cat glab-note.argv)" "Kept both lines of ship.txt"
+  assert_contains "$OUT" "task land: https://gitlab.example/example/example/-/merge_requests/99 still reads open on the forge though its head is in staging; close it by hand"
+  assert_no_file glab-merge.argv
+}
+
+# AC-16: the `land` row of the actions table offers what the command accepts.
+test_task_land_row_in_the_actions_table() {
+  sship_setup pr
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+
+  run jig task list --json
+  assert_contains "$OUT" '{"id":"land","command":"jig task land T-1","offered":false,"reason":"task land: landing T-1 on staging needs agent.git: merge (git level pr (agent.git))"}'
+
+  ship_cfg_local agent.git merge
+  run jig task list --json
+  assert_contains "$OUT" '{"id":"land","command":"jig task land T-1","offered":true,"reason":null}'
+}
+
+test_task_land_row_withheld_in_the_direct_flow() {
+  sship_setup merge 'git.flow: direct'
+  run jig task list --json
+  assert_contains "$OUT" '{"id":"land","command":"jig task land T-1","offered":false,"reason":"task land: T-1 is not on the staging flow; a task in this project lands with jig task ship"}'
+}
+
+# AC-17: a task branch stays clean of staging: a merge of staging into it is
+# refused at every level, by ship before the commit and by land; a merge of
+# the base is not.
+test_task_ship_staging_refuses_a_branch_carrying_staging() {
+  sship_setup commit
+  sland_staging_commit staging.txt 'another task'
+  git fetch -q origin
+  git reset -q
+  git merge -q --no-ff --no-edit origin/staging
+  ship_stage_change
+  local merge head_before
+  merge=$(git rev-parse HEAD)
+  head_before=$merge
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: task/T-1 carries 1 commit(s) that main does not have, through a merge of staging into the branch ($merge). A task branch stays clean until it reaches main: only main and clean task branches may be merged into it. Rebuild it without that merge (its own commits on main) and ship again; a conflict with staging is resolved on staging when the task lands"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "nothing pushed"
+}
+
+test_task_land_refuses_a_branch_carrying_staging() {
+  sship_setup pr
+  printf 'APPROVED|APPROVED\n' > gh-review
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  ship_cfg_local agent.git merge
+  sland_staging_commit staging.txt 'another task'
+  git fetch -q origin
+  git merge -q --no-ff --no-edit origin/staging
+  git push -q origin task/T-1
+
+  run jig task land T-1
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task land: task/T-1 carries 1 commit(s) that main does not have, through a merge of staging into the branch"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_staging_takes_a_merge_of_the_base() {
+  sship_setup pr
+  git reset -q
+  git checkout -q main
+  printf 'base\n' > base.txt
+  git add base.txt
+  git commit -q -m "main: released work"
+  git push -q origin main
+  git checkout -q task/T-1
+  git merge -q --no-ff --no-edit main
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "carries"
+  assert_pr_base staging
+}
+
+# AC-18: a clean task branch may be merged into a task branch, even when its
+# commits are on staging already; another branch, or a task branch that
+# itself carries staging, is refused, naming what was merged.
+
+# sland_dep_branch <name> <file> — a branch cut from main with one commit
+# writing <file>, pushed; the index of the task branch left untouched.
+sland_dep_branch() {
+  git branch -q "$1" main
+  local wt="$PWD.wt.$RANDOM"
+  git worktree add -q "$wt" "$1"
+  printf '%s\n' "$1" > "$wt/$2"
+  git -C "$wt" add "$2"
+  git -C "$wt" commit -q -m "$1: $2"
+  git worktree remove "$wt"
+  git push -q origin "$1"
+}
+
+test_task_ship_staging_takes_a_clean_task_branch_on_staging() {
+  sship_setup pr
+  sland_dep_branch task/T-2 dep.txt
+  sland_land_on_staging task/T-2
+  git fetch -q origin
+  git reset -q
+  git merge -q --no-ff --no-edit task/T-2
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "carries"
+  assert_pr_base staging
+}
+
+test_task_ship_staging_refuses_a_merged_feature_branch() {
+  sship_setup pr
+  sland_dep_branch feature/x feature.txt
+  git reset -q
+  git merge -q --no-ff --no-edit feature/x
+  ship_stage_change
+  local merge
+  merge=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: task/T-1 carries 1 commit(s) that main does not have, through a merge of feature/x into the branch ($merge)."
+  assert_eq "$merge" "$(git rev-parse HEAD)"
+}
+
+test_task_ship_staging_refuses_a_task_branch_that_carries_staging() {
+  sship_setup pr
+  sland_staging_commit staging.txt 'another task'
+  git fetch -q origin
+  sland_dep_branch task/T-3 dep.txt
+  local wt="$PWD.wt3"
+  git worktree add -q "$wt" task/T-3
+  git -C "$wt" merge -q --no-ff --no-edit origin/staging
+  git worktree remove "$wt"
+  git reset -q
+  git merge -q --no-ff --no-edit task/T-3
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "through a merge of task/T-3, which itself carries staging into the branch"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "nothing pushed"
+}
+
+# sland_land_on_staging <branch> — <branch>, pushed, landed on origin's staging
+# branch the way Jig lands: a merge commit, made from a clone of its own.
+sland_land_on_staging() {
+  local other="$PWD.land.$RANDOM"
+  git clone -q origin.git "$other"
+  git -C "$other" checkout -q staging
+  git -C "$other" merge -q --no-ff --no-edit "origin/$1"
+  git -C "$other" push -q origin staging
+  rm -rf "$other"
+  git fetch -q origin
+}
+
+# sland_staging_with_a_landing — origin's staging branch with another task
+# landed on it by a merge commit, fetched.
+sland_staging_with_a_landing() {
+  sland_dep_branch task/T-9 nine.txt
+  sland_land_on_staging task/T-9
+}
+
+# F4: a task branch cut from, or rebased onto, the staging branch is not clean.
+test_task_ship_staging_refuses_a_branch_cut_from_staging() {
+  sship_setup pr
+  sland_staging_with_a_landing
+  git reset -q
+  git reset -q --hard origin/staging
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: task/T-1 is cut from staging, not main:"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "nothing pushed"
+}
+
+test_task_ship_staging_refuses_a_branch_rebased_onto_staging() {
+  sship_setup pr
+  git commit -q -m "T-1: ship.txt"
+  sland_staging_with_a_landing
+  git rebase -q origin/staging
+  printf 'more\n' > more.txt
+  git add more.txt
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: task/T-1 is cut from staging, not main:"
+}
+
+# The reviewer's probe: a task branch cut from staging on origin does not make
+# staging a clean dependency, and merged in it is refused for what it is.
+test_task_ship_staging_refuses_staging_held_by_a_miscut_task_branch() {
+  sship_setup pr
+  git commit -q -m "T-1: ship.txt"
+  sland_staging_with_a_landing
+  local wt="$PWD.wtm"
+  git worktree add -q -b task/miscut "$wt" origin/staging
+  printf 'miscut\n' > "$wt/miscut.txt"
+  git -C "$wt" add miscut.txt
+  git -C "$wt" commit -q -m "miscut"
+  git worktree remove "$wt"
+  git push -q origin task/miscut
+
+  git merge -q --no-ff --no-commit origin/staging
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "through a merge of staging into the branch (the merge in progress, not committed yet)"
+  git merge --abort
+
+  git merge -q --no-ff --no-edit task/miscut
+  printf 'more\n' > more.txt
+  git add more.txt
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "through a merge of task/miscut, which itself is cut from staging into the branch"
+}
+
+# F6: a dependency is judged at the commit that was merged: one that merged
+# staging afterwards does not taint what was merged while it was clean.
+test_task_ship_staging_judges_a_dependency_at_the_merged_commit() {
+  sship_setup pr
+  sland_dep_branch task/T-2 dep.txt
+  git reset -q
+  git merge -q --no-ff --no-edit task/T-2
+  sland_staging_commit staging.txt 'another task'
+  git fetch -q origin
+  local wt="$PWD.wt2"
+  git worktree add -q "$wt" task/T-2
+  git -C "$wt" merge -q --no-ff --no-edit origin/staging
+  git worktree remove "$wt"
+  git push -q origin task/T-2
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "carries"
+}
+
+test_task_ship_staging_names_a_dependency_cut_from_a_feature_branch() {
+  sship_setup pr
+  sland_dep_branch feature/x feature.txt
+  local wt="$PWD.wt4"
+  git worktree add -q -b task/T-4 "$wt" feature/x
+  printf 'four\n' > "$wt/four.txt"
+  git -C "$wt" add four.txt
+  git -C "$wt" commit -q -m "T-4"
+  git worktree remove "$wt"
+  git push -q origin task/T-4
+  git reset -q
+  git merge -q --no-ff --no-edit task/T-4
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "through a merge of task/T-4, which itself is cut from feature/x into the branch"
+}
+
+test_task_ship_staging_names_a_dependency_nested_too_deep() {
+  sship_setup pr
+  local i wt prev=""
+  for i in 1 2 3 4 5 6; do
+    sland_dep_branch "task/n$i" "n$i.txt"
+    if [ -n "$prev" ]; then
+      wt="$PWD.wtn$i"
+      git worktree add -q "$wt" "task/n$i"
+      git -C "$wt" merge -q --no-ff --no-edit "$prev"
+      git worktree remove "$wt"
+      git push -q origin "task/n$i"
+    fi
+    prev="task/n$i"
+  done
+  git reset -q
+  git merge -q --no-ff --no-edit task/n6
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "through a merge of task/n6, which itself is nested too deep to judge into the branch"
+}
+
+# F5: the person's word is for one landing attempt: a red CI ends it, and the
+# next attempt asks again; a landing ends it too.
+test_task_land_without_review_ends_with_a_not_landed_attempt() {
+  sship_setup merge
+  printf 'fail\n' > gh-checks
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC" "$OUT"
+
+  run jig task land T-1 --without-review
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "not landed: a check failed"
+  assert_no_file .ai/workspace/tasks/T-1/land-without-review
+
+  printf 'pass\n' > gh-checks
+  run jig task land T-1
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "Ask the person"
+}
+
+test_task_land_without_review_ends_with_the_landing() {
+  sship_setup merge
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC" "$OUT"
+  run jig task land T-1 --without-review
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "landed https://github.com/example/example/pull/99 on staging (merged on the forge)"
+  assert_no_file .ai/workspace/tasks/T-1/land-without-review
+
+  # A later ship of the same task asks again.
+  printf 'more\n' > more.txt
+  git add more.txt
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "Ask the person"
+}
+
+# F8: a merged commit is a task dependency only on a task branch's own
+# first-parent line: a feature branch another task merged in stays a feature
+# branch, whatever it did since.
+# sland_task_merging <task> <branch> — <task> cut from main, <branch> merged
+# into it, pushed.
+sland_task_merging() {
+  git branch -q "$1" main
+  local wt="$PWD.wtt.$RANDOM"
+  git worktree add -q "$wt" "$1"
+  git -C "$wt" merge -q --no-ff --no-edit "$2"
+  git worktree remove "$wt"
+  git push -q origin "$1"
+}
+
+test_task_ship_staging_refuses_a_feature_branch_another_task_merged_after_it_moved_on() {
+  sship_setup pr
+  sland_dep_branch feature/x feature.txt
+  local old wt
+  old=$(git rev-parse feature/x)
+  sland_task_merging task/T-5 feature/x
+  wt="$PWD.wtf"
+  git worktree add -q "$wt" feature/x
+  printf 'later\n' > "$wt/later.txt"
+  git -C "$wt" add later.txt
+  git -C "$wt" commit -q -m "feature/x: later"
+  git worktree remove "$wt"
+  git push -q origin feature/x
+  git reset -q
+  git merge -q --no-ff --no-edit "$old"
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "through a merge of feature/x into the branch"
+  assert_not_contains "$OUT" "T-5"
+}
+
+test_task_ship_staging_refuses_a_local_feature_branch_another_task_merged() {
+  sship_setup pr
+  sland_dep_branch feature/x feature.txt
+  sland_task_merging task/T-5 feature/x
+  git push -q origin --delete feature/x
+  git branch -q -d -r origin/feature/x
+  git reset -q
+  git merge -q --no-ff --no-edit feature/x
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "through a merge of feature/x into the branch"
+  assert_not_contains "$OUT" "T-5"
+}
+
+# F1: the ship judges the commit it is about to make: a merge of staging in
+# progress — not committed yet, or a conflict resolved and added — is refused
+# with nothing committed, pushed or opened.
+test_task_ship_staging_refuses_a_staging_merge_in_progress() {
+  sship_setup pr
+  sland_staging_commit staging.txt 'another task'
+  git fetch -q origin
+  git reset -q
+  git merge -q --no-ff --no-commit origin/staging
+  git add ship.txt
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: task/T-1 carries 1 commit(s) that main does not have, through a merge of staging into the branch (the merge in progress, not committed yet)"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "nothing pushed"
+  assert_no_file gh-create.argv
+}
+
+test_task_ship_staging_refuses_a_resolved_staging_merge() {
+  sship_setup pr
+  git commit -q -m "T-1: ship.txt"
+  sland_staging_commit ship.txt 'staging change'
+  git fetch -q origin
+  git merge -q --no-ff origin/staging >/dev/null 2>&1 || true
+  printf 'ship change\nstaging change\n' > ship.txt
+  git add ship.txt
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: task/T-1 carries 1 commit(s) that main does not have, through a merge of staging into the branch (the merge in progress, not committed yet)"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "nothing pushed"
+  assert_no_file gh-create.argv
+}
+
+test_task_ship_staging_takes_a_merge_of_the_base_in_progress() {
+  sship_setup pr
+  git reset -q
+  git checkout -q main
+  printf 'base\n' > base.txt
+  git add base.txt
+  git commit -q -m "main: released work"
+  git push -q origin main
+  git checkout -q task/T-1
+  git merge -q --no-ff --no-commit main
+  git add ship.txt
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "carries"
+  assert_contains "$OUT" "committed "
+  assert_pr_base staging
+}
+
+# F2: the person's word to land without review stands across the conflict:
+# `--resolved` does not ask again, and the word goes with the landing.
+test_task_land_without_review_stands_across_the_conflict() {
+  sship_setup merge
+  printf 'CONFLICTING\n' > gh-mergeable
+  sland_staging_commit ship.txt 'staging change'
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC" "$OUT"
+  run jig task land T-1 --without-review
+  assert_eq 5 "$RC" "$OUT"
+  assert_file .ai/workspace/tasks/T-1/land-without-review
+  sland_resolve
+
+  run jig task land T-1 --resolved --note-file "$PWD.note"
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "Ask the person"
+  assert_contains "$OUT" "landed https://github.com/example/example/pull/99 on staging by a direct merge"
+  assert_file_contains gh-comment.body "Landed without an approval, at the person's word."
+  assert_no_file .ai/workspace/tasks/T-1/land-without-review
+}
+
+test_task_land_abort_forgets_the_word_to_land_without_review() {
+  sship_setup merge
+  printf 'CONFLICTING\n' > gh-mergeable
+  sland_staging_commit ship.txt 'staging change'
+  run jig task ship T-1 --message-file msg.txt
+  run jig task land T-1 --without-review
+  assert_eq 5 "$RC" "$OUT"
+
+  run jig task land T-1 --abort
+  assert_eq 0 "$RC" "$OUT"
+  assert_no_file .ai/workspace/tasks/T-1/land-without-review
+  run jig task land T-1
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "Ask the person"
+}
+
+# The shared walk: a task's own commits already on staging are its own, and a
+# branch with nothing of staging prints nothing.
+test_task_branch_carries_staging_keeps_landed_own_commits_own() {
+  sship_setup merge
+  printf 'APPROVED|APPROVED\n' > gh-review
+  git commit -q -m "T-1: work"
+  git push -q origin task/T-1
+  sland_land_on_staging task/T-1
+  git fetch -q origin
+  printf 'fix\n' > fix.txt
+  git add fix.txt
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "carries"
 }
 
 # Only [project] (or [tool.poetry]) names the package's version: a `version`
@@ -10147,7 +11500,7 @@ test_task_list_json_pins_a_task_with_every_fact() {
   _tl_json
   assert_eq 0 "$RC" "$ERR"
   _tl_cut_actions
-  assert_eq '[{"id":"start","command":"jig task start SRD-9-full","offered":true,"reason":null},{"id":"pause","command":"jig task pause SRD-9-full","offered":false,"reason":"task pause: already paused: SRD-9-full"},{"id":"resume","command":"jig task resume SRD-9-full","offered":true,"reason":null},{"id":"request-pause","command":"jig queue request task:SRD-9-full pause","offered":false,"reason":"queue request: task SRD-9-full is already paused"},{"id":"cancel-pause-request","command":"jig queue cancel task:SRD-9-full pause","offered":false,"reason":"queue cancel: no pause of task:SRD-9-full is requested"},{"id":"approve-gate","command":"jig task gate SRD-9-full approved","offered":false,"reason":"task gate: SRD-9-full is stopped; if a human answered, run: jig task autopilot SRD-9-full resume --answer <text> --by human; then approve with --by agent; or, if a person takes the task on: jig task autopilot SRD-9-full handover --by human --answer <text>"},{"id":"answer-stop","command":"jig task autopilot SRD-9-full resume --answer <text> --by human","offered":true,"reason":null},{"id":"handover","command":"jig task autopilot SRD-9-full handover --by human --answer <text>","offered":true,"reason":null},{"id":"set-class","command":"jig task set SRD-9-full class <Tn>","offered":true,"reason":null},{"id":"ship","command":"jig task ship SRD-9-full --message-file <file>","offered":false,"reason":"task ship: agent.git is none in this clone; the human commits"},{"id":"close","command":"jig task set SRD-9-full status consolidated","offered":false,"reason":"task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set SRD-9-full knowledge_consolidated true"},{"id":"abandon","command":"jig task abandon SRD-9-full","offered":true,"reason":null},{"id":"archive","command":"jig task archive SRD-9-full","offered":true,"reason":null},{"id":"unarchive","command":"jig task unarchive SRD-9-full","offered":false,"reason":"task unarchive: task SRD-9-full is not archived"},{"id":"reopen","command":"jig task set SRD-9-full status active","offered":false,"reason":"task SRD-9-full is active, not abandoned"}]' "$ACTIONS"
+  assert_eq '[{"id":"start","command":"jig task start SRD-9-full","offered":true,"reason":null},{"id":"pause","command":"jig task pause SRD-9-full","offered":false,"reason":"task pause: already paused: SRD-9-full"},{"id":"resume","command":"jig task resume SRD-9-full","offered":true,"reason":null},{"id":"request-pause","command":"jig queue request task:SRD-9-full pause","offered":false,"reason":"queue request: task SRD-9-full is already paused"},{"id":"cancel-pause-request","command":"jig queue cancel task:SRD-9-full pause","offered":false,"reason":"queue cancel: no pause of task:SRD-9-full is requested"},{"id":"approve-gate","command":"jig task gate SRD-9-full approved","offered":false,"reason":"task gate: SRD-9-full is stopped; if a human answered, run: jig task autopilot SRD-9-full resume --answer <text> --by human; then approve with --by agent; or, if a person takes the task on: jig task autopilot SRD-9-full handover --by human --answer <text>"},{"id":"answer-stop","command":"jig task autopilot SRD-9-full resume --answer <text> --by human","offered":true,"reason":null},{"id":"handover","command":"jig task autopilot SRD-9-full handover --by human --answer <text>","offered":true,"reason":null},{"id":"set-class","command":"jig task set SRD-9-full class <Tn>","offered":true,"reason":null},{"id":"ship","command":"jig task ship SRD-9-full --message-file <file>","offered":false,"reason":"task ship: agent.git is none in this clone; the human commits"},{"id":"land","command":"jig task land SRD-9-full","offered":false,"reason":"task land: SRD-9-full is not on the staging flow; a task in this project lands with jig task ship"},{"id":"close","command":"jig task set SRD-9-full status consolidated","offered":false,"reason":"task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set SRD-9-full knowledge_consolidated true"},{"id":"abandon","command":"jig task abandon SRD-9-full","offered":true,"reason":null},{"id":"archive","command":"jig task archive SRD-9-full","offered":true,"reason":null},{"id":"unarchive","command":"jig task unarchive SRD-9-full","offered":false,"reason":"task unarchive: task SRD-9-full is not archived"},{"id":"reopen","command":"jig task set SRD-9-full status active","offered":false,"reason":"task SRD-9-full is active, not abandoned"}]' "$ACTIONS"
   assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"pause_request\":null,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"archived_at\":null,\"archived_reason\":null,\"archived_from\":null,\"absorbed_into\":null,\"absorbs\":[],\"absorbs_partly\":[],\"partly_in\":[],\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\",\"handover_at\":null},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\",\"state\":\"open\",\"ci\":\"red\",\"fetched_at\":\"2026-10-02T12:00:00Z\"},\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"archived\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
 }
 
@@ -10157,8 +11510,382 @@ test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
   _tl_json
   assert_eq 0 "$RC" "$ERR"
   _tl_cut_actions
-  assert_eq 15 "$(printf '%s\n' "$ACTIONS" | grep -o '{"id":' | wc -l | tr -d ' ')"
+  assert_eq 16 "$(printf '%s\n' "$ACTIONS" | grep -o '{"id":' | wc -l | tr -d ' ')"
   assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"tasks":[{"id":"bare","class":null,"status":"active","issue":null,"goal":null,"knowledge_consolidated":false,"paused":false,"pause_request":null,"created_at":"2026-10-01","updated_at":"2026-10-01","archived_at":null,"archived_reason":null,"archived_from":null,"absorbed_into":null,"absorbs":[],"absorbs_partly":[],"partly_in":[],"branch":null,"base_branch":"main","worktree":null,"gate":null,"autopilot":null,"pull_request":null,"housekeeping_flags":[]}],"hidden":0,"archived":0,"housekeeping":null}}' "$OUT"
+}
+
+# _tl_staging_of <id> — the `staging` value OUT gives the task <id>: on,
+# behind, null, or nothing when its object has no such field.
+_tl_staging_of() {
+  printf '%s\n' "$OUT" | grep -o "{\"id\":\"$1\",[^{]*" | sed -n 's/.*"staging":\([^,]*\),.*/\1/p' | tr -d '"'
+}
+
+# On the staging flow every task says whether its work is on the staging
+# branch, from git alone (ADR-0039 as amended 2026-11-11): its tip in origin's
+# staging, or own commits after that — a merge of its base at promotion is
+# not one of them.
+test_task_list_json_says_whether_a_task_is_on_staging() {
+  fixture_staging_repo
+  fixture_task unstarted "" active
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq on "$(_tl_staging_of on)"
+  assert_eq behind "$(_tl_staging_of behind)"
+  assert_eq on "$(_tl_staging_of promoted)"
+  assert_eq null "$(_tl_staging_of never)"
+  assert_eq null "$(_tl_staging_of fresh)"
+  assert_eq null "$(_tl_staging_of unstarted)"
+  # Right after the base, as schemas/json.md places it.
+  assert_contains "$OUT" '"branch":"task/on","base_branch":"main","staging":"on","parked":null,"worktree":null'
+  # The fix pushed and merged into staging: on staging again.
+  git checkout -q -b staging origin/staging
+  git merge -q --no-ff -m "ship the fix" task/behind
+  git push -q origin staging
+  git checkout -q main
+  _tl_json
+  assert_eq on "$(_tl_staging_of behind)"
+  # Staging merged into a task branch ("Update branch" on its pull request
+  # into staging) is not the task's own work: one never shipped stays off
+  # staging, one already there stays on it.
+  git checkout -q -b task/upd main
+  printf 'upd\n' > upd.txt
+  git add upd.txt
+  git commit -q -m upd
+  git merge -q --no-ff -m "update branch" origin/staging
+  git checkout -q task/on
+  git merge -q --no-ff -m "update branch" origin/staging
+  git checkout -q main
+  fixture_task upd task/upd active "class:T2"
+  _tl_json
+  assert_eq null "$(_tl_staging_of upd)"
+  assert_eq on "$(_tl_staging_of on)"
+  # One task as a write answers with it carries the field too.
+  jig task pause behind >/dev/null 2>&1 || fail "could not pause behind"
+  run_split jig task resume behind --json
+  case "$OUT" in *'"staging":'*) ;; *) fail "task resume --json has no staging field: $OUT" ;; esac
+}
+
+# Under `git.staging_land: external` a task CI merged into the staging branch,
+# with no pull request, reads as on staging like any other.
+test_task_list_json_reads_what_ci_landed_on_staging() {
+  fixture_staging_repo
+  printf 'git.staging_land: external\n' >> .ai/config.yaml
+  _tl_json
+  assert_eq null "$(_tl_staging_of never)"
+  fixture_staging_ci_lands never
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq on "$(_tl_staging_of never)"
+  assert_eq behind "$(_tl_staging_of behind)"
+}
+
+# The field is the staging flow's: a project on `direct`, or one whose staging
+# flow names no branch, lists the shape it always did.
+test_task_list_json_has_no_staging_field_off_the_staging_flow() {
+  fixture_staging_repo
+  sed 's|^git.flow:.*|git.flow: direct|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_not_contains "$OUT" '"staging"'
+  sed -e 's|^git.flow:.*|git.flow: staging|' -e '/^git.staging_branch:/d' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_not_contains "$OUT" '"staging"'
+}
+
+# --- parked at the staging branch
+# (adr-20261112-a-task-waiting-at-staging-is-parked-and-resuming-it-is-its-status)
+
+# _park_repo — fixture_staging_repo with every shipped task `ready`, as a ship
+# leaves it, and an empty forge cache.
+_park_repo() {
+  local id
+  fixture_staging_repo
+  for id in on behind promoted never fresh; do
+    sed 's/^status: active$/status: ready/' ".ai/workspace/tasks/$id/state" > s.tmp
+    mv s.tmp ".ai/workspace/tasks/$id/state"
+  done
+  mkdir -p .ai/runtime
+  : > .ai/runtime/forge-cache
+}
+
+# _park_cache <head> <base> <state> [<url>] — one forge cache line, all eight
+# columns, newest first as housekeeping writes them.
+_park_cache() {
+  local f=.ai/runtime/forge-cache
+  { printf '%s\t%s\t%s\t-\t2026-11-12T10:00:00Z\t-\t%s\tmergeable\n' "$1" "$2" "$3" "${4:--}"; cat "$f"; } > "$f.tmp"
+  mv "$f.tmp" "$f"
+}
+
+# _tl_parked_of <id> — the `parked` value of one task in a `task list --json`.
+_tl_parked_of() {
+  printf '%s\n' "$OUT" | sed -E -n "s/.*\\{\"id\":\"$1\",[^{]*\"parked\":(null|\\{[^}]*\\}).*/\\1/p"
+}
+
+# Parked is derived from git and the forge cache: on staging waits for the
+# signal, an open pull request into staging for review; a pull request into
+# the base, work after staging with none open, or nothing on staging is not
+# parked; only a `ready` task is; and the owner's link to a pull request the
+# cache has not heard of yet counts.
+test_task_list_says_which_tasks_are_parked_at_staging() {
+  _park_repo
+  fixture_task unstarted "" ready
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq '{"reason":"signal","hint":null}' "$(_tl_parked_of on)"
+  assert_eq '{"reason":"signal","hint":null}' "$(_tl_parked_of promoted)"
+  assert_eq null "$(_tl_parked_of behind)"
+  assert_eq null "$(_tl_parked_of never)"
+  assert_eq null "$(_tl_parked_of fresh)"
+  assert_eq null "$(_tl_parked_of unstarted)"
+  assert_contains "$OUT" '"staging":"on","parked":{"reason":"signal","hint":null},"worktree":null'
+
+  # A fix with a pull request into staging open waits for review; agent.git
+  # below `merge` (none by default) lands it by hand.
+  _park_cache task/behind staging open
+  _park_cache task/promoted main open
+  _tl_json
+  assert_eq '{"reason":"review","hint":"landing"}' "$(_tl_parked_of behind)"
+  assert_eq null "$(_tl_parked_of promoted)"
+  printf 'agent.git: merge\n' > .ai/config.local.yaml
+  _tl_json
+  assert_eq '{"reason":"review","hint":null}' "$(_tl_parked_of behind)"
+
+  # The owner's link: a pull request ship just opened, before housekeeping
+  # heard of it, is open; one the cache says closed is not.
+  printf 'pr_url: https://forge.test/pr/7\n' >> .ai/workspace/tasks/never/state
+  _tl_json
+  assert_eq '{"reason":"review","hint":null}' "$(_tl_parked_of never)"
+  _park_cache task/never staging closed https://forge.test/pr/7
+  _tl_json
+  assert_eq null "$(_tl_parked_of never)"
+  # A promotion the owner opened ends parking before the cache knows it.
+  printf 'promote_url: https://forge.test/pr/8\n' >> .ai/workspace/tasks/on/state
+  _tl_json
+  assert_eq null "$(_tl_parked_of on)"
+
+  # An `active` task is one resumed for a fix: not parked.
+  sed 's/^status: ready$/status: active/' .ai/workspace/tasks/promoted/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/promoted/state
+  rm -f .ai/runtime/forge-cache
+  _tl_json
+  assert_eq null "$(_tl_parked_of promoted)"
+
+  # The text listing says it on the task's line.
+  _park_cache task/behind staging open
+  run jig task list
+  assert_contains "$OUT" "behind class=T2 status=ready branch=task/behind parked=review"
+  printf 'agent.git: pr\n' > .ai/config.local.yaml
+  run jig task list
+  assert_contains "$OUT" "parked=review,landing"
+}
+
+# Off the staging flow nothing is parked and nothing new is printed.
+test_task_list_has_no_parked_off_the_staging_flow() {
+  _park_repo
+  sed 's|^git.flow:.*|git.flow: direct|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_not_contains "$OUT" '"parked"'
+  run jig task list
+  assert_not_contains "$OUT" "parked"
+}
+
+# A parked task holds no current-task slot: the checkout stays on its branch
+# after the landing, and `task current` names nobody until it is resumed.
+test_task_current_skips_a_parked_task_until_it_is_resumed() {
+  _park_repo
+  git checkout -q task/on
+  run jig task current
+  assert_eq 1 "$RC" "$OUT"
+  run jig task resume on
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "resumed on from parked (signal): fix it, jig verify, then jig task ship on"
+  assert_file_contains .ai/workspace/tasks/on/state "status: active"
+  run jig task current
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq on "$OUT"
+  # Resumed, it is neither paused nor parked any more.
+  run jig task resume on
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task resume: not paused or parked: on"
+}
+
+# `task resume --json` says which parking it took the task back from; a resume
+# that ends a pause takes none, and a task paused while parked is parked again
+# after it (ADR-0012), so a second resume takes it back for a fix.
+test_task_resume_of_a_parked_task_as_json_and_after_a_pause() {
+  _park_repo
+  run_split jig task resume on --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"resume":{"paused_days":0,"stash":null,"uncommitted":null,"overlap":null,"parked":"signal"}'
+  assert_contains "$OUT" '"status":"active"'
+  assert_contains "$OUT" '"parked":null'
+
+  jig task pause promoted >/dev/null
+  run jig task resume promoted
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "resumed promoted (paused"
+  assert_contains "$OUT" "still parked (signal): jig task resume promoted again to fix it"
+  assert_file_contains .ai/workspace/tasks/promoted/state "status: ready"
+  run_split jig task resume promoted --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"parked":"signal"}'
+  assert_file_contains .ai/workspace/tasks/promoted/state "status: active"
+}
+
+# The actions table offers `resume` to a parked task, and withholds it from
+# one neither paused nor parked with the command's own words.
+test_task_actions_offer_resume_to_a_parked_task() {
+  _park_repo
+  _tl_json
+  assert_contains "$OUT" '{"id":"resume","command":"jig task resume on","offered":true,"reason":null}'
+  assert_contains "$OUT" '{"id":"resume","command":"jig task resume behind","offered":false,"reason":"task resume: not paused or parked: behind"}'
+}
+
+# Autopilot stops at the staging branch: no run starts on a parked task and no
+# stage is entered, until a person resumes it.
+test_task_autopilot_refuses_a_parked_task() {
+  _park_repo
+  run jig task autopilot on start
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "task autopilot start: on is parked (signal): it waits at the staging branch; a person resumes it for a fix with jig task resume on"
+  if grep -q '^autopilot:' .ai/workspace/tasks/on/state; then fail "a refused start wrote a run"; fi
+  printf 'autopilot: on\n' >> .ai/workspace/tasks/promoted/state
+  run jig task autopilot promoted stage implement
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "task autopilot stage: promoted is parked (signal)"
+  jig task resume on >/dev/null
+  run jig task autopilot on start
+  assert_eq 0 "$RC" "$OUT"
+}
+
+# The checkout a parked task was landed from stays on its branch, and is free:
+# another task starts there. A task resumed for a fix occupies it again.
+test_task_start_is_not_refused_by_a_parked_task_working_here() {
+  _park_repo
+  git checkout -q task/on
+  mkdir -p .ai/runtime/working
+  printf 'command: task ship on\n' > .ai/runtime/working/on
+  jig task new next >/dev/null
+  jig task resume on >/dev/null
+  run jig task start next
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "this checkout is in use: task on"
+  # Verified again, and not shipped yet: still the fix being worked on here.
+  sed 's/^status: active$/status: ready/' .ai/workspace/tasks/on/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/on/state
+  run jig task start next
+  assert_eq 1 "$RC" "$OUT"
+  # Shipped (the ship drops the record): parked again, and the checkout is free.
+  sed '/^park_resumed_at:/d' .ai/workspace/tasks/on/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/on/state
+  run jig task start next
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq task/next "$(git symbolic-ref --short HEAD)"
+}
+
+# A person took the task back for a fix: `park_resumed_at` keeps it out of
+# parking through the fix's own verify (`ready` again), so neither a listing
+# nor an autopilot run reads it as waiting before the fix ships.
+test_task_resumed_from_park_stays_unparked_when_ready_again() {
+  _park_repo
+  jig task resume on >/dev/null
+  assert_file_contains .ai/workspace/tasks/on/state "park_resumed_at: 20"
+  sed 's/^status: active$/status: ready/' .ai/workspace/tasks/on/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/on/state
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq null "$(_tl_parked_of on)"
+  assert_eq '{"reason":"signal","hint":null}' "$(_tl_parked_of promoted)"
+  git checkout -q task/on
+  run_split jig task current
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq on "$OUT"
+  run jig task autopilot on start
+  assert_eq 0 "$RC" "$OUT"
+  run jig task autopilot on stage verify
+  assert_eq 0 "$RC" "$OUT"
+}
+
+# Only `jig task resume` writes the record and only a ship removes it.
+test_task_set_refuses_park_resumed_at() {
+  _park_repo
+  run jig task set on park_resumed_at 2026-11-12T10:00:00Z
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task set: key is not writable: park_resumed_at"
+}
+
+# The ship that sends the fix into the staging branch drops the record, and
+# the task is parked again — here for review, its new pull request open, which
+# the person lands (agent.git: pr).
+test_task_ship_staging_drops_park_resumed_at() {
+  sship_setup pr
+  printf 'park_resumed_at: 2026-11-12T10:00:00Z\n' >> .ai/workspace/tasks/T-1/state
+  run_split jig task list --json
+  assert_contains "$OUT" '"parked":null'
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  if grep -q '^park_resumed_at:' .ai/workspace/tasks/T-1/state; then fail "the ship kept park_resumed_at"; fi
+  run_split jig task list --json
+  assert_contains "$OUT" '"parked":{"reason":"review","hint":"landing"}'
+}
+
+# _ship_resumed_hands_over <level> — below `push` the ship hands the commit or
+# the push to the person, who ships the fix by hand from what it said: the
+# record goes all the same, and the task, its pull request into staging still
+# open, is parked again.
+_ship_resumed_hands_over() {
+  sship_setup "$1"
+  printf 'pr_url: https://github.com/example/example/pull/7\npark_resumed_at: 2026-11-12T10:00:00Z\n' \
+    >> .ai/workspace/tasks/T-1/state
+  run_split jig task list --json
+  assert_contains "$OUT" '"parked":null'
+  run jig task ship T-1 --message-file msg.txt
+  case "$1" in
+    none) assert_eq 3 "$RC" "$OUT" ;;
+    commit)
+      assert_eq 0 "$RC" "$OUT"
+      assert_contains "$OUT" "stopped at commit: push is the human's" ;;
+  esac
+  if grep -q '^park_resumed_at:' .ai/workspace/tasks/T-1/state; then fail "a ship at $1 kept park_resumed_at"; fi
+  run_split jig task list --json
+  assert_contains "$OUT" '"parked":{"reason":"review","hint":"landing"}'
+}
+
+test_task_ship_staging_at_none_drops_park_resumed_at() {
+  _ship_resumed_hands_over none
+}
+
+# At `none` the record goes only with a fix that passes the completion gates:
+# one with a blocking finding open is not handed over as shipped.
+test_task_ship_staging_at_none_keeps_park_resumed_at_with_a_blocking_finding() {
+  sship_setup none
+  printf 'pr_url: https://github.com/example/example/pull/7\npark_resumed_at: 2026-11-12T10:00:00Z\n' \
+    >> .ai/workspace/tasks/T-1/state
+  jig task finding add T-1 --severity P1 --where - --summary "still broken" >/dev/null \
+    || fail "could not record the finding"
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "park_resumed_at: 2026-11-12T10:00:00Z"
+  run_split jig task list --json
+  assert_contains "$OUT" '"parked":null'
+}
+
+test_task_ship_staging_at_commit_drops_park_resumed_at() {
+  _ship_resumed_hands_over commit
+}
+
+# A draft is not the fix shipped: it keeps the record.
+test_task_ship_staging_draft_keeps_park_resumed_at() {
+  sship_setup pr
+  printf 'park_resumed_at: 2026-11-12T10:00:00Z\n' >> .ai/workspace/tasks/T-1/state
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "park_resumed_at: 2026-11-12T10:00:00Z"
 }
 
 test_task_list_json_with_no_tasks_is_an_empty_list() {
@@ -10383,7 +12110,7 @@ _tl_agree() {
   _tl_json --all
   assert_eq 0 "$RC" "$ERR"
   rows=$(_tl_action_rows)
-  assert_eq 15 "$(printf '%s\n' "$rows" | grep -c .)" "$OUT"
+  assert_eq 16 "$(printf '%s\n' "$rows" | grep -c .)" "$OUT"
   saved=$(mktemp -d "${TMPDIR:-/tmp}/jig-tl-agree.XXXXXX")
   # The queue too: a pause request written by one command must not change
   # what the next is judged on.
@@ -11579,6 +13306,97 @@ test_task_list_json_starts_a_fixed_number_of_processes_per_task() {
   [ "$few" -le 1 ] || fail "4 more tasks started $few more processes (2 tasks: $two, 6: $six)"
 }
 
+# A task's staging state is one answer for the whole listing
+# (jig_staging_states): what the staging flow adds to the listing does not grow
+# with the started tasks it is asked about.
+test_task_list_json_on_the_staging_flow_starts_no_process_per_task() {
+  fixture_staging_repo
+  local i staged_two direct_two staged_six direct_six
+  _tl_staging_flow() {
+    sed "s|^git.flow:.*|git.flow: $1|" .ai/config.yaml > c.tmp
+    mv c.tmp .ai/config.yaml
+  }
+  rm -rf .ai/workspace/tasks/*
+  for i in 1 2; do
+    git branch "task/s-$i" task/on
+    fixture_task "s-$i" "task/s-$i" active "class:T2"
+  done
+  _tl_forks task list --all --json >/dev/null || fail "task list --json failed under the probe"
+  staged_two=$(_tl_forks task list --all --json) || fail "task list --json failed under the probe"
+  _tl_staging_flow direct
+  direct_two=$(_tl_forks task list --all --json) || fail "task list --json failed under the probe"
+  for i in 3 4 5 6; do
+    git branch "task/s-$i" task/behind
+    fixture_task "s-$i" "task/s-$i" active "class:T2"
+  done
+  direct_six=$(_tl_forks task list --all --json) || fail "task list --json failed under the probe"
+  _tl_staging_flow staging
+  staged_six=$(_tl_forks task list --all --json) || fail "task list --json failed under the probe"
+  run_split jig task list --json
+  assert_contains "$OUT" '"id":"s-6"'
+  assert_contains "$OUT" '"staging":"behind"'
+  _tl_same_cost $((staged_two - direct_two)) $((staged_six - direct_six))
+}
+
+# Parking is read for `ready` tasks only, and once per listing
+# (_task_parked_read, jig_parked_states): for `task list --json`, `task list`
+# and `status`, four more ready tasks — parked or resumed — start no more
+# processes on the staging flow than the same tasks start on the direct one
+# (adr-20261112-a-task-waiting-at-staging-is-parked-and-resuming-it-is-its-status).
+test_parked_tasks_start_no_process_per_ready_task() {
+  fixture_staging_repo
+  local i cmd s2 d2 s6 d6
+  _tl_park_flow() {
+    sed "s|^git.flow:.*|git.flow: $1|" .ai/config.yaml > c.tmp
+    mv c.tmp .ai/config.yaml
+  }
+  rm -rf .ai/workspace/tasks/*
+  mkdir -p .ai/runtime
+  printf 'task/r-2\tstaging\topen\t-\t2026-11-12T10:00:00Z\t-\thttps://forge.test/pr/2\tmergeable\n' > .ai/runtime/forge-cache
+  for i in 1 2; do
+    git branch "task/r-$i" task/on
+    fixture_task "r-$i" "task/r-$i" ready "class:T2" "pr_url:https://forge.test/pr/$i"
+  done
+  for cmd in "task list --all --json" "task list" "status"; do
+    _tl_park_flow staging
+    # shellcheck disable=SC2086 # the command's words
+    _tl_forks $cmd >/dev/null || fail "$cmd failed under the probe"
+  done
+  for i in 3 4 5 6; do
+    git branch "task/r-$i" task/behind
+  done
+  for cmd in "task list --all --json" "task list" "status"; do
+    _tl_park_flow staging
+    # shellcheck disable=SC2086
+    s2=$(_tl_forks $cmd) || fail "$cmd failed under the probe"
+    _tl_park_flow direct
+    # shellcheck disable=SC2086
+    d2=$(_tl_forks $cmd) || fail "$cmd failed under the probe"
+    for i in 3 4 5 6; do
+      fixture_task "r-$i" "task/r-$i" ready "class:T2" "pr_url:https://forge.test/pr/$i"
+    done
+    fixture_task r-7 task/on ready "class:T2" "park_resumed_at:2026-11-12T10:00:00Z"
+    # shellcheck disable=SC2086
+    d6=$(_tl_forks $cmd) || fail "$cmd failed under the probe"
+    _tl_park_flow staging
+    # shellcheck disable=SC2086
+    s6=$(_tl_forks $cmd) || fail "$cmd failed under the probe"
+    rm -rf .ai/workspace/tasks/r-3 .ai/workspace/tasks/r-4 .ai/workspace/tasks/r-5 .ai/workspace/tasks/r-6 .ai/workspace/tasks/r-7
+    # Four more ready tasks may cost what they cost on the direct flow, and
+    # not one process more: `status` lists a parked task on one line, so it
+    # may cost less.
+    [ $((s6 - s2)) -le $((d6 - d2 + 1)) ] \
+      || fail "$cmd: 4 more ready tasks started $((s6 - s2)) more processes on the staging flow, $((d6 - d2)) on direct"
+  done
+  for i in 3 4 5 6; do
+    fixture_task "r-$i" "task/r-$i" ready "class:T2" "pr_url:https://forge.test/pr/$i"
+  done
+  run_split jig task list --json
+  assert_contains "$OUT" '"id":"r-1"'
+  assert_contains "$OUT" '"parked":{"reason":"signal","hint":null}'
+  assert_contains "$OUT" '"parked":{"reason":"review","hint":"landing"}'
+}
+
 # `jig context` is what `task list --json` pays for a task with a review receipt
 # (_task_receipt_context_lines): a process per glob and per document took 9 s on
 # a project of 139 documents.
@@ -11963,6 +13781,148 @@ test_task_ship_names_the_absorbed_issues_in_the_pull_request_body() {
   assert_eq "Absorbs: SRD-7" "$(sed '/^$/d' gh-create.body | tail -n 1)"
   assert_eq "PR body." "$(head -n 1 gh-create.body)"
   assert_eq "PR body." "$(cat body.txt)"
+}
+
+# A task that turns the staging flow off changes the flow itself: main has
+# not changed it since the branch was cut, so the task goes into main as on
+# the direct flow, and at `merge` merges there like any direct-flow task.
+test_task_ship_turning_the_staging_flow_off_ships_into_main() {
+  sship_setup merge
+  sed -e 's/^git.flow:.*/git.flow: direct/' -e '/^git.staging_branch:/d' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git add .ai/config.yaml
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: T-1 changes the git flow; its pull request goes into main, as on the direct flow"
+  assert_not_contains "$OUT" "is not the one"
+  assert_not_contains "$OUT" "the pull request goes into staging"
+  assert_pr_base main
+  assert_not_contains "$(cat gh-create.argv)" "$(printf -- '--base\nstaging')"
+  assert_file gh-merge.argv
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+}
+
+# Renaming the staging branch changes the flow too: into main, not into either
+# staging branch.
+test_task_ship_renaming_the_staging_branch_ships_into_main() {
+  sship_setup pr
+  sed -e 's/^git.staging_branch:.*/git.staging_branch: stage/' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git add .ai/config.yaml
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: T-1 changes the git flow; its pull request goes into main, as on the direct flow"
+  assert_pr_base main
+}
+
+# A base whose flow is broken does not decide a flow-changing task's way, and
+# does not hold back the task that fixes it: the task goes into main.
+test_task_ship_fixing_a_broken_flow_on_main_ships_into_main() {
+  sship_setup pr 'git.flow: stagin'
+  sed -e 's/^git.flow:.*/git.flow: staging/' .ai/config.yaml > .ai/config.yaml.tmp
+  printf 'git.staging_branch: staging\n' >> .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git add .ai/config.yaml
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: T-1 changes the git flow; its pull request goes into main, as on the direct flow"
+  assert_pr_base main
+}
+
+# The task that turns the staging flow on goes into main, as every task did
+# before it.
+test_task_ship_turning_the_staging_flow_on_ships_into_main() {
+  sship_setup pr 'git.flow: direct'
+  sed -e 's/^git.flow:.*/git.flow: staging/' .ai/config.yaml > .ai/config.yaml.tmp
+  printf 'git.staging_branch: staging\n' >> .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git add .ai/config.yaml
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: T-1 changes the git flow; its pull request goes into main, as on the direct flow"
+  assert_not_contains "$OUT" "git flow staging: the pull request goes into staging"
+  assert_pr_base main
+  assert_contains "$(git show HEAD:.ai/config.yaml)" "git.staging_branch: staging"
+}
+
+# The other way round: a task cut before the team switched to staging ships,
+# and at `merge` would merge, straight into main unless it is refused.
+test_task_ship_refuses_a_task_cut_before_main_turned_staging_on() {
+  sship_setup merge 'git.flow: direct'
+  git checkout -q main
+  printf 'git.flow: staging\ngit.staging_branch: staging\n' >> .ai/config.yaml
+  sed '/^git.flow: direct$/d' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git commit -q -m "turn the staging flow on" .ai/config.yaml
+  # Pushed behind this checkout's back: origin/main still says direct here,
+  # so only a ship that fetches sees the change.
+  git push -q origin main:main
+  git update-ref refs/remotes/origin/main "$(git rev-parse HEAD~1)"
+  git checkout -q task/T-1
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "here: git.flow: direct"
+  assert_contains "$OUT" "main: git.flow: staging, git.staging_branch: staging"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "the branch must not be pushed"
+  assert_no_file gh-create.argv
+  assert_no_file gh-merge.argv
+}
+
+# With no base known here at all, the flow check leaves the checkout to
+# decide, as before: the ship gets past it and stops where it always did,
+# at the base it cannot compare against.
+test_task_ship_staging_with_no_base_ref_reads_the_checkout() {
+  sship_setup pr
+  git branch -q -m main old-main
+  git branch -q -d -r origin/main
+  git --git-dir=origin.git symbolic-ref HEAD refs/heads/staging
+  git --git-dir=origin.git branch -q -D main
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: could not fetch main from origin; using the refs this checkout has"
+  assert_not_contains "$OUT" "is not the one"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "no branch main here or on origin"
+}
+
+# An open pull request from the task's branch into main is not its staging
+# pull request: reported as one, no staging pull request would be opened.
+test_task_ship_staging_refuses_an_open_pull_request_into_another_branch() {
+  sship_setup pr
+  printf 'main\thttps://github.com/example/example/pull/7\n' > gh-heads
+  printf 'https://github.com/example/example/pull/7\n' > gh-existing
+
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: task/T-1 already has an open pull request into another branch than staging:"
+  assert_contains "$OUT" "https://github.com/example/example/pull/7 (into main)"
+  assert_contains "$OUT" "Close that pull request, or retarget it to staging"
+  assert_eq "$head_before" "$(git rev-parse HEAD)" "nothing may be committed"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "the branch must not be pushed"
+  assert_contains "$(git diff --cached --name-only)" "ship.txt"
+  assert_no_file gh-create.argv
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "pr_url:"
+}
+
+# Its own pull request into staging, already open, is found as before.
+test_task_ship_staging_finds_its_own_open_pull_request_into_staging() {
+  sship_setup pr
+  printf 'staging\thttps://github.com/example/example/pull/8\n' > gh-heads
+  printf 'https://github.com/example/example/pull/8\n' > gh-existing
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/8 (already open)"
+  assert_no_file gh-create.argv
 }
 
 # --- a person takes a stopped run over (adr-20261108-a-person-takes-over-a-stopped-run)

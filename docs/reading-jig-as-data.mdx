@@ -94,7 +94,7 @@ be reworded.
 | `not-on-branch` | the knowledge document, or that change, reached the base after the branch the decisions wait on was cut. Nothing was written — decide it once the decisions waiting there have landed |
 | `source-missing` | the file a knowledge stub links is missing or not tracked. Nothing was written |
 | `not-closable` | the task you asked to close is not one Jig offers to close: its knowledge decision is not recorded, or its pull request is not merged. Nothing was written — show the person the message, which is the reason |
-| `not-paused` | the task you asked to resume is not paused: somebody resumed it first. Nothing was written — read again |
+| `not-paused` | the task you asked to resume is neither paused nor parked at the staging branch: somebody resumed it first. Nothing was written — read again |
 | `already-paused` | the task you asked to pause is paused already: somebody paused it first. Nothing was written — read again |
 | `wrong-checkout` | the task's pause put work aside in a stash, and the stash can only be applied where the task's branch is checked out. Nothing was written — show the person the message, which names that place |
 | `stash-conflict` | the stash the pause put aside did not apply, or applied with conflicts that are not resolved yet. The task stays paused and the stash is kept — the person resolves it in the task's checkout and resumes again; a stash already applied with conflicts is not applied a second time |
@@ -164,6 +164,22 @@ flags are the ones the last `jig housekeeping` run raised and that still apply, 
 `needs-consolidation` for merged work nobody has closed yet; `data.housekeeping` says when that run
 was.
 
+In a project on the staging flow (`git.flow: staging`), each task also carries `staging`, right after
+`base_branch`: `"on"` when its work is on the staging branch on origin, `"behind"` when it has commits
+of its own after that (a fix QA asked for, pushed or not), and `null` when none of its work is there.
+Merging the base branch into the task does not make it `behind`. Jig reads this from git every time and
+asks no forge, so a task your CI merged into the staging branch (`git.staging_land: external`) reads the
+same as one merged through a pull request. On any other flow the field is not there at all, so nothing changes for such a project.
+
+Beside it, `parked` says whether the task waits at the staging branch: `null`, or
+`{"reason": "review" | "signal", "hint": "landing" | null}`. `review` is an open pull request into the
+staging branch, `signal` work on the staging branch waiting for "prepare for prod", and `landing` means
+the person lands the pull request themselves (their `agent.git` is below `merge`). Only a `ready` task
+is parked; `jig task resume <id>` takes one back for a fix (its status becomes `active`, and it is
+not parked again until the next `jig task ship`, at any `agent.git`), and the `resume` action is offered for it. Why it waits is
+read every time and never stored; `signal` follows the staging branch as last fetched, so under
+`git.staging_land: external` a shipped task reads `null` until a fetch shows that CI merged it.
+
 `pull_request` says whether the pull request is `open`, `merged` or `closed`, and how its checks
 went: `green`, `red`, `pending`, or `none` when no check ran. Both are what the last `jig
 housekeeping` heard from the forge, at `fetched_at`; the read itself never asks. When housekeeping
@@ -174,7 +190,7 @@ carries none, so there `ci` is `null`.
 ## What a person may do next
 
 `actions` lists what a person can do with the task right now, so a dashboard can show the right
-buttons without knowing Jig's rules. Every task carries the same fifteen actions, in the same order:
+buttons without knowing Jig's rules. Every task carries the same sixteen actions, in the same order:
 
 | `id` | What it does |
 |---|---|
@@ -186,6 +202,7 @@ buttons without knowing Jig's rules. Every task carries the same fifteen actions
 | `handover` | Take a stopped autopilot run over and finish the task without autopilot; its `command` asks for your words as `<text>` |
 | `set-class` | Change the task's class |
 | `ship` | Commit, push and open the pull request, as far as your settings let the agent |
+| `land` | On the staging flow, land the task's open pull request on the staging branch: on the forge, or directly when it conflicts |
 | `close` | Close a task whose work has landed |
 | `abandon` | Give the task up; its `command` asks for `--reason <text>` when the task is linked to a spec |
 | `archive` | Put an active, ready or abandoned task away, without deleting it |
@@ -278,7 +295,10 @@ person, and may be reworded. The kinds cover a stopped autopilot run (`autopilot
 `phase-stopped` for a phase run, whose `tasks` lists every stopped task), a design at its gate
 (`gate-waiting`, `gate-changed`), a finished task waiting for your git step (`git-step`), pull
 requests to review, merge or close (`pull-request-waiting`, `pull-request-was-open`,
-`pull-request-of-abandoned-task`), what housekeeping flagged (`needs-consolidation`, `wrong-base`,
+`pull-request-of-abandoned-task`), on the staging flow the staging branch drifting from the base
+branch (`staging-unpromoted`, with `"staging": {"branch", "days"}`; `staging-unowned`, with
+`"staging": {"commits"}`; `promotion-conflicting`, with the same `pull_request` as an upgrade's —
+[the staging drift report](/manual-control#the-staging-drift-report)), what housekeeping flagged (`needs-consolidation`, `wrong-base`,
 `closed-unmerged`, `worktree-kept`), knowledge to decide (`knowledge-proposed`, `sources-changed`)
 a newer jig (`release-available`), and a project whose own Jig is older than the one on your machine
 (`upgrade-available` — the item a program lists to show which projects need `jig upgrade`; it alone

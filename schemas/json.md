@@ -46,7 +46,7 @@ need to tell it apart (`already-filed`, out of `already-exists`); the release no
 | `not-initialised` | the repository has no Jig: no `.ai/config.yaml`; `jig init` installs it |
 | `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`, `jig task resume … --revision <n>`, `jig task pause … --revision <n>`, `jig task set … status consolidated --revision <n>`, `jig spec item … --revision <n>`, `jig knowledge accept … --revision <n>`). Read again and decide again; nothing was written |
 | `not-found` | a reference names no task or epic of this clone, an item, dependency or request that is not in the queue where the command needs it, a task document the task does not have (`jig task artifact read`), a knowledge document that does not exist (`jig knowledge read`) or links no source (`jig knowledge sources --diff`), or a spec, phase or item a roadmap write names that the roadmap on the write branch does not have, or a task it would file. Also `jig writes ship` with nothing waiting |
-| `not-paused` | `jig task resume` was asked for a task that is not paused: somebody resumed it first. Nothing was written |
+| `not-paused` | `jig task resume` was asked for a task that is neither paused nor parked at the staging branch: somebody resumed it first. Nothing was written |
 | `already-paused` | `jig task pause` was asked for a task that is paused already: somebody paused it first. Nothing was written |
 | `wrong-checkout` | `jig task resume` has a stash to apply, or `jig task pause --stash` has one to make, and this checkout is not on the task's branch; `message` names the worktree that has it checked out, or says to switch to it. Nothing was written |
 | `stash-conflict` | `jig task resume` could not apply the task's stash: `git stash apply` refused and applied nothing, it merged the stash with conflicts or stopped part way, or a stash it merged earlier still has unresolved conflicts, or the checkout has unresolved conflicts of its own. The task stays paused and the stash entry is kept |
@@ -75,6 +75,11 @@ need to tell it apart (`already-filed`, out of `already-exists`); the release no
 | `invalid-value` | `jig config set --json` was given a value its key does not accept: outside the fixed set, not a number, not a duration. Nothing was written |
 | `secret-key` | `jig config set --json` was asked to put a secret (`notify.telegram.token`) on a command line, which Jig never does. Nothing was written |
 | `not-merged` | `jig upgrade --land` found the upgrade's pull request still open on the forge; or `jig upgrade` found the upgrade to this version already on an unmerged `jig/upgrade-<version>` branch whose pull request the forge reports open — the upgrade is done and waits for its merge, and `message` names the pull request's URL. Nothing was changed; merge it and run `jig upgrade --land` |
+| `not-on-staging` | `jig task promote` found none of the task's own commits in the tested staging commit. Nothing was pushed and no pull request opened |
+| `behind-staging` | `jig task promote` found own commits of the task the tested staging commit does not have, pushed or not: a fix made after the test. Nothing was pushed and no pull request opened |
+| `carries-staging` | `jig task promote` found the staging branch merged into the task's branch: its pull request would take untested work of others into the base. Nothing was pushed and no pull request opened |
+| `base-conflict` | `jig task promote` found the task's branch in conflict with the base branch; the command exits 3, and whoever merges the base into the task branch resolves it. Nothing was pushed. Reserved: promote has no `--json` yet, and exit 3 is the answer |
+| `shallow-clone` | `jig task promote` ran in a shallow clone, where what a commit contains cannot be told. Nothing was pushed |
 | `failed` | any other refusal: one that names no code of its own, a fault of the environment (a checkout that cannot be read, a failed command), or a producer that printed nothing |
 
 A refusal names its code with `jig_fail <code> <message>` (`scripts/lib/common.sh`); `jig_die
@@ -150,6 +155,8 @@ A task:
 | `created_at`, `updated_at` | string or null | `YYYY-MM-DD` |
 | `branch` | string or null | `null`: the task has not been started |
 | `base_branch` | string | the branch the task is judged against and lands on (`jig_task_base`): its recorded base, else `git.base_branch` |
+| `staging` | string or null | only in a project on the staging flow (`git.flow: staging` with a `git.staging_branch` `jig doctor` accepts); absent on any other flow. `on`: some commit of the task's own (reached by its branch, not by its base) is in `origin/<git.staging_branch>`, and every own commit outside it is a merge that brings the base in; `behind`: another own commit is not in it yet — a fix after the task landed there, pushed or not. `null`: none of its own work is there, or it has no branch. Derived from git by the branch's name on every read (`jig_staging_states`, common.sh), never stored, never from the forge: a squash merge into staging reads `null` |
+| `parked` | object or null | only in a project on the staging flow, beside `staging`; absent on any other flow. `{"reason", "hint"}` when the task waits at the staging branch: `reason` `review` (a pull request from its branch into the staging branch is open — the forge cache's newest, or the one `jig task ship` just opened, until the cache has it) or `signal` (its own work is on the staging branch, `staging: on`, and it waits for "prepare for prod"); `hint` `landing` when the reason is `review`, `git.staging_land` is `pr` and this clone's `agent.git` is below `merge` — the person lands it — else `null`. `null` when it is not parked: it is not `ready`, a person took it back for a fix (`park_resumed_at`, until its next `jig task ship`, at any `agent.git` level), its base is not `git.base_branch`, it has a pull request into its base that is open or merged (or `promote_url`), or neither holds. Derived on every read from git and the forge cache (`jig_parked_states`, common.sh), never stored (adr-20261112-a-task-waiting-at-staging-is-parked-and-resuming-it-is-its-status) |
 | `worktree` | object or null | `{"path", "uncommitted"}`: the worktree, other than the checkout the command ran in, that has the task's branch checked out, and how many files there differ from its HEAD |
 | `gate` | object or null | a T3/T4 design's gate: `{"state", "by"}`, `state` `waiting`, `changed` (the design moved after approval) or `approved`; `by` `human` or `agent`, `null` while waiting. `null` for any other class, or before `design.md` exists |
 | `autopilot` | object or null | the task's autopilot run: `state` (`on`, `stopped`, `done`), `mode` (`attended`, `unattended`), `repairs` (integer), `stage` and `stage_at` (the last stage the current run entered), `stop_reason` and `stop_at` (the journal's last stop), `phase` (`<spec-id>/<n>` for a task of a phase run), `handover_at` (when a person took the stopped run over, `jig task autopilot <id> handover`); each `null` when there is none. `null` when the task never ran on autopilot |
@@ -178,7 +185,7 @@ What a person may do next with a task, as Jig decides it from the task's state
 |---|---|---|
 | `start` | `jig task start <id>` | the task has not been started |
 | `pause` | `jig task pause <id>` | it is not paused |
-| `resume` | `jig task resume <id>` | it is paused |
+| `resume` | `jig task resume <id>` | it is paused, or parked at the staging branch (`parked` is not `null`) |
 | `request-pause` | `jig queue request task:<id> pause` | it is not paused, no pause of it is requested, and it has been started: a task nobody started enters no stage, so no stage would take the request, and the reason sends the person to `pause` (the command still takes it) |
 | `cancel-pause-request` | `jig queue cancel task:<id> pause` | a pause of it is requested |
 | `approve-gate` | `jig task gate <id> approved` | a T3/T4 design waits at its gate (`waiting` or `changed`), and the gate is a person's: not in a clone or a run where nobody answers (`autopilot.unattended`) |
@@ -186,6 +193,7 @@ What a person may do next with a task, as Jig decides it from the task's state
 | `handover` | `jig task autopilot <id> handover --by human --answer <text>` | its autopilot run is `stopped`, in either mode, at the repair limit or before it (adr-20261108-a-person-takes-over-a-stopped-run) |
 | `set-class` | `jig task set <id> class <Tn>` | the task is live |
 | `ship` | `jig task ship <id> --message-file <file>` | the git level (`agent.git`, or `autopilot.git` for a run) is not `none`, the knowledge decision is recorded, no P0/P1 finding blocks, the review receipt is current, the route has its records, the task is started on a branch other than its base, and its pull request is not merged |
+| `land` | `jig task land <id>` | the project is on a sound `staging` flow with `git.staging_land: pr`, the task is cut from the base branch, the git level is `merge`, it opened a pull request the forge cache does not call merged or closed, and the ship's gates pass (the knowledge decision, no blocking finding, a current receipt, the route's records). Whether the pull request is approved, conflicts, or the branch carries the staging branch is the command's, asked when it runs |
 | `close` | `jig task set <id> status consolidated` | the knowledge decision is recorded, and the task opened no pull request or the forge cache says it merged |
 | `abandon` | `jig task abandon <id>`, with ` --reason <text>` for a task whose `task.md` has a `Spec:` line | the task is live |
 | `archive` | `jig task archive <id>` | the task is `active`, `ready` or `abandoned` |
@@ -217,12 +225,14 @@ pull requests — two calls a run, whatever the number of tasks. One line per pu
 first as the forge lists them, written atomically, `#` lines are comments:
 
 ```
-<head>	<base>	<state>	<ci>	<fetched_at>	<head_commit>	<url>
+<head>	<base>	<state>	<ci>	<fetched_at>	<head_commit>	<url>	<mergeable>
 ```
 
 `<ci>` is `-` when it was not asked; `<head_commit>` and `<url>`, the pull request's head and its
-address, are `-` when the forge did not say. A line written before those two columns existed ends
-at `<fetched_at>` and reads as if both were `-`. A task's entry is the first line for its branch and base, the
+address, are `-` when the forge did not say. `<mergeable>` is `conflicting` or `mergeable` for an
+open pull request the forge has judged against its base (GitHub's `mergeable`, asked in the same
+second call; GitLab's `detailed_merge_status`, in its one list), `-` otherwise. A line written
+before a column existed ends before it and reads as if each missing one were `-`. A task's entry is the first line for its branch and base, the
 join housekeeping's own remote state uses. A run whose forge did not answer, or that has no forge,
 leaves the last cache as it is: an old entry says how old it is through `fetched_at`, and is never
 refreshed by a reader. The file lives in the checkout that owns the task workspaces; a worktree
@@ -460,8 +470,9 @@ An item:
 | `detail` | string or null | why, for a person: the stop reason with its age, the housekeeping run a fact was borrowed from, a count |
 | `todo` | string | what the person should do, in plain words |
 | `url` | string or null | the pull request's address, for the pull request kinds when jig knows it |
-| `pull_request` | object | only on the two `upgrade-pull-request-*` kinds: `{"branch", "base", "state", "fetched_at"}` — the upgrade's branch (`jig/upgrade-<to>` or `jig/upgrade-<to>-<n>`), the base it goes into (`git.base_branch`), `open` or `merged`, and when housekeeping heard it from the forge |
+| `pull_request` | object | on the two `upgrade-pull-request-*` kinds: `{"branch", "base", "state", "fetched_at"}` — the upgrade's branch (`jig/upgrade-<to>` or `jig/upgrade-<to>-<n>`), the base it goes into (`git.base_branch`), `open` or `merged`, and when housekeeping heard it from the forge. On `promotion-conflicting` the same four: the task's branch, its base, `open`, and when the forge called it conflicting |
 | `versions` | object | on `upgrade-available`, `{"from", "to"}`; on the two `upgrade-pull-request-*` kinds, `{"to"}`, the version the branch is named for (`null` when the name holds none) |
+| `staging` | object | on `staging-unpromoted`, `{"branch", "days"}` — the task's branch and the whole days since its work last landed on the staging branch; on `staging-unowned`, `{"commits"}` — how many |
 
 The kinds, in the order they are listed:
 
@@ -479,6 +490,9 @@ The kinds, in the order they are listed:
 | `pull-request-waiting` | task | `jig task ship` opened a pull request that waits for review or merge |
 | `pull-request-was-open` | task | the last housekeeping run saw a pull request open (it may have merged since) |
 | `pull-request-of-abandoned-task` | task | the task was abandoned, and its pull request was open at the last housekeeping run |
+| `promotion-conflicting` | task | on the staging flow, a promotion this checkout opened (`promote_url`) is open and the forge cache calls it conflicting with the base branch; `todo` says to run `jig task promote <id>` again, `url` is the promotion |
+| `staging-unpromoted` | task | on the staging flow, the task's work has been on origin's staging branch for `git.staging_stale_after` or longer and no promotion is open or merged for it; for a task with no workspace here, `todo` says it is promoted from any checkout, or by its owner. Read from git by branch name: the task may be a colleague's, with no workspace here |
+| `staging-unowned` | project | on the staging flow, commits on origin's staging branch, merges left out, that the base branch does not have and no task branch here or on origin holds |
 | `needs-consolidation` | task | merged; the task can be closed |
 | `wrong-base` | task | the work landed on another branch than planned |
 | `closed-unmerged` | task | the pull request was closed without merging (housekeeping's `abandoned?`) |
@@ -704,8 +718,10 @@ with its reason and the time it went back (a warning says when it could not).
 
 ## `jig task resume --json`
 
-`jig task resume <id> [--revision <n>] --json` ends a task's pause and answers with the task and
-what the resume found. The write is checked against a revision as a `jig queue` write is: with
+`jig task resume <id> [--revision <n>] --json` ends a task's pause, or takes a task parked at the
+staging branch back for a fix (its `status` goes from `ready` to `active` and `park_resumed_at` is
+recorded, so it is not parked again until its next `jig task ship` — schemas/state.md), and answers with the
+task and what the resume found. The write is checked against a revision as a `jig queue` write is: with
 `--revision <n>`, the `revision` of the read the caller decided on; without it, the revision the
 command reads as it starts. When anything was written in the clone since, the resume is refused with
 `stale-revision` and changes nothing. A landed resume raises the revision by two (the claim and the
@@ -718,7 +734,7 @@ own worktree is resumed from the clone's main checkout. When the pause recorded 
 branch.
 
 ```json
-{"task": <task>, "resume": {"paused_days": 3, "stash": {"sha": "9f2c…", "applied": true}, "uncommitted": 2, "overlap": ["scripts/lib/task.sh"]}}
+{"task": <task>, "resume": {"paused_days": 3, "stash": {"sha": "9f2c…", "applied": true}, "uncommitted": 2, "overlap": ["scripts/lib/task.sh"], "parked": null}}
 ```
 
 | Field | Type | Value |
@@ -728,10 +744,11 @@ branch.
 | `resume.stash` | object or null | the stash the pause recorded, `{"sha", "applied"}`; `applied` is always `true` in an answer, since a stash that does not apply is a refusal. `null` when the pause recorded none |
 | `resume.uncommitted` | integer or null | files that differ from HEAD in the checkout the task's branch is checked out in — this one, or its worktree; `null` when the branch is checked out nowhere, or for a task never started, this checkout's count |
 | `resume.overlap` | array of strings or null | files the task changed that also changed on its base since they parted, sorted; `[]` when none; `null` when no base or merge base was found. Read in the task's checkout, its uncommitted changes counted; from the branch's commits alone when it is checked out nowhere |
+| `resume.parked` | string or null | the reason the task was parked for, `review` or `signal`, when this resume took it back from the staging branch: a task that was not paused. Then `paused_days` is `0` and `stash`, `uncommitted` and `overlap` are `null`, and `task.status` is `active`. `null` for a resume that ended a pause, which leaves the status as it was (a task paused while parked is parked again, and a second resume takes it back) |
 
 Refusals: `usage` for an argument the command does not take, a `--revision` without a value or that
 is not a revision (digits without a leading zero), and an id outside the grammar; `not-found` for no
-such task; `not-paused`, `wrong-checkout`, `stash-conflict` and `stale-revision` as in the table
+such task; `not-paused` (neither paused nor parked), `wrong-checkout`, `stash-conflict` and `stale-revision` as in the table
 above; `not-initialised` and `not-a-repository` as everywhere. Every refusal but `stash-conflict`
 happens before anything is written. `stash-conflict` for unresolved conflicts already in the checkout
 happens before anything is written too; for an apply that fails it happens after the revision was

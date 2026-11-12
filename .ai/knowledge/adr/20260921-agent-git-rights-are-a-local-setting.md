@@ -14,7 +14,7 @@ paths:
   - scripts/lib/common.sh
   - scripts/lib/spec.sh
 summary: Why agent.git (none|commit|push|pr|merge) and autopilot.git, its level for autopilot runs, are read only from the clone's local config, and why jig task ship does the git work up to that level.
-reviewed_at: 2026-10-08
+reviewed_at: 2026-11-11
 ---
 # Whether an agent commits, pushes or opens a pull request is a per-clone setting, and a script ships the change
 
@@ -130,3 +130,9 @@ contributor's agent starts committing.
 > from. Rejected: a `--level` flag on `ship` (the agent would choose its own rights) and recording
 > the level in the task's state at `start` (a person could not take a right back from a run in
 > flight).
+
+> **Amendment (2026-11-11, the staging flow).** In a project on `git.flow: staging`, a task cut from
+> the base branch opens its pull request into `git.staging_branch`, not into its recorded base, and
+> `merge` does not merge it until landing on staging is built; `git.staging_land: external` stops
+> after the push. The levels themselves are unchanged
+> (adr-20261111-in-the-staging-flow-a-task-ships-into-the-staging-branch).

@@ -38,6 +38,12 @@ selected.
 | `git.branch_template` | `task/{id}` | The name of a task's branch; `{id}` is the task's id — the only placeholder there is. If your project prefixes branches with the kind of work (`feat/`, `fix/`, `docs/`), that stays in the pull request title and the commit message: Jig has nothing to fill it from, since a task's class is its risk (`T0`–`T4`), not its kind. A template with nothing before `{id}` (`{id}`, as when branches are named after tracker tickets) works too: then a branch is Jig's to delete only when one of its tasks started it, so branches made before Jig or by hand are never touched, however much their names look like task ids. |
 | `git.worktree_root` | `../<project>.worktrees` | Where a task started in a separate worktree is placed ([several agents at once](/working-with-tasks#several-agents-at-once)). |
 | `git.delete_merged_branches` | `true` | A branch Jig made is deleted once its work has landed: right after a merge Jig made itself, which also puts you back on the base branch, and by housekeeping once a finished task is cleaned up. Only Jig's own branches, with `git branch -d` — or, when its remote copy is already gone, only if its last commit is the one the hosting site merged — and on the remote only at the commit that was merged — by housekeeping only when your `agent.git` is `push` or higher. `false` keeps every branch, and leaves you on it after a merge Jig made. |
+| `git.flow` | `direct` | How a task travels. `direct` takes it straight to the base branch. `staging` lands it on a staging branch first, for testing, and on to the base branch after: `jig task ship` opens the task's pull request into the staging branch ([how a task ships](/agent-ships)). |
+| `git.staging_branch` | none | The staging flow's branch, for example `staging`. The flow needs it, and it cannot be the base branch. |
+| `git.staging_land` | `pr` | In the staging flow, how a task lands on the staging branch: `pr` (a pull request, merged directly only when it conflicts) or `external` (your CI merges it). |
+| `git.staging_review` | `ask` | In the staging flow, an approval before landing on the staging branch (`jig task land`, or `jig task ship` at `merge`): `ask` warns and asks, `require` waits for one, `none` lands without asking. An unattended run never lands without one. |
+| `git.promote_merge` | `human` | In the staging flow, who merges the pull request into the base branch: `human`, or `auto` — the forge's auto-merge, switched on only where the base requires a check, at `agent.git: merge` or on a CI runner, never for a release. |
+| `git.staging_stale_after` | `14d` | In the staging flow, how long a task's work may wait on the staging branch with no promotion open before `jig status` and housekeeping name it ([the staging drift report](/manual-control#the-staging-drift-report)). A duration: `14d`, `36h`. |
 | `worktree.carry` | `[]` | Extra paths copied into a new worktree, beyond what the active profiles already declare — for state your project keeps outside Git that a profile does not know about. See [carrying state into a worktree](/working-with-tasks#several-agents-at-once). |
 | `worktree.share` | `[]` | Folders a new worktree shares with this checkout instead of copying — for separate repositories you edit, such as `packages/`. Each entry becomes a link to this checkout's, so there is one copy of the work. See [sharing a folder of packages](/working-with-tasks#sharing-a-folder-of-packages-you-edit). |
 | `worktree.setup` | not set | A command of your project that Jig runs in a new worktree after sharing and carrying, to finish what a copy cannot — `composer install` against the lock, say. Runs on this machine, never fatal. See [finishing a worktree with your own command](/working-with-tasks#finishing-a-worktree-with-your-own-command). |
@@ -288,7 +294,10 @@ its recommendation: how far it may take a finished task, whether it may merge, h
 go on without asking you, how long to wait for CI, how much process your tasks get, which model its helpers use, how long to keep finished work, and where your project's checks run. It explains
 merging and running without questions before it asks about them, and never switches either on
 without your clear yes. Then it shows you the whole file it is about to write, and writes it only
-after you agree. `jig init` offers this at the end of its output.
+after you agree. `jig init` offers this at the end of its output. When origin has a `stage` or
+`staging` branch and the team has named no `git.flow`, it also asks which flow the team uses — the
+team's answer, not yours — and puts it in `.ai/config.yaml` after your yes, through a task and a
+pull request of its own, as any change to that file.
 
 ### Or set a value yourself
 

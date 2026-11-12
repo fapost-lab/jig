@@ -1412,3 +1412,68 @@ EOF
   assert_eq "$want" "$(printf '%s' "$got")"
   assert_eq 1 "$(printf '%s\n' "$OUT" | grep -o '"secret":true' | wc -l | tr -d ' ')"
 }
+
+test_git_flow_is_not_a_local_key() {
+  fixture_jig_repo
+  run jig config set git.flow staging --local
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "git.flow is not a local key"
+}
+
+# _flow_ask <function> — what a config.sh reader of the git flow answers here.
+_flow_ask() {
+  run bash -c "
+    JIG_PROJECT=\$(pwd -P); JIG_LIB=\"\$JIG_HOME/scripts/lib\"
+    . \"\$JIG_LIB/common.sh\"; . \"\$JIG_LIB/config.sh\"
+    $1"
+}
+
+test_git_flow_problems_name_what_cannot_work() {
+  fixture_jig_repo
+  _flow_ask jig_git_flow_problems
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+
+  printf 'git.flow: staging\n' >> .ai/config.yaml
+  _flow_ask jig_git_flow_problems
+  assert_contains "$OUT" "needs the name of the staging branch"
+
+  printf 'git.staging_branch: refs/heads/stage\n' >> .ai/config.yaml
+  _flow_ask jig_git_flow_problems
+  assert_contains "$OUT" "'refs/heads/stage' is a ref"
+}
+
+test_git_flow_problems_refuse_the_base_branch_and_unknown_bricks() {
+  fixture_jig_repo
+  printf 'git.flow: staging\ngit.staging_branch: main\ngit.staging_review: maybe\n' >> .ai/config.yaml
+  _flow_ask jig_git_flow_problems
+  assert_contains "$OUT" "'main' is the base branch"
+  assert_contains "$OUT" "git.staging_review: 'maybe'"
+}
+
+test_git_flow_offer_reads_origin_and_stops_once_a_flow_is_named() {
+  fixture_jig_repo
+  git update-ref refs/remotes/origin/staging HEAD
+  _flow_ask jig_staging_offer
+  assert_eq "staging" "$OUT"
+
+  printf 'git.flow: direct\n' >> .ai/config.yaml
+  _flow_ask jig_staging_offer
+  assert_eq "" "$OUT"
+}
+
+test_git_flow_problems_refuse_an_unknown_flow() {
+  fixture_jig_repo
+  printf 'git.flow: trunk\n' >> .ai/config.yaml
+  _flow_ask jig_git_flow_problems
+  assert_contains "$OUT" "git.flow: 'trunk' is not a flow"
+}
+
+test_git_flow_problems_name_a_name_git_rejects_and_every_brick() {
+  fixture_jig_repo
+  printf 'git.flow: staging\ngit.staging_branch: bad..name\ngit.staging_land: x\ngit.promote_merge: z\n' >> .ai/config.yaml
+  _flow_ask jig_git_flow_problems
+  assert_contains "$OUT" "git rejects the name 'bad..name'"
+  assert_contains "$OUT" "git.staging_land: 'x'"
+  assert_contains "$OUT" "git.promote_merge: 'z'"
+}

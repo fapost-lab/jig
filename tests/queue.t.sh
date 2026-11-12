@@ -1583,3 +1583,21 @@ test_queue_next_sees_a_new_taken_record_as_a_new_revision() {
   _q_rev
   [ "$REV" -gt "$before" ] || fail "revision did not rise: $before -> $REV"
 }
+
+# A task parked at the staging branch is `ready`, and `jig queue next` advises
+# only `active` tasks: it holds no place in the queue's advice and is not
+# counted as unqueued
+# (adr-20261112-a-task-waiting-at-staging-is-parked-and-resuming-it-is-its-status).
+test_queue_next_does_not_advise_a_parked_task() {
+  local id
+  fixture_staging_repo
+  for id in on behind promoted never fresh; do
+    sed 's/^status: active$/status: ready/' ".ai/workspace/tasks/$id/state" > s.tmp
+    mv s.tmp ".ai/workspace/tasks/$id/state"
+  done
+  jig queue set on --priority 1 >/dev/null
+  run jig queue next --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"next":null,"reason":"empty"'
+  assert_contains "$OUT" '"not_queued":0'
+}

@@ -4263,7 +4263,7 @@ test_spec_ship_final_does_not_merge_where_merge_commits_are_not_allowed() {
 
   run jig spec ship idea-x --message-file msg.txt
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "not merged: the repository does not allow merge commits, and an epic merges only with one"
+  assert_contains "$OUT" "not merged: the repository does not allow merge commits, and this merge keeps its ancestry only with one"
   assert_no_file gh-merge.argv
 }
 
