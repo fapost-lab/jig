@@ -22,9 +22,9 @@ full code suite. Keep required regression coverage for behavioral changes.
 `jig verify` above is the evidence, run as the project configured it (`verify.full_run`
 in `.ai/config.yaml`, schemas/config.md). With the default `local` it runs everything.
 With `verify.full_run: ci` — the project's claim that CI runs every check on each pull
-request — it narrows itself to what changed since `git.base_branch` and prints a header
-naming the mode; that narrowed report is sufficient evidence here as long as it names the
-mode, because the full set is proven by CI on the pull request, and a red CI sends the
+request — it narrows itself to what changed since the current task's base (`git.base_branch`
+without a task) and prints a header naming the mode; that narrowed report is sufficient
+evidence here as long as it names the mode, because the full set is proven by CI on the pull request, and a red CI sends the
 task back to verify. A check that says `full set left to CI` is that, not a gap to fill: under
 `ci` never run the full set yourself — not `jig verify --full`, not the stack's runner without a
 filter (`php artisan test`, `phpunit`, `pytest`, `npm test`, `tests/run.sh`) — unless the person
@@ -37,8 +37,10 @@ scope or ran everything anyway.
 Wait on the run's own handle and read that exit code: `.ai/scripts/jig verify & wait $!`
 in plain shell (its report goes to the terminal; do not redirect it into a file in the
 working tree), or the completion signal of the tracked background job if
-the harness started one. Never poll with `pgrep -f <pattern>` — the polling command's own
-command line contains the pattern, so it matches itself and waits forever.
+the harness started one. Never wait through a process name or the text of the run's output:
+`pgrep -f <pattern>` matches the polling command's own command line, and a line looked for
+in the output may never come, or not where the loop looks (a harness appends its own lines
+after the summary), so either waits forever. A wait loop you write anyway has a time limit.
 
 This runs the active profiles: tests, linters, static analysis, whatever the stack
 provides. A `skip` means the check did not run, which is not a pass. A missing tool is

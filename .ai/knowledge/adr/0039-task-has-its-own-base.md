@@ -12,6 +12,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/lib/common.sh
   - schemas/state.md
+  - scripts/lib/verify.sh
 summary: Why every task records its own base branch, why bases resolve origin first, and why work merged elsewhere is flagged wrong-base rather than merged.
 reviewed_at: 2026-11-11
 ---
@@ -99,3 +100,8 @@ branch reaches and its base does not; a merge whose other parents are all in the
 `origin/<staging>` brings those in and is not own work, and staging reached only through such a
 parent does not count. A task on staging is kept from the stale archive (`STALE_CANDIDATE`), the
 protection `wrong-base` used to give it. When a task has no pull request into its base, its newest pull request into the staging branch stands in for it: open or closed, it is the task's remote state, as one into the base would be; merged, it falls through as above. On any other flow nothing here changes.
+
+> **Amendment (2026-11-11): `verify` is a consumer too.** Under `verify.full_run: ci` a flag-less
+> `jig verify` measures its changed scope from the current task's `jig_task_base` (ADR-0041,
+> amendment of the same day; issue #458): measured from `git.base_branch`, a task cut from an epic
+> re-ran the whole epic's diff.

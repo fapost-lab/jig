@@ -116,3 +116,5 @@ the price of a red run whenever a runner is slow.
 > minutes — so six no longer bought the fifteen minutes above. The reasoning here stands:
 > the count is the matrix's length, and starting fewer processes per test is still the
 > larger lever, still left to its own decision.
+
+> **Superseded in part (2026-11-10)** by adr-20261110-a-pull-request-runs-the-tests-its-change-reaches: the number of shares is no longer fixed. `.github/scripts/ci-matrix.sh` sizes each platform by the estimated work of the selected tests, with ceilings of 4 Linux, 4 macOS and 10 Windows shares, and the tests are divided by measured duration instead of round-robin.

@@ -401,7 +401,11 @@ _node_test_via_vitest() {
 }
 
 if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
-  if ! _node_has_script test || [ -z "$MGR_BIN" ]; then
+  # The test check answers to `tests` (`checks: [tests]`): a profile in the
+  # same run that declares `covers: [node:tests]` takes it over.
+  if jp_covered tests "$TEST_LABEL"; then
+    :
+  elif ! _node_has_script test || [ -z "$MGR_BIN" ]; then
     jp_plan "$TEST_LABEL" skip "no test script or $MGR not found"
   elif ! jp_scoped; then
     jp_plan "$TEST_LABEL" full "full scope"
@@ -479,7 +483,9 @@ EOF
   exit 0
 fi
 
-if ! _node_has_script test || [ -z "$MGR_BIN" ]; then
+if jp_covered tests "$TEST_LABEL"; then
+  :
+elif ! _node_has_script test || [ -z "$MGR_BIN" ]; then
   jp_skip "$TEST_LABEL" "no test script or $MGR not found"
 else
   mgr_v=$(jp_version "$MGR_BIN" --version)

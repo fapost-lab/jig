@@ -216,6 +216,7 @@ _status_report() {
   _status_config_local
   _status_agent_git
   _status_autopilot_git
+  _status_github_account
   _status_notify
 
   if manifest_exists; then
@@ -322,6 +323,14 @@ $rel"
   else
     printf 'specs: none\n'
   fi
+  # Only when there is one: a `jig-idea` conversation kept on disk before it
+  # became a spec (spec.sh, "idea drafts"). It is in no branch and no tree, so
+  # this line is how the next session learns there is one to continue from.
+  local drafts
+  drafts=$(spec_draft_count)
+  if [ "$drafts" -gt 0 ]; then
+    printf 'drafts: %s (jig spec draft list)\n' "$drafts"
+  fi
   # Only when something waits: the edits Jig committed in its own tree that have not
   # landed. Counted, not listed, as specs are: `jig writes` lists.
   # shellcheck source=lib/owntree.sh
@@ -424,7 +433,9 @@ EOF
     esac
     # Same predicate `jig task autopilot report` prints (_task_autopilot_note,
     # task.sh): a run mid-flight (`on`) or waiting on a human (`stopped`).
-    # `done`, and a task that never ran one, add nothing (design.md, autopilot).
+    # A run a person took over adds `autopilot=handed-over`, a fact and not a
+    # wait; any other `done`, and a task that never ran one, add nothing
+    # (design.md, autopilot; adr-20261108-a-person-takes-over-a-stopped-run).
     # Asked only of a task whose state has a run at all; for any other the
     # answer is empty.
     if [ -n "$_ST_AUTOPILOT" ]; then
@@ -714,6 +725,11 @@ _status_terminal() {
       "specs: "*" (jig spec list)")
         t=${l#specs: }
         _STT_KNOW+=("specs"$'\t'"${t% (jig spec list)}"$'\t'"jig spec list")
+        ;;
+      # A draft waits for nobody: a row beside the specs, not something to do.
+      "drafts: "*" (jig spec draft list)")
+        t=${l#drafts: }
+        _STT_KNOW+=("drafts"$'\t'"${t% (jig spec draft list)}"$'\t'"jig spec draft list")
         ;;
       "epic: "*", branch missing") _status_need warn "$l" ;;
       "epic: "*) _STT_KNOW+=("epic"$'\t'"${l#epic: }"$'\t') ;;
@@ -1103,6 +1119,7 @@ _status_terminal_tasks() {
           base=*) note+=("base ${wd#base=}") ;;
           staging=*) note+=("${wd#staging=} staging") ;;
           autopilot=on) note+=("autopilot on") ;;
+          autopilot=handed-over) note+=("autopilot handed over") ;;
           queue=*) note+=("queue ${wd#queue=}") ;;
           priority=*) note+=("priority ${wd#priority=}") ;;
           *) note+=("$wd") ;;
@@ -2038,7 +2055,7 @@ _status_attn() {
 # twice.
 _status_attention() {
   local stopped="" gates="" git_steps="" rec id stop_reason stop_at ago level queue url live hk_note pr_ids=""
-  local nc wrong kept closed open settled phase phase_stops=""
+  local nc wrong kept closed open open_closed settled phase phase_stops="" todo
   hk_note=""
   [ -z "$_STATUS_HK_AT" ] || hk_note="housekeeping at $_STATUS_HK_WHEN"
   level=$(jig_agent_git 2>/dev/null) || level=none
@@ -2150,9 +2167,15 @@ UPR
 "
         continue
       fi
+      # An unattended run at its repair limit is resumed by nothing: what is
+      # left is its draft, or a person taking the task over
+      # (adr-20261108-a-person-takes-over-a-stopped-run).
+      todo="Answer the agent in this task's session; it resumes the run."
+      if _task_autopilot_at_limit "$_ST_ID"; then
+        todo="Nothing resumes this run: it ships a draft. To finish the task yourself, tell the agent in this task's session; it hands the run over to you."
+      fi
       stopped="$stopped$(_status_attn autopilot-stopped task "$_ST_ID" "$_ST_ID" \
-        "Autopilot stopped and is waiting for you" "$stop_reason" \
-        "Answer the agent in this task's session; it resumes the run.")
+        "Autopilot stopped and is waiting for you" "$stop_reason" "$todo")
 "
       continue
     fi
@@ -2193,18 +2216,26 @@ LIVE
   printf '%s' "$stopped$gates$git_steps"
 
   # 4. A pull request waits for review or merge: one jig opened (pr_url), or
-  # one the last housekeeping run saw open (a closed task's too).
+  # one the last housekeeping run saw open.
   #
-  # Deliberately outside hklog_flagged_ids, and "a closed task's too" is the
-  # reason: closing a task does not merge its pull request, so a consolidated
-  # task with `remote=open` contradicts nothing and this item still asks for
-  # something real. Only the forge can answer whether it is open, which is why
-  # it is worded in the past tense and asks for a refresh first.
+  # Deliberately outside hklog_flagged_ids: only the forge can answer whether
+  # a pull request is open, which is why this item is worded in the past
+  # tense and asks for a refresh first.
   #
-  # One live answer does reach it, in the loop below: a task the person
-  # abandoned. That disproves no flag either -- it makes the item's ask wrong,
-  # so the item changes what it asks instead of disappearing.
+  # Two live answers do reach it, in the loop below. A task the person
+  # abandoned disproves no flag -- it makes the item's ask wrong, so the item
+  # changes what it asks instead of disappearing. A task closed since the run
+  # does disprove it: `task set status consolidated` refuses a task with a
+  # pr_url unless the forge answers `merged` (_task_close_refusal), and a
+  # merge is final, so "open" is stale and the item is not built.
+  #
+  # Only a close after the run proves that: one the run itself already saw
+  # (`status=consolidated remote=open`) may predate the gate (2026-09-30),
+  # when a task could be closed with its pull request still open, and the
+  # forge called it open after that close -- so that item stays. A task with
+  # no pr_url never went through the forge's answer, and keeps its item too.
   open=$(hklog_ids ' remote=open ')
+  open_closed=$(hklog_ids ' status=consolidated remote=open ')
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     _status_in "$id" "$pr_ids" || pr_ids="$pr_ids$id
@@ -2222,15 +2253,20 @@ OPEN
       url=$(task_state_get "$id" pr_url)
       live=$(task_state_get "$id" status)
     fi
-    if [ "$live" = abandoned ] || [ "$live" = archived ]; then
+    if [ "$live" = consolidated ] && [ -n "$url" ] && _status_in "$id" "$open" \
+      && ! _status_in "$id" "$open_closed"; then
+      # Closed since the run, through the merge gate: see 4. above.
+      continue
+    elif [ "$live" = abandoned ] || [ "$live" = archived ]; then
       # `task abandon` never touches the forge, so a task the person gave up
       # on keeps its pull request. The flag stands -- only the forge knows
       # whether it is still open -- but the ask does not: work nobody wants is
       # not work to merge. So this item keeps the borrowed fact and changes
       # what it asks for, which is the one thing the local answer is good for
-      # here. `consolidated` is deliberately not treated this way: a closed
-      # task with an open pull request is worth looking at, and merging it is
-      # still the right move.
+      # here. `consolidated` is not treated this way: a task closed with a
+      # pull request had it merged (the gate above), and one the run saw
+      # closed may predate that gate -- merging its pull request is still the
+      # right move.
       #
       # Borrowed exactly as much as the item below it, and worded the same
       # way: past tense, and a refresh asked for first. Only what the task's
@@ -2759,7 +2795,7 @@ _status_html_task_row() {
 # stage (ADR-0020), so none is claimed — except the gate a T3/T4 design waits
 # at (_task_gate_state).
 _status_html_stage() {
-  local repairs stage stage_at ago
+  local repairs stage stage_at ago handover
   if [ "$_ST_AUTOPILOT" = on ]; then
     repairs=$(printf '%s\n' "$_ST_APFACTS" | cut -f 2)
     stage=$(printf '%s\n' "$_ST_APFACTS" | cut -f 3)
@@ -2781,6 +2817,17 @@ _status_html_stage() {
   if [ -z "$_ST_BRANCH" ]; then
     printf '<span class="muted">filed, not started</span>'
     return 0
+  fi
+  # A run a person took over: no stage is tracked from here on, and the
+  # gate, when there is one, follows.
+  if [ "$_ST_AUTOPILOT" = "done" ]; then
+    # The handover time is the facts line's last field: read without a
+    # process, as every per-row reader here must (conventions/shell.md).
+    handover=${_ST_APFACTS##*$'\t'}
+    case "$handover" in
+      '' | -) ;;
+      *) printf '<span class="badge">taken over by a person</span> ' ;;
+    esac
   fi
   case "$_ST_GATE" in
     waiting) printf '<span class="badge warn">design at the gate</span>' ;;
@@ -2861,6 +2908,11 @@ _status_html_summary() {
   [ -z "$_STATUS_NEXT" ] || _status_html_item "Next task" "${_STATUS_NEXT#next: }" 0
   _status_html_count "Knowledge awaiting decision" "$_SC_PROPOSALS"
   _status_html_count "Linked sources changed" "$_SC_SOURCES"
+  # Only when there is one, as the text report: counted here and not among the
+  # saved counts, because it is one glob of the workspace.
+  local drafts
+  drafts=$(spec_draft_count)
+  [ "$drafts" -eq 0 ] || _status_html_item "Idea drafts" "$drafts" 0
   _status_html_count "Needs consolidation" "$(_status_hk_count needs-consolidation)"
   _status_html_count "Worktrees kept" "$(_status_hk_count worktree-kept)"
   _status_html_count "Landed on the wrong base" "$(_status_hk_count wrong-base)"
@@ -2899,20 +2951,39 @@ _status_upgrade_prs() {
     to=$(_status_upgrade_version "$b")
     case "$st" in
       open)
-        if [ -n "$to" ] && [ -n "$have" ] && ! jig_version_newer "$to" "$have"; then
+        if [ -n "$to" ] && [ -n "$have" ] && ! jig_version_newer "$to" "$have" \
+           && ! _status_upgrade_rebuilds "$b" "$have"; then
           continue
         fi
         printf '%s\t%s\t%s\t%s\t-\t%s\t%s\n' open "$b" "$base" "${to:--}" "$at" "$url"
         ;;
       merged)
         [ -n "$to" ] && [ -n "$have" ] || continue
-        jig_version_newer "$to" "$have" || continue
+        jig_version_newer "$to" "$have" || _status_upgrade_rebuilds "$b" "$have" || continue
         printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' merged "$b" "$base" "$to" "$have" "$at" "$url"
         ;;
     esac
   done <<CACHE
 $(forgecache_upgrades "$cache" "$base")
 CACHE
+}
+
+# _status_upgrade_rebuilds <branch> <have> — true when upgrade branch <branch>
+# records a version of the same release number as the base's <have> but
+# another build: a return to a release (`X.Y.Z+<sha>` -> `X.Y.Z`) or an
+# `--unreleased` upgrade within one release. The branch name holds the number
+# alone, so only the label it records tells it from an upgrade already here.
+# Read from the branch here or origin's copy of it, as `jig upgrade --land`
+# reads it (upgrade.sh); false when neither is here.
+_status_upgrade_rebuilds() {
+  local ref label
+  for ref in "refs/heads/$1" "refs/remotes/origin/$1"; do
+    label=$(_upgrade_land_version "$ref")
+    [ -n "$label" ] || continue
+    _upgrade_rebuilds "$label" "$2"
+    return
+  done
+  return 1
 }
 
 # _status_upgrade_version <branch> — the version `jig/upgrade-<to>[-<n>]` is
@@ -2963,17 +3034,33 @@ UPR
 # runs from — a normal "current", not a missing global (common.sh,
 # jig_global_executable).
 _status_framework_versions() {
-  local project="$1" global_exe global
+  local project="$1" global_exe global global_src
+  # The global version as a person should read it: `X.Y.Z+<sha>` off a release
+  # tag. Read from its git, never by running it
+  # (adr-20261106-copy-mode-projects-take-released-code-only).
   if ! global_exe=$(jig_global_executable) \
-     || ! global=$(jig_declared_version "${global_exe%/scripts/jig}"); then
+     || ! global=$(jig_source_version "${global_exe%/scripts/jig}"); then
     printf '%s\n' "framework versions: project=$project global=unavailable"
     return 0
   fi
+  global_src=${global_exe%/scripts/jig}
   if [ "$project" = "$global" ]; then
     printf '%s\n' "framework versions: project=$project global=$global current"
     return 0
   fi
   printf '%s\n' "framework versions: project=$project global=$global mismatch"
+  # Unreleased code on either side is named before any direction: the number
+  # it shares with a release says nothing about which is newer.
+  case "$global" in
+    *+*)
+      printf '%s\n' "hint: the global jig is on the development channel ($(jig_source_where "$global_src")); copy-mode projects take releases only — return it to a release, or develop Jig in a clone of its own"
+      return 0 ;;
+  esac
+  case "$project" in
+    *+*)
+      printf '%s\n' "hint: this project carries unreleased Jig ($project); \`jig upgrade\` from a released Jig returns it to the release"
+      return 0 ;;
+  esac
   if jig_release_version "v$global" >/dev/null 2>&1 && jig_release_version "v$project" >/dev/null 2>&1; then
     if jig_version_newer "$global" "$project"; then
       printf '%s\n' "hint: the global framework is newer; run \`jig upgrade --dry-run\`"
@@ -2998,9 +3085,12 @@ _status_project_behind() {
   local project global_exe global
   manifest_exists || return 1
   project=$(manifest_header_get jig.version) || return 1
+  project=$(jig_version_core "$project")
   global_exe=$(jig_global_executable) || return 1
   global=$(jig_declared_version "${global_exe%/scripts/jig}") || return 1
   jig_release_version "v$global" >/dev/null 2>&1 || return 1
+  # Unreleased global code is nothing a project can upgrade to without asking.
+  jig_source_release "${global_exe%/scripts/jig}" || return 1
   jig_release_version "v$project" >/dev/null 2>&1 || return 1
   jig_version_newer "$global" "$project" || return 1
   printf '%s %s\n' "$project" "$global"
@@ -3126,6 +3216,21 @@ $(jig_notify_failing)
 EOF
   [ -n "$at" ] || return 0
   printf 'notify: Telegram messages are failing: %s (%s, %s)\n' "$why" "$who" "$at"
+}
+
+# _status_github_account — one line while Jig itself chose, among several, the
+# gh account this clone asks GitHub as (jig_gh_resolve, common.sh): a choice
+# nobody typed is one a person should be able to see and change. Read from
+# what was remembered, never by asking gh; a clone that sets `github.account`
+# shows it on its config.local line, and one account needs no line.
+_status_github_account() {
+  local f login="" how=""
+  [ -z "$(cfg github.account "")" ] || return 0
+  f=$(jig_gh_memo_file)
+  [ -f "$f" ] || return 0
+  IFS=$'\t' read -r _ login how < "$f" || true
+  [ "$how" = detected ] && [ -n "$login" ] || return 0
+  printf 'github.account: %s (found: the gh account that may push here; jig config set --local github.account <login> names another)\n' "$login"
 }
 
 # _status_agent_git — one line naming the review queue `agent.git`'s level

@@ -12,7 +12,7 @@ paths:
   - schemas/state.md
   - "skills/jig-autopilot/**"
 summary: Why autopilot is its own skill run without a setting, why its two-repair limit is enforced by a script while the gate, re-classification, unmade decisions and destructive steps are the skill's stops.
-reviewed_at: 2026-09-22
+reviewed_at: 2026-11-08
 ---
 # An autopilot run takes one task through its route without pausing between stages, and stops only where a human is needed
 
@@ -97,3 +97,5 @@ findings and receipt gates refuse to finish a task that is not reviewed as it st
 > queue names as taken by another session (adr-20261030-a-task-another-session-works-on-is-not-advised)
 > is not started, in the set or out of it. The rule is the queue's answer, read; the skill keeps no
 > ordering of its own (adr-20261022-the-next-task-is-advised-from-the-queue).
+
+> **Amendment (2026-11-08).** A `stopped` run may also end in `jig task autopilot <id> handover --by human --answer <text>`: a person takes the task over, the run is `done`, `autopilot_handover` is recorded and `start` is refused from then on. The repair limit is unchanged (adr-20261108-a-person-takes-over-a-stopped-run).

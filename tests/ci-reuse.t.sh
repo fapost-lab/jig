@@ -85,13 +85,13 @@ cr_jobs() {
 # every share by name, and the main-only jobs skipped.
 cr_full_jobs() {
   cr_jobs "$1" "success changelog" "success scope" "success windows-latest smoke (install.ps1)" \
-    "success ubuntu-latest 1/2" "success ubuntu-latest 2/2" \
-    "success macos-latest 1/3" "success macos-latest 2/3" "success macos-latest 3/3" \
-    "success windows-latest (Git Bash) 1/10" "success windows-latest (Git Bash) 2/10" \
-    "success windows-latest (Git Bash) 3/10" "success windows-latest (Git Bash) 4/10" \
-    "success windows-latest (Git Bash) 5/10" "success windows-latest (Git Bash) 6/10" \
-    "success windows-latest (Git Bash) 7/10" "success windows-latest (Git Bash) 8/10" \
-    "success windows-latest (Git Bash) 9/10" "success windows-latest (Git Bash) 10/10" \
+    "success ubuntu-latest 1/2 (all)" "success ubuntu-latest 2/2 (all)" \
+    "success macos-latest 1/3 (all)" "success macos-latest 2/3 (all)" "success macos-latest 3/3 (all)" \
+    "success windows-latest (Git Bash) 1/10 (all)" "success windows-latest (Git Bash) 2/10 (all)" \
+    "success windows-latest (Git Bash) 3/10 (all)" "success windows-latest (Git Bash) 4/10 (all)" \
+    "success windows-latest (Git Bash) 5/10 (all)" "success windows-latest (Git Bash) 6/10 (all)" \
+    "success windows-latest (Git Bash) 7/10 (all)" "success windows-latest (Git Bash) 8/10 (all)" \
+    "success windows-latest (Git Bash) 9/10 (all)" "success windows-latest (Git Bash) 10/10 (all)" \
     "skipped knowledge" "skipped epic-pr" "success ci-ok" "skipped release" "skipped red-main"
 }
 
@@ -167,7 +167,7 @@ test_ci_reuse_looks_past_a_run_that_was_not_full() {
   cr_pulls "$pr"
   cr_runs "9 $pr https://github.com/example/jig/actions/runs/9" \
     "8 $pr https://github.com/example/jig/actions/runs/8"
-  cr_jobs 9 "success scope" "skipped knowledge" "success ubuntu-latest 1/2" \
+  cr_jobs 9 "success scope" "skipped knowledge" "success ubuntu-latest 1/2 (all)" \
     "skipped windows-latest (Git Bash) \${{ matrix.shard }}/\${{ strategy.job-total }}" \
     "success ci-ok"
   cr_full_jobs 8
@@ -244,8 +244,8 @@ test_ci_reuse_a_run_without_windows_tests_everything() {
   cr_gh
   cr_pulls "$pr"
   cr_runs "7 $pr https://github.com/example/jig/actions/runs/7"
-  cr_jobs 7 "success scope" "skipped knowledge" "success ubuntu-latest 1/2" \
-    "success macos-latest 1/3" "success windows-latest smoke (install.ps1)" \
+  cr_jobs 7 "success scope" "skipped knowledge" "success ubuntu-latest 1/2 (all)" \
+    "success macos-latest 1/3 (all)" "success windows-latest smoke (install.ps1)" \
     "success changelog" "skipped epic-pr" "skipped release" "success ci-ok"
 
   run cr_check "$repo" "$before"
@@ -375,7 +375,7 @@ test_ci_reuse_workflow_asks_on_a_full_push_to_main() {
   {
     grep -qF 'reuse: ${{ steps.scope.outputs.reuse }}' "$file" || fail "scope does not publish reuse"
     grep -qF 'BEFORE: ${{ github.event.before }}' "$file" || fail "scope does not pass github.event.before"
-    grep -qF 'push:main:full*)' "$file" || fail "reuse is not limited to a full push to main"
+    grep -qF 'push:main:full* | push:main:selected*)' "$file" || fail "reuse is not limited to a push to main that tests"
     grep -qF '.github/scripts/ci-reuse.sh "$BEFORE"' "$file" || fail "scope does not run ci-reuse.sh"
   }
 }
@@ -405,4 +405,40 @@ test_ci_reuse_every_workflow_job_is_classified() {
       *) fail "CR_PR_SKIPS names '$job', which ci.yml no longer has" ;;
     esac
   done
+}
+
+# A pull request's run of the tests its change reaches tested part of the
+# tree: main must not skip the suite on its strength
+# (adr-20261110-a-pull-request-runs-the-tests-its-change-reaches).
+test_ci_reuse_a_selected_run_tests_everything() {
+  local repo="$PWD/repo" pr before
+  cr_history "$repo" yes
+  pr=$(cr_sha "$repo" pr)
+  before=$(cr_sha "$repo" before)
+  cr_gh
+  cr_pulls "$pr"
+  cr_runs "7 $pr https://github.com/example/jig/actions/runs/7"
+  cr_jobs 7 "success scope" "skipped knowledge" "success ubuntu-latest 1/1 (selected)" \
+    "success macos-latest 1/1 (selected)" "success windows-latest (Git Bash) 1/2 (selected)" \
+    "success windows-latest (Git Bash) 2/2 (selected)" \
+    "success windows-latest smoke (install.ps1)" \
+    "success changelog" "skipped epic-pr" "skipped release" "success ci-ok"
+
+  run cr_check "$repo" "$before"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "test ("
+  assert_contains "$OUT" "did not run the whole suite"
+}
+
+# The suffix ci-reuse.sh reads is the one the workflow writes into the names
+# of both test jobs.
+test_ci_reuse_all_suffix_matches_the_workflow() {
+  local suffix file="$JIG_HOME/.github/workflows/ci.yml"
+  suffix=$(sed -n 's/^CR_ALL_SUFFIX="\(.*\)"$/\1/p' "$JIG_HOME/.github/scripts/ci-reuse.sh")
+  assert_eq " (all)" "$suffix"
+  # shellcheck disable=SC2016 # workflow expressions, matched literally
+  grep -qF '${{ matrix.shard }} (${{ needs.scope.outputs.suite }})' "$file" \
+    || fail "the test jobs no longer end their names in the suite; update CR_ALL_SUFFIX"
+  grep -qF "printf 'full=true\\nsuite=all\\n'" "$file" \
+    || fail "scope no longer calls the whole suite 'all'; update CR_ALL_SUFFIX"
 }

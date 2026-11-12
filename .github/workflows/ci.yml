@@ -55,7 +55,16 @@ jobs:
   # covered the changes since the success before it, so nothing falls
   # between two runs.
   #
-  # A full push to main then asks one more question: whether a pull
+  # A change that reaches only some tests runs those (`suite: selected`):
+  # ci-scope.sh asks the shell profile which tests the change reaches, the
+  # same answer a local `jig verify` acts on, and anything the profile cannot
+  # name runs the whole suite (`suite: all`), as do the nightly run, a manual
+  # one, a change of JIG_VERSION, the test harness and CI itself
+  # (adr-20261110-a-pull-request-runs-the-tests-its-change-reaches). A map
+  # line that lets a change skip a test it needed is found by the next
+  # nightly run, and a release never ships without the whole suite.
+  #
+  # A push to main then asks one more question: whether a pull
   # request's run already tested this very tree, the whole suite on every
   # platform (.github/scripts/ci-reuse.sh, which has tests and a header with
   # the argument). When it did, `reuse` is true, the suite's jobs skip, and
@@ -70,8 +79,11 @@ jobs:
       actions: read
     outputs:
       full: ${{ steps.scope.outputs.full }}
+      suite: ${{ steps.scope.outputs.suite }}
       windows: ${{ steps.scope.outputs.windows }}
       reuse: ${{ steps.scope.outputs.reuse }}
+      matrix_unix: ${{ steps.plan.outputs.matrix_unix }}
+      matrix_windows: ${{ steps.plan.outputs.matrix_windows }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -94,6 +106,9 @@ jobs:
           # counts as the pull request's (#394 ran the full suite for two
           # spec files that way). No first parent leaves the base empty, and
           # both scripts then run everything.
+          plan="$RUNNER_TEMP/plan"
+          mkdir -p "$plan"
+          export CI_SCOPE_FILTERS="$plan/filters"
           pr_base=""
           if [ "$EVENT" = pull_request ]; then
             pr_base=$(git rev-parse --verify --quiet 'HEAD^1') || pr_base=""
@@ -113,15 +128,17 @@ jobs:
           esac
           echo "scope: $line"
           case "$line" in
-            light*) echo "full=false" >> "$GITHUB_OUTPUT" ;;
-            *) echo "full=true" >> "$GITHUB_OUTPUT" ;;
+            light*) printf 'full=false\nsuite=none\n' >> "$GITHUB_OUTPUT" ;;
+            selected*) printf 'full=true\nsuite=selected\n' >> "$GITHUB_OUTPUT" ;;
+            *) printf 'full=true\nsuite=all\n' >> "$GITHUB_OUTPUT" ;;
           esac
 
-          # Whether a pull request's run already tested this tree. Asked on
-          # a full push to main only; a light run tests nothing anyway.
+          # Whether a pull request's run already tested this tree, the whole
+          # suite. Asked on a push to main that tests anything; a light run
+          # tests nothing anyway.
           reuse="test ($EVENT to $BRANCH is always tested)"
           case "$EVENT:$BRANCH:$line" in
-            push:main:full*)
+            push:main:full* | push:main:selected*)
               reuse=$(.github/scripts/ci-reuse.sh "$BEFORE") \
                 || reuse="test (ci-reuse.sh failed; testing everything)"
               ;;
@@ -148,6 +165,50 @@ jobs:
             *) echo "windows=true" >> "$GITHUB_OUTPUT" ;;
           esac
 
+      # How many shares each platform runs, and the table that divides the
+      # tests among them: the per-test reports of the last green nightly run,
+      # which always runs the whole suite. Read here once and handed to every
+      # share in the `plan` artifact — two shares reading two tables would
+      # divide the suite two ways, and a test could run in neither. No table
+      # (the first run, an expired artifact, an API that does not answer)
+      # costs only balance: the runner then divides by round-robin.
+      - name: Plan the shares
+        id: plan
+        env:
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          SUITE: ${{ steps.scope.outputs.suite }}
+        run: |
+          plan="$RUNNER_TEMP/plan"
+          mkdir -p "$plan/durations" "$RUNNER_TEMP/reports"
+          [ -f "$plan/filters" ] || : > "$plan/filters"
+          id=$(gh api -X GET "repos/$REPO/actions/workflows/ci.yml/runs" \
+            -f event=schedule -f status=success -f per_page=1 \
+            --jq '.workflow_runs[0].id // empty' 2>/dev/null) || id=""
+          echo "durations from: ${id:-no green nightly run}"
+          if [ -n "$id" ] \
+            && gh run download "$id" -R "$REPO" -p 'report-*' -D "$RUNNER_TEMP/reports" >/dev/null 2>&1; then
+            for pair in ubuntu-latest:linux macos-latest:macos windows-latest:windows; do
+              find "$RUNNER_TEMP/reports" -path "*report-${pair%%:*}-*" -name report.tsv \
+                -exec cat {} + > "$plan/durations/${pair#*:}.tsv" 2>/dev/null || true
+            done
+          fi
+          case "$SUITE" in
+            selected | all) .github/scripts/ci-matrix.sh "$SUITE" "$plan/filters" "$plan/durations" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo 'matrix_unix={"include":[{"os":"ubuntu-latest","shard":"1/1"}]}' >> "$GITHUB_OUTPUT"
+              echo 'matrix_windows={"shard":["1/1"]}' >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Publish the plan
+        if: steps.scope.outputs.full == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: plan
+          path: ${{ runner.temp }}/plan
+          retention-days: 7
+
   # The light scope: what a documentation change can still break is the
   # knowledge, so the repository's own knowledge is checked.
   knowledge:
@@ -162,27 +223,28 @@ jobs:
           scripts/jig knowledge check
           tests/run.sh knowledge::test_real_repository_knowledge_passes_with_no_failures
 
-  # The whole suite on Linux and macOS, each divided into shares that run at
-  # once (JIG_TEST_SHARD, as on Windows below). The suite is CPU-bound — a
-  # macOS host that happened to have five cores instead of three ran it in
-  # half the time — so more runners shorten it and more workers on one
-  # runner would not. macOS ran for 23 to 36 minutes in one job and was the
-  # slowest required job of most pull requests; in three shares it is about
-  # twelve. Linux is halved so that it does not become the next one. The
-  # measurements are in
-  # adr-20261016-the-suite-runs-in-shares-on-every-platform.
+  # The suite on Linux and macOS — the whole of it or the tests scope
+  # selected — each divided into shares that run at once (JIG_TEST_SHARD, as
+  # on Windows below). The suite is CPU-bound, so more runners shorten it and
+  # more workers on one runner would not
+  # (adr-20261016-the-suite-runs-in-shares-on-every-platform).
   #
-  # One matrix spans two platforms with different share counts, so
-  # `strategy.job-total` cannot be the denominator here: each entry names its
-  # share as <i>/<n>. tests/ci-workflow.t.sh holds every platform's entries to
-  # exactly 1/n .. n/n with one n — a hole, a repeat or a second denominator
-  # is a share of the suite no job runs.
+  # How many shares is scope's answer (.github/scripts/ci-matrix.sh, which
+  # has tests): the estimated work of the selected tests in shares of about
+  # six minutes, up to four on each platform. Each entry names its share as
+  # <i>/<n>, and ci-matrix.sh's tests hold every platform to exactly
+  # 1/n .. n/n with one n — a hole, a repeat or a second denominator is a
+  # share of the suite no job runs. The tests are divided among the shares by
+  # the durations in the `plan` artifact, so the shares end together.
+  #
+  # The name ends in the suite, `(all)` or `(selected)`: ci-reuse.sh reads it
+  # to tell a pull request's run of the whole suite from a run of part of it.
   #
   # `ci-ok` and `release` need `test`, and a matrix job's result is the
   # result of all its shares: a share that failed, was cancelled or never
   # started keeps `test` from `success`.
   test:
-    name: ${{ matrix.os }} ${{ matrix.shard }}
+    name: ${{ matrix.os }} ${{ matrix.shard }} (${{ needs.scope.outputs.suite }})
     needs: scope
     if: needs.scope.outputs.full == 'true' && needs.scope.outputs.reuse != 'true'
     runs-on: ${{ matrix.os }}
@@ -190,13 +252,7 @@ jobs:
       # Every share always reports. A failure in one is information about that
       # platform, not a reason to cancel the others and lose the answer.
       fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-latest, shard: '1/2' }
-          - { os: ubuntu-latest, shard: '2/2' }
-          - { os: macos-latest, shard: '1/3' }
-          - { os: macos-latest, shard: '2/3' }
-          - { os: macos-latest, shard: '3/3' }
+      matrix: ${{ fromJSON(needs.scope.outputs.matrix_unix) }}
 
     steps:
       - uses: actions/checkout@v7
@@ -229,12 +285,29 @@ jobs:
             echo "shellcheck: not installed"
           fi
 
+      - uses: actions/download-artifact@v8
+        with:
+          name: plan
+          path: ${{ runner.temp }}/plan
+
       # The suite needs only the source checkout, git and bash — no install
       # step, because tests/run.sh resolves the framework from its own path.
+      # .github/scripts/ci-run-tests.sh reads the plan and writes the report
+      # the next nightly plan divides the suite by.
       - name: Tests
         env:
           JIG_TEST_SHARD: ${{ matrix.shard }}
-        run: tests/run.sh
+          SUITE: ${{ needs.scope.outputs.suite }}
+        run: .github/scripts/ci-run-tests.sh
+
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: report-${{ matrix.os }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/report/report.tsv
+          if-no-files-found: ignore
+          retention-days: 14
 
       # A smoke test of the *installed* copy, which is a different artefact
       # from the source tree the suite exercises: `init` into a scratch
@@ -262,7 +335,9 @@ jobs:
           git -C "$work" add README.md
           git -C "$work" commit -q -m init
           cd "$work"
-          "$GITHUB_WORKSPACE/scripts/jig" init --from "$GITHUB_WORKSPACE" --profiles generic,shell
+          # The checkout is the pull request's code, not a release: it is taken
+          # on purpose (adr-20261106-copy-mode-projects-take-released-code-only).
+          "$GITHUB_WORKSPACE/scripts/jig" init --from "$GITHUB_WORKSPACE" --unreleased --profiles generic,shell
           .ai/scripts/jig status
           .ai/scripts/jig verify
           .ai/scripts/jig housekeeping
@@ -274,21 +349,13 @@ jobs:
   # skips the one check that reads only this repository's own knowledge and says
   # nothing about the platform (JIG_TEST_SKIP; it still runs on Linux and macOS).
   #
-  # Six shares took 15 minutes when they were chosen and 31 to 36 a month
-  # later: the suite's work on Windows doubled, and the slowest share is what
-  # a release and a platform pull request wait for. Ten bring it to about 22.
-  # Twelve would reach about 18, but a full run would then hold all twenty
-  # jobs the organisation may run at once, and any other pull request would
-  # wait for the whole of it. The measurements are in
-  # adr-20261016-the-suite-runs-in-shares-on-every-platform, the reasoning
-  # about the count in adr-20260925-windows-runs-in-six-shares.
-  #
-  # How many shares there are is the length of the matrix below and is written
-  # nowhere else: `strategy.job-total` is the number of jobs the matrix made,
-  # so the name and the denominator cannot drift from it. They used to be two
-  # more copies of the number, and the dangerous direction was silent — a
-  # matrix raised with the denominator left behind reruns the same thirds and
-  # reports green. tests/ci-workflow.t.sh guards what is left of that.
+  # How many shares is scope's answer (.github/scripts/ci-matrix.sh), as for
+  # Linux and macOS: up to ten, which the whole suite reaches. Twelve would
+  # hold all twenty jobs the organisation may run at once, and any other pull
+  # request would wait for the whole of it
+  # (adr-20261016-the-suite-runs-in-shares-on-every-platform). Each entry
+  # names its share as <i>/<n>; ci-matrix.sh's tests hold the list to
+  # 1/n .. n/n.
   #
   # It runs on main (a release waits for every share), by hand, nightly, and on
   # a pull request whose diff touches something Windows decides differently —
@@ -300,7 +367,7 @@ jobs:
   # one output. Every other pull request is covered by smoke-windows below,
   # as every pull request was before.
   test-windows:
-    name: windows-latest (Git Bash) ${{ matrix.shard }}/${{ strategy.job-total }}
+    name: windows-latest (Git Bash) ${{ matrix.shard }} (${{ needs.scope.outputs.suite }})
     needs: scope
     if: >-
       needs.scope.outputs.full == 'true' && needs.scope.outputs.windows == 'true'
@@ -309,8 +376,7 @@ jobs:
     timeout-minutes: 90
     strategy:
       fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+      matrix: ${{ fromJSON(needs.scope.outputs.matrix_windows) }}
     defaults:
       run:
         shell: bash
@@ -338,11 +404,26 @@ jobs:
           try { Set-MpPreference -DisableRealtimeMonitoring $true; Write-Output "Defender real-time scanning paused" }
           catch { Write-Output "Defender not paused: $($_.Exception.Message)" }
 
+      - uses: actions/download-artifact@v8
+        with:
+          name: plan
+          path: ${{ runner.temp }}/plan
+
       - name: Tests
         env:
-          JIG_TEST_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
+          JIG_TEST_SHARD: ${{ matrix.shard }}
           JIG_TEST_SKIP: knowledge::test_real_repository_knowledge_passes_with_no_failures
-        run: tests/run.sh
+          SUITE: ${{ needs.scope.outputs.suite }}
+        run: .github/scripts/ci-run-tests.sh
+
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: report-windows-latest-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/report/report.tsv
+          if-no-files-found: ignore
+          retention-days: 14
 
   # What a Windows user runs, on every pull request: the installer end to end
   # (tests/install.t.ps1, in Windows PowerShell 5.1, which every Windows has)
@@ -375,14 +456,16 @@ jobs:
           git -C "$work" add README.md
           git -C "$work" commit -q -m init
           cd "$work"
-          "$GITHUB_WORKSPACE/scripts/jig" init --from "$GITHUB_WORKSPACE" --profiles generic,shell
+          # The checkout is the pull request's code, not a release: it is taken
+          # on purpose (adr-20261106-copy-mode-projects-take-released-code-only).
+          "$GITHUB_WORKSPACE/scripts/jig" init --from "$GITHUB_WORKSPACE" --unreleased --profiles generic,shell
           git add -A
           git commit -q -m "jig init"
           .ai/scripts/jig doctor
           # The terminal form of the report, forced: proves it runs in Git Bash
           # and exits as the plain one does. That it renders is not provable here.
           JIG_TERMINAL=1 .ai/scripts/jig doctor
-          .ai/scripts/jig upgrade --dry-run
+          .ai/scripts/jig upgrade --dry-run --unreleased
           .ai/scripts/jig task new ci-demo --class T1 --domains core
           wt=$(.ai/scripts/jig task start ci-demo --worktree)
           .ai/scripts/jig task list
@@ -429,9 +512,11 @@ jobs:
   # Write access is granted to this job alone: the rest of the workflow keeps
   # `contents: read`. Pull requests and manual runs never tag.
   #
-  # Only a full run tags: a light one tested nothing, and a version bump whose
-  # own run was replaced in the queue waits for the next full run — the next
-  # code merge or the nightly one — instead of being tagged untested.
+  # Only a run of the whole suite tags: a light one tested nothing, a
+  # selected one tested part of it, and a version bump whose own run was
+  # replaced in the queue waits for the next such run — the nightly one —
+  # instead of being tagged untested. A change of JIG_VERSION always runs the
+  # whole suite, so a release's own run tags it.
   #
   # A run whose scope found the tree already tested by a pull request
   # (`reuse`) skips the suite and still tags: a skipped job is neither a
@@ -441,6 +526,7 @@ jobs:
     needs: [scope, test, test-windows, smoke-windows]
     if: >-
       !cancelled() && !failure() && needs.scope.outputs.full == 'true'
+      && needs.scope.outputs.suite == 'all'
       && (github.event_name == 'push' || github.event_name == 'schedule')
       && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -546,6 +632,7 @@ jobs:
       - name: Gather the results of every job
         env:
           FULL: ${{ needs.scope.outputs.full }}
+          SUITE: ${{ needs.scope.outputs.suite }}
           WINDOWS: ${{ needs.scope.outputs.windows }}
           REUSE: ${{ needs.scope.outputs.reuse }}
           EVENT: ${{ github.event_name }}
@@ -587,7 +674,19 @@ jobs:
       actions: read
       issues: write
     steps:
+      # The whole history: the issue names the commits since the last green
+      # nightly run.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # The shares' per-test reports, from which the issue names the failed
+      # tests. A run that tested nothing has none, which is not an error.
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: report-*
+          path: ${{ runner.temp }}/reports
 
       - name: Open, update or close the red-main issue
         env:
@@ -598,6 +697,8 @@ jobs:
           EVENT: ${{ github.event_name }}
           SHA: ${{ github.sha }}
           FULL: ${{ needs.scope.outputs.full }}
+          SUITE: ${{ needs.scope.outputs.suite }}
+          REPORTS: ${{ runner.temp }}/reports
         run: |
           .github/scripts/red-main.sh \
             "ci-ok=${{ needs.ci-ok.result }}" \

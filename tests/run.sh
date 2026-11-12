@@ -25,18 +25,44 @@
 # cannot see is a test that was starved rather than killed and failed in the
 # ordinary way; that one still reads as a failure.
 #
-# JIG_TEST_SHARD=<i>/<n> runs one share of the suite: every n-th test in
-# discovery order, starting at the i-th, so the slow tests of one file spread
-# across shares. JIG_TEST_SKIP=<file::test>[,...] reports the named tests as
-# skipped without running them — for a check that says nothing new on a given
-# platform; a skip stays visible, never a pass.
+# JIG_TEST_SHARD=<i>/<n> runs one share of the suite. Without a durations table
+# (below) a share is every n-th test in discovery order, starting at the i-th, so
+# the slow tests of one file spread across shares. JIG_TEST_SKIP=<file::test>[,...]
+# reports the named tests as skipped without running them — for a check that says
+# nothing new on a given platform; a skip stays visible, never a pass.
 #
-# A filter is a substring of `<file>::<test>`. `<file>.t.sh::...` and
-# `tests/<file>.t.sh::...` are accepted as the same thing as `<file>::...`.
-# A non-empty filter that selects no test at all (before sharding) is an error,
-# exit 1: "0 passed" is not a green run, it is a run that checked nothing.
+# JIG_TEST_DURATIONS=<file> is a table of how long tests took, and with
+# JIG_TEST_SHARD it deals the tests to the shares by longest-processing-time:
+# longest test first, each to the share with the least work so far (a tie goes to
+# the lowest share index), a test costing 2*secs+1 so that the many sub-second
+# ones still spread by count. A row is `<rc>\t<secs>\t<file::test>` — what
+# JIG_TEST_REPORT writes — or `<secs>\t<file::test>`; a row with a secs that is
+# not a non-negative integer, or with no name, is ignored, and a name listed twice
+# takes the larger secs. A selected test without a row costs the median (the
+# lower one) of the known durations among the selected tests, 1 when none is
+# known. The partition is a pure function of the selected tests in discovery
+# order, the table and n, so every share computes the same one. When the file is
+# missing, unreadable or holds no usable row, the shares are the round-robin ones
+# above and a line says so. With a table, each share starts its longest tests
+# first; the report and the failure logs stay in discovery order. The run prints
+# which partition it used next to `wall:` (`shard: i/n by durations` or
+# `by round-robin`).
 #
-# Usage: tests/run.sh [name-filter]
+# JIG_TEST_REPORT=<file> makes the run write one line per test it ran (its share
+# of the selection), in discovery order: `<rc>\t<secs>\t<file::test>`, rc being the
+# recorded exit code (0, 1, 77 for a skip, 128 and more for a signal) or `missing`
+# for a test that left no result. It is written whole, through a temporary file
+# and a rename, before the run's results are removed. A report that cannot be
+# written prints a warning on stderr and does not change the run's exit code.
+#
+# A filter is a substring of `<file>::<test>`; several filters select the union
+# of what each selects. `<file>.t.sh::...` and `tests/<file>.t.sh::...` are
+# accepted as the same thing as `<file>::...`, in each filter. A non-empty filter
+# that selects no test at all (before sharding) is an error, exit 1, and names the
+# filter: "0 passed" is not a green run, it is a run that checked nothing. An
+# empty argument is no filter; with no filter at all everything is selected.
+#
+# Usage: tests/run.sh [name-filter ...]
 set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -131,25 +157,104 @@ _run_release_busy() {
 }
 
 trap 'rm -rf "$JIG_TEST_CACHE" "$RESULTS"; _run_release_busy' EXIT
+
+# The framework the tests install from is a release: a copy-mode project takes
+# released code only (adr-20261106-copy-mode-projects-take-released-code-only),
+# and this checkout is on a branch. So JIG_HOME is a copy of it, made a git
+# repository of its own with one commit tagged v<JIG_VERSION> — the same bytes,
+# released. A test about unreleased code builds its own source or asks for
+# --unreleased.
+#
+# What is copied is what git would see: tracked files and untracked ones that
+# are not ignored, as they stand in the working tree. Nothing ignored comes
+# along (.ai/runtime, .ai/workspace, nested worktrees under .claude/worktrees),
+# and links are made after every file, because Git Bash makes a link by copying
+# its target and refuses one whose target is not there yet.
+#
+# A tree that is not the framework — the fixture runners tests/runner.t.sh
+# builds hold a copy of this script and no scripts/lib/version.sh — is used as
+# it is.
+_run_release_home() {
+  local home="$RESULTS/home" version list f
+  if [ ! -f "$ROOT/scripts/lib/version.sh" ]; then
+    printf '%s\n' "$ROOT"
+    return 0
+  fi
+  version=$(sed -n 's/^JIG_VERSION="\([^"]*\)".*/\1/p' "$ROOT/scripts/lib/version.sh") || return 1
+  [ -n "$version" ] || return 1
+  mkdir "$home" || return 1
+  list="$RESULTS/home.files"
+  (
+    cd "$ROOT" || exit 1
+    # -z: a name git would quote (core.quotePath) is read as it is on disk.
+    git ls-files -z --cached --others --exclude-standard > "$list.all" || exit 1
+    : > "$list"
+    : > "$list.links"
+    while IFS= read -r -d '' f; do
+      if [ -L "$f" ]; then
+        printf '%s\n' "$f" >> "$list.links"
+      elif [ -f "$f" ]; then
+        printf '%s\n' "$f" >> "$list"
+      fi
+    done < "$list.all"
+    tar -cf - -T "$list" | (cd "$home" && tar -xf -) || exit 1
+    while IFS= read -r f; do
+      mkdir -p "$home/$(dirname "$f")" && ln -s "$(readlink "$f")" "$home/$f" || exit 1
+    done < "$list.links"
+  ) >/dev/null || return 1
+  # The release is committed with the git configuration the tests see (no
+  # system file, a HOME of its own; enter_test_env below), not the person's:
+  # a global excludes file that ignores, say, `.gitignore` would leave the
+  # file out of the commit, and every test would find the release dirty.
+  mkdir "$RESULTS/home-git" || return 1
+  _run_home_git() {
+    HOME="$RESULTS/home-git" GIT_CONFIG_NOSYSTEM=1 \
+      git -C "$home" -c user.name=jig-tests -c user.email=tests@jig.invalid "$@"
+  }
+  {
+    _run_home_git init -q . && _run_home_git symbolic-ref HEAD refs/heads/main \
+      && _run_home_git add -A \
+      && _run_home_git commit -q --no-verify -m "release $version" \
+      && _run_home_git tag -a "v$version" -m "v$version"
+  } >/dev/null 2>&1 || return 1
+  # As a manifest records it: `cd && pwd` folds the `//` a TMPDIR ending in
+  # `/` leaves, and tests compare recorded sources with this path.
+  (cd "$home" && pwd)
+}
+JIG_HOME=$(_run_release_home) && [ -n "$JIG_HOME" ] \
+  || { printf 'tests/run.sh: could not build the release copy of the framework\n' >&2; exit 1; }
+# The code under test runs from the copy too: a plain `jig upgrade` reads from
+# the checkout the running jig belongs to (upgrade_source), and that must be the
+# released one. The copy is this working tree's bytes, taken as the run starts.
+JIG_BIN="$JIG_HOME/scripts/jig"
+export JIG_HOME JIG_BIN
 # An interrupted parallel run must not leave its workers running, and must give
 # the record back on the way out.
 trap 'kill $(jobs -p) 2>/dev/null; _run_release_busy; exit 130' INT TERM
 
-filter="${1:-}"
-given_filter="$filter"
-# `context.t.sh::test_x` and `tests/context.t.sh::test_x` name the same tests as
-# `context::test_x`: the file part is the file's name, written either way.
-filter=${filter#tests/}
-case "$filter" in
-  *.t.sh::*) filter="${filter%%.t.sh::*}::${filter#*.t.sh::}" ;;
-  *.t.sh) filter=${filter%.t.sh} ;;
-esac
-# A filter that was nothing but that decoration names no test; it must not turn
-# into "no filter" and run everything.
-if [ -n "$given_filter" ] && [ -z "$filter" ]; then
-  printf 'tests/run.sh: no test matched %s\n' "$given_filter" >&2
-  exit 1
-fi
+# Each filter is normalised on its own: `context.t.sh::test_x` and
+# `tests/context.t.sh::test_x` name the same tests as `context::test_x`: the file
+# part is the file's name, written either way. An empty argument is no filter.
+filters=()
+given_filters=()
+nfilters=0
+for given_filter in "$@"; do
+  [ -n "$given_filter" ] || continue
+  filter=${given_filter#tests/}
+  case "$filter" in
+    *.t.sh::*) filter="${filter%%.t.sh::*}::${filter#*.t.sh::}" ;;
+    *.t.sh) filter=${filter%.t.sh} ;;
+  esac
+  # A filter that was nothing but that decoration names no test; it must not turn
+  # into "no filter" and run everything.
+  if [ -z "$filter" ]; then
+    printf 'tests/run.sh: no test matched %s\n' "$given_filter" >&2
+    exit 1
+  fi
+  filters[nfilters]=$filter
+  given_filters[nfilters]=$given_filter
+  nfilters=$((nfilters + 1))
+done
 
 shard_i=1
 shard_n=1
@@ -220,7 +325,7 @@ enter_test_env() {
   # repository's changes and took the scoped path (ADR-0041).
   # JIG_VERIFY_BUSY_HELD is the run record this suite's own `jig verify` holds
   # for this clone; a test builds its own project and must queue on its own.
-  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED JIG_VERIFY_MAPPED_ALL JIG_VERIFY_BASE JIG_VERIFY_FULL_RUN JIG_VERIFY_EXPLAIN JIG_VERIFY_PROFILES JIG_VERIFY_BUSY_HELD CI
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED JIG_VERIFY_MAPPED_ALL JIG_VERIFY_BASE JIG_VERIFY_FULL_RUN JIG_VERIFY_EXPLAIN JIG_VERIFY_COVERED JIG_VERIFY_BUSY_HELD CI
   # The runtime's own session id names a checkout record when nothing else
   # does (adr-20260924-a-checkout-records-what-is-happening-in-it), so a suite
   # run from inside an agent session would write records a CI run does not —
@@ -310,39 +415,156 @@ run_test() {
 # Discovery first, so that the order is fixed before anything runs. The list
 # is read back on descriptor 4, never on stdin, which the tests inherit.
 list="$RESULTS/list"
-: > "$list"
-idx=0
+selected="$RESULTS/selected"
+: > "$selected"
 seq=0
-matched=0
+fhit=()
+k=0
+while [ "$k" -lt "$nfilters" ]; do
+  fhit[k]=0
+  k=$((k + 1))
+done
 for file in "$ROOT"/tests/*.t.sh; do
   [ -e "$file" ] || continue
   base=$(basename "$file" .t.sh)
   for name in $(list_tests "$file"); do
     full="$base::$name"
-    case "$full" in *"$filter"*) ;; *) continue ;; esac
-    matched=$((matched + 1))
+    if [ "$nfilters" -gt 0 ]; then
+      pick=0
+      k=0
+      while [ "$k" -lt "$nfilters" ]; do
+        case "$full" in
+          *"${filters[$k]}"*) pick=1; fhit[k]=1 ;;
+        esac
+        k=$((k + 1))
+      done
+      [ "$pick" -eq 1 ] || continue
+    fi
     seq=$((seq + 1))
-    [ $(( (seq - 1) % shard_n )) -eq $((shard_i - 1)) ] || continue
-    idx=$((idx + 1))
-    printf '%s\t%s\t%s\t%s\n' "$idx" "$file" "$name" "$full" >> "$list"
+    printf '%s\t%s\t%s\t%s\n' "$seq" "$file" "$name" "$full" >> "$selected"
   done
 done
-total=$idx
 
 # Counted before the shard is applied: a share that happens to hold none of the
 # selected tests is an ordinary run, a filter that names no test is a mistake.
-if [ -n "$filter" ] && [ "$matched" -eq 0 ]; then
-  printf 'tests/run.sh: no test matched %s\n' "$given_filter" >&2
-  exit 1
+bad=0
+k=0
+while [ "$k" -lt "$nfilters" ]; do
+  if [ "${fhit[$k]}" -eq 0 ]; then
+    printf 'tests/run.sh: no test matched %s\n' "${given_filters[$k]}" >&2
+    bad=1
+  fi
+  k=$((k + 1))
+done
+[ "$bad" -eq 0 ] || exit 1
+
+t=$(printf '\t')
+
+# Which tests this run takes, and in what order it starts them (see the header,
+# JIG_TEST_DURATIONS). Pass 1 attaches a duration to every selected test and says
+# whether the table is usable; the sort puts the longest first, ties in discovery
+# order; pass 2 deals them out (longest-processing-time, or round-robin by
+# discovery position) and keeps this run's share; the last pass numbers that
+# share in discovery order, which is the order the report and the logs keep.
+durations="${JIG_TEST_DURATIONS:-}"
+awk -F "$t" -v table="$durations" -v modefile="$RESULTS/mode" '
+  BEGIN {
+    rows = 0
+    if (table != "") {
+      while ((getline row < table) > 0) {
+        sub(/\r$/, "", row)
+        nf = split(row, f, "\t")
+        if (nf == 2) { s = f[1]; nm = f[2] }
+        else if (nf >= 3) { s = f[2]; nm = f[3] }
+        else continue
+        if (s !~ /^[0-9]+$/ || length(s) > 9 || nm == "") continue
+        s += 0
+        if (!(nm in dur) || s > dur[nm]) dur[nm] = s
+        rows++
+      }
+      close(table)
+    }
+  }
+  { n++; sq[n] = $1; fl[n] = $2; nmx[n] = $3; fu[n] = $4 }
+  END {
+    # Median (the lower one) of the known durations, by counting each distinct
+    # value: there are few of them, a sort of every test would be quadratic here.
+    known = 0; nd = 0
+    for (i = 1; i <= n; i++) {
+      if (!(fu[i] in dur)) continue
+      v = dur[fu[i]]; known++
+      if (!(v in cnt)) { cnt[v] = 0; nd++; dv[nd] = v }
+      cnt[v]++
+    }
+    med = 1
+    if (known > 0) {
+      for (i = 2; i <= nd; i++) {
+        x = dv[i]; j = i - 1
+        while (j >= 1 && dv[j] > x) { dv[j + 1] = dv[j]; j-- }
+        dv[j + 1] = x
+      }
+      want = int((known + 1) / 2); acc = 0
+      for (i = 1; i <= nd; i++) { acc += cnt[dv[i]]; if (acc >= want) { med = dv[i]; break } }
+    }
+    print (rows > 0 ? "lpt" : "rr") > modefile
+    for (i = 1; i <= n; i++) {
+      d = 0
+      if (rows > 0) d = (fu[i] in dur) ? dur[fu[i]] : med
+      printf "%d\t%s\t%s\t%s\t%s\n", d, sq[i], fl[i], nmx[i], fu[i]
+    }
+  }
+' "$selected" > "$RESULTS/timed" || exit 1
+mode=rr
+IFS= read -r mode < "$RESULTS/mode"
+sort -t "$t" -k1,1nr -k2,2n "$RESULTS/timed" > "$RESULTS/timed.sorted" || exit 1
+use_lpt=0
+if [ "$mode" = lpt ]; then use_lpt=1; fi
+awk -F "$t" -v n="$shard_n" -v me="$shard_i" -v lpt="$use_lpt" '
+  BEGIN { for (j = 1; j <= n; j++) load[j] = 0 }
+  {
+    if (lpt) {
+      best = 1
+      for (j = 2; j <= n; j++) if (load[j] < load[best]) best = j
+      load[best] += 2 * $1 + 1
+    } else {
+      best = ($2 - 1) % n + 1
+    }
+    if (best == me) printf "%s\t%s\t%s\t%s\t%s\n", $2, $3, $4, $5, $1
+  }
+' "$RESULTS/timed.sorted" > "$RESULTS/share" || exit 1
+sort -t "$t" -k1,1n "$RESULTS/share" \
+  | awk -F "$t" -v list="$list" -v timed="$list.timed" -v totalfile="$RESULTS/total" '
+      BEGIN { printf "" > list; printf "" > timed }
+      {
+        printf "%d\t%s\t%s\t%s\n", NR, $2, $3, $4 >> list
+        printf "%d\t%s\t%s\t%s\t%s\n", NR, $2, $3, $4, $5 >> timed
+      }
+      END { print NR > totalfile }
+    ' || exit 1
+IFS= read -r total < "$RESULTS/total"
+case "$total" in '' | *[!0-9]*) total=0 ;; esac
+# What is started first: the longest tests, when there is a table; ties and
+# every test of a run without one in discovery order.
+dispatch="$RESULTS/dispatch"
+sort -t "$t" -k5,5nr -k1,1n "$list.timed" | cut -f 1-4 > "$dispatch" || exit 1
+
+if [ -n "${JIG_TEST_SHARD:-}" ]; then
+  if [ "$mode" = lpt ]; then
+    shard_by="by durations"
+  else
+    shard_by="by round-robin"
+    if [ -n "$durations" ]; then
+      printf 'tests/run.sh: JIG_TEST_DURATIONS %s is missing, unreadable or has no usable row; sharding by round-robin\n' "$durations"
+    fi
+  fi
 fi
 
 start_all=$SECONDS
-t=$(printf '\t')
 
 if [ "$jobs" -eq 1 ]; then
   while IFS="$t" read -r -u 4 idx file name full; do
     run_test "$idx" "$file" "$name" "$full"
-  done 4< "$list"
+  done 4< "$dispatch"
 else
   # The shared fixture is built before any test starts (fixture_cache_prepare
   # explains what two tests building it at once would do).
@@ -351,7 +573,16 @@ else
     printf 'tests/run.sh: could not make a directory for the fixture cache\n' >&2
     exit 1
   fi
-  if ! ( enter_test_env "$cache_dir"; fixture_cache_prepare ) >"$RESULTS/cache.log" 2>&1; then
+  # fixture_caches_prepare takes the list of tests so it can build only what they use;
+  # an assertion library without it builds the one shared fixture.
+  if ! (
+    enter_test_env "$cache_dir"
+    if declare -F fixture_caches_prepare >/dev/null; then
+      fixture_caches_prepare "$list"
+    else
+      fixture_cache_prepare
+    fi
+  ) >"$RESULTS/cache.log" 2>&1; then
     printf 'tests/run.sh: could not build the fixture cache\n' >&2
     sed 's/^/     | /' "$RESULTS/cache.log" >&2
     rm -rf "$cache_dir" "$cache_dir".*
@@ -375,7 +606,7 @@ else
   while IFS="$t" read -r -u 4 idx file name full; do
     read -r -u 3 _
     ( run_test "$idx" "$file" "$name" "$full"; printf '.\n' >&3 ) &
-  done 4< "$list"
+  done 4< "$dispatch"
   wait
   exec 3>&-
 fi
@@ -384,9 +615,14 @@ pass=0
 fail=0
 skip=0
 dead=0
+: > "$RESULTS/report"
 while IFS="$t" read -r -u 4 idx file name full; do
   rc=missing
-  [ -f "$RESULTS/$idx.result" ] && IFS="$t" read -r rc _ < "$RESULTS/$idx.result"
+  secs=0
+  if [ -f "$RESULTS/$idx.result" ]; then
+    IFS="$t" read -r rc secs _ < "$RESULTS/$idx.result" || true
+  fi
+  printf '%s\t%s\t%s\n' "${rc:-missing}" "${secs:-0}" "$full" >> "$RESULTS/report"
   case "$rc" in
     0) pass=$((pass + 1)) ;;
     77) skip=$((skip + 1)) ;;
@@ -422,6 +658,17 @@ while IFS="$t" read -r -u 4 idx file name full; do
   esac
 done 4< "$list"
 
+# JIG_TEST_REPORT: written whole or not at all, while the results still exist.
+if [ -n "${JIG_TEST_REPORT:-}" ]; then
+  report_tmp="$JIG_TEST_REPORT.tmp.$$"
+  if cp "$RESULTS/report" "$report_tmp" 2>/dev/null && mv "$report_tmp" "$JIG_TEST_REPORT" 2>/dev/null; then
+    :
+  else
+    rm -f "$report_tmp" 2>/dev/null
+    printf 'tests/run.sh: warning: could not write JIG_TEST_REPORT %s\n' "$JIG_TEST_REPORT" >&2
+  fi
+fi
+
 # Where the time went: the slowest tests, to the second. Collected before it is
 # printed, so no child is alive during the writes (see run_test).
 if [ "$total" -gt 0 ]; then
@@ -434,6 +681,7 @@ if [ "$total" -gt 0 ]; then
 $slowest
 EOF
   printf 'wall: %ss, %s job(s)\n' "$((SECONDS - start_all))" "$jobs"
+  [ -z "${JIG_TEST_SHARD:-}" ] || printf 'shard: %s/%s %s\n' "$shard_i" "$shard_n" "$shard_by"
 fi
 
 printf '\n%d passed, %d failed, %d skipped, %d not completed\n' \

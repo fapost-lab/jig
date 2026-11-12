@@ -143,6 +143,22 @@ test_notify_approve_and_decide_send_in_an_unattended_run() {
   assert_contains "$(cat "$NT_STUB/text")" "Kept the old endpoint: easier to undo"
 }
 
+# A person taking a stopped run over is said where they read, as it happens:
+# an agent that claimed it for them is seen at once
+# (adr-20261108-a-person-takes-over-a-stopped-run).
+test_notify_handover_sends_the_persons_words() {
+  nt_setup unattended
+  run jig task autopilot T-1 stop --reason 'Needs you: which provider?'
+  nt_wait
+  rm -f "$NT_STUB/calls" "$NT_STUB/text"
+  run jig task autopilot T-1 handover --by human --answer 'GitHub; I finish it myself'
+  assert_eq 0 "$RC" "$OUT"
+  nt_wait
+  assert_contains "$(sed -n 1p "$NT_STUB/text")" "👤"
+  assert_contains "$(cat "$NT_STUB/text")" "taken over by a person: GitHub; I finish it myself"
+  assert_file_contains .ai/workspace/tasks/T-1/notify "$(printf '\thandover\tok')"
+}
+
 # nt_spec — spec `rel` in this checkout, phase 1 of its roadmap, for the
 # phase run's stop (`jig spec stop`).
 nt_spec() {

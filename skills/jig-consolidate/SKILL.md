@@ -137,7 +137,8 @@ or when the change moved after its review; resolve the finding or re-review firs
 are the coordinator's. Stage the change, write the commit message and the pull request body with
 `jig task artifact write <id> commit-message --from <file>` and `… pr-body --from <file>`, and report
 back. The coordinator ships one task at a time so that two of them cannot merge past each
-other, runs `jig task ship` and `jig task autopilot <id> end` itself, and checks the roadmap
+other, runs `jig task ship` and `jig task autopilot <id> end` itself (none for a task handed over to a
+person, whose run already ended), and checks the roadmap
 item after the merge — `spec done` below refuses in this branch, by design.
 
 Every other run checks the roadmap here, before the commit:
@@ -157,7 +158,7 @@ which repository owns the concern — is knowledge like any other, recorded here
 
 When it prints `roadmap complete`, the spec is closed in this same change: its decisions are knowledge
 now. Run the command it names. It first lists what knowledge does not hold — unchecked items, fog,
-open questions, untested assumptions; ask the human about each one, move it where they say (another
+open questions, what was set aside, untested assumptions; ask the human about each one, move it where they say (another
 spec through `jig-idea`, or a task) or drop it, and run it again with `--leftovers-handled`. A spec on
 an epic is closed on the epic by `--finish`, not here.
 

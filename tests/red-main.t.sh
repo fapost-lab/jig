@@ -35,8 +35,9 @@ STUB
 
 # rm_run <job=result>... — run the script the way the `red-main` job does.
 rm_run() {
-  run env FULL="${RM_FULL:-true}" PATH="$PWD/stub-bin:$PATH" RUN_ID=42 RUN_URL=https://example.test/runs/42 \
-    EVENT=push SHA=0123456789abcdef0123 GH_REPO=example/example \
+  run env FULL="${RM_FULL:-true}" SUITE="${RM_SUITE:-all}" REPORTS="${RM_REPORTS:-}" \
+    PATH="$PWD/stub-bin:$PATH" RUN_ID=42 RUN_URL=https://example.test/runs/42 \
+    EVENT="${RM_EVENT:-push}" SHA=0123456789abcdef0123 GH_REPO=example/example \
     "$JIG_HOME/.github/scripts/red-main.sh" "$@"
 }
 
@@ -121,4 +122,50 @@ test_red_main_refuses_no_results() {
   rm_run
   assert_eq 1 "$RC"
   assert_contains "$OUT" "no job results"
+}
+
+# A green run of the tests a change reaches did not run what broke main
+# (adr-20261110-a-pull-request-runs-the-tests-its-change-reaches).
+test_red_main_leaves_the_issue_open_after_a_green_selected_run() {
+  rm_stub_gh
+  printf '7\n' > open
+  RM_SUITE=selected rm_run ci-ok=success release=skipped
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "#7 stays open"
+  assert_not_contains "$(cat gh.log)" "issue close"
+}
+
+# The shares' reports name the failed tests; passed and skipped ones are not
+# listed, a killed one is "not completed", and a repeat is listed once.
+test_red_main_names_the_failed_tests_from_the_reports() {
+  rm_stub_gh
+  printf 'ubuntu-latest 1/2 (all)\n' > jobs.txt
+  mkdir -p reports/report-ubuntu-latest-0 reports/report-macos-latest-0
+  printf '0\t1\ta::test_ok\n1\t2\ta::test_broken\n77\t0\ta::test_skipped\n' \
+    > reports/report-ubuntu-latest-0/report.tsv
+  printf '1\t2\ta::test_broken\n137\t9\tb::test_killed\nmissing\t0\tb::test_lost\n' \
+    > reports/report-macos-latest-0/report.tsv
+  RM_REPORTS="$PWD/reports" rm_run ci-ok=failure release=skipped
+  assert_eq 0 "$RC" "$OUT"
+  body=$(cat gh.body)
+  assert_contains "$body" "Failed tests:"
+  assert_contains "$body" "- a::test_broken (failed)"
+  assert_contains "$body" "- b::test_killed (not completed)"
+  assert_contains "$body" "- b::test_lost (not completed)"
+  assert_not_contains "$body" "test_ok"
+  assert_not_contains "$body" "test_skipped"
+  assert_eq 1 "$(grep -c 'a::test_broken' gh.body)"
+  # Not a nightly run: no word about the map.
+  assert_not_contains "$body" "shell.map"
+}
+
+# A red nightly run points at the map: pull requests ran only what their
+# change reached.
+test_red_main_a_red_nightly_run_points_at_the_map() {
+  rm_stub_gh
+  mkdir -p reports/r
+  printf '1\t2\ta::test_broken\n' > reports/r/report.tsv
+  RM_EVENT=schedule RM_REPORTS="$PWD/reports" rm_run ci-ok=failure release=skipped
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$(cat gh.body)" "check .ai/verify/shell.map"
 }

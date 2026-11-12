@@ -11,7 +11,7 @@ paths:
   - scripts/lib/status.sh
   - scripts/lib/common.sh
 summary: Why release tags, not main, are what installs and updates the global framework, and why moving it never changes a project.
-reviewed_at: 2026-09-16
+reviewed_at: 2026-11-06
 ---
 # ADR-0033: Release tags are the update channel; the installer and `self-update` move the global framework, and only `upgrade` moves a project
 
@@ -120,3 +120,10 @@ projects.
 > user `PATH`. `install.ps1 -Uninstall` removes those `PATH` entries, the `jig` link only when it points
 > into the checkout, and the checkout only when it is a jig source tree with a clean `git status`; a
 > failed install run deletes nothing but the Git installer it downloaded in that run.
+
+> **Amendment (2026-11-06).** The development channel stays out of copy-mode projects
+> (adr-20261106-copy-mode-projects-take-released-code-only): `init` and `upgrade` in copy mode take a
+> source only at the release tag of the version it declares, unless `--unreleased` names the code on
+> purpose; off a tag the version reads `X.Y.Z+<sha>`, and `self-update` on a branch and `install.sh`
+> off a release tag say so. `jig status` now reads the global checkout's git (its tag and HEAD) beside
+> `scripts/lib/version.sh`; it still never runs the global executable.

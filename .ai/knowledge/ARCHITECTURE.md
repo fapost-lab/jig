@@ -45,7 +45,9 @@ with a single caller: `lib/bootstrap.sh` (carrying state into a new worktree, wi
 lifecycle; so is `lib/land.sh`, landing a task's pull request on the staging branch — the approval,
 the merge on the forge, the direct merge in a temporary tree, the unforced push
 (adr-20261111-a-task-lands-on-staging-through-its-pull-request), tested in `tests/task.t.sh` with the
-ship it ends. `lib/promote.sh` ("prepare for prod": `jig task promote`, with
+ship it ends. `lib/prgitlab.sh` is the same for `jig pr`: the GitLab half of it (glab and its
+account, the merge request, its diff, the read-back and the post) is sourced by `lib/pr.sh` alone
+and tested through `tests/pr.t.sh`. `lib/promote.sh` ("prepare for prod": `jig task promote`, with
 `tests/promote.t.sh`) follows the same rule; it reads a task's staging state through common.sh's
 `jig_staging_branch_problems` and `jig_staging_states` and never recomputes them.
 `jig_staging_branch_problems` and `jig_branch_carries_staging` answer the same question — is this a
@@ -103,7 +105,7 @@ adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci), `jig_verify_bus
 `jig_verify_busy_ttl` and `jig_verify_busy_holder` ("is `jig verify` running in this clone, and where" —
 `verify` holds the record, and `upgrade` will not replace the scripts of a checkout it is running in), and
 `jig_worktree_leftover` ("clear what `git worktree remove` left: links and empty directories only" —
-housekeeping for a task worktree, `owntree.sh` for its tree). One command
+housekeeping for a task worktree, `owntree.sh` for its tree, `pr.sh` for a review tree). One command
 library never sources another: `context`
 and `knowledge` share code only through `common.sh`.
 
@@ -115,7 +117,7 @@ makes the reader depend on that file's shape, which the owning domain records.
 
 **Reporting commands are the exception, and a narrow one.** `status` and `measure` exist
 to summarise what other commands already answer, so they source those libraries and call
-their entry points — `status` sources six (`spec` for its `specs:` count), `measure`
+their entry points — `status` sources six (`spec` for its `specs:` and `drafts:` counts), `measure`
 sources `task` and `knowledge`. What they may not do is *recompute* the answer: a second implementation of "how many documents
 are stale" is how the report and `jig knowledge stale` come to disagree, and the disagreement
 is invisible until someone reads both. A reporting command therefore consumes a peer's
@@ -192,9 +194,11 @@ never assumed" rule the profile contract below states.
   place the mapping "manifest → stack" is written down; no command re-derives it.
 - `requires` — another profile this one implies;
 - `scope` — capabilities the profile understands: `changed` (ADR-0013), `map` (ADR-0041),
-  `explain`, `environment`, and `profiles` — which profiles start in the same run, so one
-  can leave a check another already runs (the php profile leaves its tests to laravel's
-  `artisan test`).
+  `explain`, `environment`.
+- `covers` / `checks` — a profile above names a check of a profile below that its own
+  replaces (`laravel`: `covers: [php:tests]`); the profile below names the check by role
+  (`checks: [tests]`) and nothing about who covers it. `jig verify` decides which covers
+  hold in a run and hands them down (adr-20261107-a-profile-covers-a-check-of-another).
 
 `profiles/<stack>/verify.sh` is run from the repository root and exits 0 pass, 1 fail,
 **2 skip**, **3 incomplete** — a check that started and did not finish, which is neither a
@@ -257,5 +261,6 @@ clone it is. It is gitignored, created by nobody but them, and never touched by 
 templates and skills are relative symlinks into the source checkout, the manifest has no hash lines
 and `jig.source` is `.`. In link mode `upgrade` creates any symlink missing for the current
 config; nothing is copied. In either mode it rewrites the manifest header only when it placed
-something, or when the source it would record is the one already recorded
-(adr-20260922-upgrade-records-the-source-it-installed-from).
+something, or when the source it would record is the one already recorded, or when a project that
+carries unreleased code (`X.Y.Z+<sha>`) upgrades from a released source
+(adr-20260922-upgrade-records-the-source-it-installed-from, as amended).

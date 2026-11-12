@@ -36,7 +36,8 @@ fact for is `null`, never an empty string or a missing key.
 a person and may be reworded. The codes are part of the contract: one is never renamed or given
 another meaning without raising `schema`. A new code may be added without raising it — a refusal
 that has none yet reads `failed` until it gains one — so a program treats a code it does not know as
-`failed`. The exit status keeps its meaning whatever the code: non-zero for every refusal.
+`failed`. For the same reason one case of a broad code may move to a new code of its own when callers
+need to tell it apart (`already-filed`, out of `already-exists`); the release notes say so. The exit status keeps its meaning whatever the code: non-zero for every refusal.
 
 | `code` | The read was refused because |
 |---|---|
@@ -49,7 +50,8 @@ that has none yet reads `failed` until it gains one — so a program treats a co
 | `wrong-checkout` | `jig task resume` has a stash to apply and this checkout is not on the task's branch; `message` names the worktree that has it checked out, or says to switch to it. Nothing was written |
 | `stash-conflict` | `jig task resume` could not apply the task's stash: `git stash apply` refused and applied nothing, it merged the stash with conflicts or stopped part way, or a stash it merged earlier still has unresolved conflicts, or the checkout has unresolved conflicts of its own. The task stays paused and the stash entry is kept |
 | `not-closable` | `jig task set <id> status consolidated` was asked for a task Jig does not offer to close: its knowledge decision is not recorded, or its pull request is not merged (the forge says so, or cannot be asked). `message` is the reason word for word, the one the task's `close` action carries. Nothing was written |
-| `already-exists` | a write would create what the clone already has: `jig task new` with an id another task holds, `jig queue request` for a request already pending, `jig spec item add` with the text of an item the roadmap has, `jig spec item file` on an item that names a task or with a `--new` id another task holds. Nothing was written |
+| `already-exists` | a write would create what the clone already has: `jig task new` with an id another task holds, `jig queue request` for a request already pending, `jig spec item add` with the text of an item the roadmap has, `jig spec item file` with a `--new` id another task holds. Another id is the remedy. Nothing was written |
+| `already-filed` | `jig spec item file` was asked to file an item that already names a task, filed earlier here or in another clone; `message` names that task. Another id does not help: read the roadmap again. Checked before the task id, so an item that names a task is `already-filed` even when the id is taken too. Nothing was written |
 | `git-not-allowed` | a write in Jig's own tree was asked for at `agent.git: none`, where Jig commits nothing. `message` names the setting. Nothing was written |
 | `write-busy` | another write in Jig's own tree is running in this clone. Nothing was written; try again in a moment |
 | `branch-checked-out` | the write's branch is checked out somewhere, and Jig never moves a checkout; `message` names the path. Nothing was written |
@@ -66,11 +68,12 @@ that has none yet reads `failed` until it gains one — so a program treats a co
 | `not-on-branch` | the same, for what the base has and `knowledge/decisions`, cut before it got there and still waiting, does not. Nothing was written; decide it once that branch has landed |
 | `source-missing` | `jig knowledge accept` or `reviewed` named a stub whose source is missing, invalid or not tracked. Nothing was written |
 | `upgrade-blocked` | `jig upgrade` would not start here and changed nothing: uncommitted changes, a started task's branch checked out, `jig verify` running in this checkout, or line endings Jig's files are not pinned against. For `jig upgrade --land`: uncommitted changes, a checkout on another branch than the base or the upgrade's, the base checked out in another worktree, or a base that cannot be fast-forwarded to origin's. `message` lists every reason, one per line, each with what to do |
+| `unreleased-source` | `jig init` or `jig upgrade` in copy mode (dry run too) found the framework source checkout not at the release tag of its version, or at it with uncommitted changes, and `--unreleased` was not given. `message` names where the checkout stands and the two ways out. Nothing was changed |
 | `unknown-key` | `jig config set --json` was given a name no reader of Jig reads. Nothing was written |
 | `not-local` | `jig config set --json` was given a key Jig reads but only the team's `.ai/config.yaml` answers for. Nothing was written |
 | `invalid-value` | `jig config set --json` was given a value its key does not accept: outside the fixed set, not a number, not a duration. Nothing was written |
 | `secret-key` | `jig config set --json` was asked to put a secret (`notify.telegram.token`) on a command line, which Jig never does. Nothing was written |
-| `not-merged` | `jig upgrade --land` found the upgrade's pull request still open on the forge. Nothing was changed; merge it and run the command again |
+| `not-merged` | `jig upgrade --land` found the upgrade's pull request still open on the forge; or `jig upgrade` found the upgrade to this version already on an unmerged `jig/upgrade-<version>` branch whose pull request the forge reports open — the upgrade is done and waits for its merge, and `message` names the pull request's URL. Nothing was changed; merge it and run `jig upgrade --land` |
 | `not-on-staging` | `jig task promote` found none of the task's own commits in the tested staging commit. Nothing was pushed and no pull request opened |
 | `behind-staging` | `jig task promote` found own commits of the task the tested staging commit does not have, pushed or not: a fix made after the test. Nothing was pushed and no pull request opened |
 | `carries-staging` | `jig task promote` found the staging branch merged into the task's branch: its pull request would take untested work of others into the base. Nothing was pushed and no pull request opened |
@@ -99,7 +102,8 @@ housekeeping run (once, when it ends; not `--dry-run`). One write raises
 it at least once; a command that writes several times raises it several times.
 
 What does not: a read, Jig's caches and records of what it is doing (the context cache, the
-checkout record, the status page, the verify run), and — the accepted risk — **a file changed by
+checkout record, the status page, the verify run), an idea draft (`jig spec draft write|rename|drop`,
+and the draft `jig spec ship` moves to trash — no read reports one; the status page is redrawn), and — the accepted risk — **a file changed by
 anything but a Jig write**: edited by hand, or by git, whoever ran it — a person's `pull` or
 `checkout`, and Jig's own git steps too (the base checked out and fast-forwarded after a ship
 merges, a spec's branch switch, `upgrade` and `init` placing files). A consumer that must see those
@@ -153,7 +157,7 @@ A task:
 | `staging` | string or null | only in a project on the staging flow (`git.flow: staging` with a `git.staging_branch` `jig doctor` accepts); absent on any other flow. `on`: some commit of the task's own (reached by its branch, not by its base) is in `origin/<git.staging_branch>`, and every own commit outside it is a merge that brings the base in; `behind`: another own commit is not in it yet — a fix after the task landed there, pushed or not. `null`: none of its own work is there, or it has no branch. Derived from git by the branch's name on every read (`jig_staging_states`, common.sh), never stored, never from the forge: a squash merge into staging reads `null` |
 | `worktree` | object or null | `{"path", "uncommitted"}`: the worktree, other than the checkout the command ran in, that has the task's branch checked out, and how many files there differ from its HEAD |
 | `gate` | object or null | a T3/T4 design's gate: `{"state", "by"}`, `state` `waiting`, `changed` (the design moved after approval) or `approved`; `by` `human` or `agent`, `null` while waiting. `null` for any other class, or before `design.md` exists |
-| `autopilot` | object or null | the task's autopilot run: `state` (`on`, `stopped`, `done`), `mode` (`attended`, `unattended`), `repairs` (integer), `stage` and `stage_at` (the last stage the current run entered), `stop_reason` and `stop_at` (the journal's last stop), `phase` (`<spec-id>/<n>` for a task of a phase run); each `null` when there is none. `null` when the task never ran on autopilot |
+| `autopilot` | object or null | the task's autopilot run: `state` (`on`, `stopped`, `done`), `mode` (`attended`, `unattended`), `repairs` (integer), `stage` and `stage_at` (the last stage the current run entered), `stop_reason` and `stop_at` (the journal's last stop), `phase` (`<spec-id>/<n>` for a task of a phase run), `handover_at` (when a person took the stopped run over, `jig task autopilot <id> handover`); each `null` when there is none. `null` when the task never ran on autopilot |
 | `pull_request` | object or null | the pull request `jig task ship` opened: `{"url", "state", "ci", "fetched_at"}`. `null` when none was opened. `state` (`open`, `merged`, `closed`) and `ci` (`green`, `red`, `pending`, `none` — no check ran) are what the last `jig housekeeping` heard from the forge, at `fetched_at` (UTC), read from the forge cache below; each `null` when the cache does not say — no cache, no entry for the task's branch and base, or, for `ci`, a pull request that is not open or a forge whose list carries no checks (GitLab) |
 | `housekeeping_flags` | array of strings | the flags of the last housekeeping run that still stand for the task — `needs-consolidation`, `wrong-base`, `abandoned?`, `worktree-kept`, `base-unreleased`, `STALE_CANDIDATE` — after the same local recheck the status page makes (a closed task is no longer `needs-consolidation`); `[]` for none |
 | `actions` | array of objects | what a person may do next with the task: every row of the actions table below, in its order |
@@ -184,6 +188,7 @@ What a person may do next with a task, as Jig decides it from the task's state
 | `cancel-pause-request` | `jig queue cancel task:<id> pause` | a pause of it is requested |
 | `approve-gate` | `jig task gate <id> approved` | a T3/T4 design waits at its gate (`waiting` or `changed`), and the gate is a person's: not in a clone or a run where nobody answers (`autopilot.unattended`) |
 | `answer-stop` | `jig task autopilot <id> resume --answer <text>`, with ` --by human` for an unattended run | its autopilot run is `stopped`, and an unattended one has repairs left |
+| `handover` | `jig task autopilot <id> handover --by human --answer <text>` | its autopilot run is `stopped`, in either mode, at the repair limit or before it (adr-20261108-a-person-takes-over-a-stopped-run) |
 | `set-class` | `jig task set <id> class <Tn>` | the task is live |
 | `ship` | `jig task ship <id> --message-file <file>` | the git level (`agent.git`, or `autopilot.git` for a run) is not `none`, the knowledge decision is recorded, no P0/P1 finding blocks, the review receipt is current, the route has its records, the task is started on a branch other than its base, and its pull request is not merged |
 | `land` | `jig task land <id>` | the project is on a sound `staging` flow with `git.staging_land: pr`, the task is cut from the base branch, the git level is `merge`, it opened a pull request the forge cache does not call merged or closed, and the ship's gates pass (the knowledge decision, no blocking finding, a current receipt, the route's records). Whether the pull request is approved, conflicts, or the branch carries the staging branch is the command's, asked when it runs |
@@ -289,7 +294,9 @@ fetch, every other one from this checkout.
 
 `jig spec item add|move|file <spec> … --json` change a roadmap on a branch of its own, in Jig's own
 tree (adr-20261104-a-write-goes-in-jigs-own-tree): nobody's checkout moves. `--revision <n>` as the
-queue writes take it, and the same `stale-revision`. An item is named by its `id`, resolved in the
+queue writes take it, and the same `stale-revision`. Without it the write checks against the revision
+it reads once its tree stands, before it reads the roadmap there, so a Jig write landing while it
+fetches is not a reason to refuse it. An item is named by its `id`, resolved in the
 roadmap on the write branch, so `waiting.phases` holds the handles of the edits still on their way.
 
 ```
@@ -321,7 +328,8 @@ refusal. `--task` and `--new` are exclusive, and `--goal` goes with `--new`.
 
 Refusals: `usage`; `not-found` for a spec neither on its branch nor on the base, an item or phase the
 roadmap on the branch does not have, or a task that does not exist; `already-exists` for an item with
-this text, an item that names a task already, or a `--new` task id another task holds; `not-linkable` for a task `file` cannot link: finished,
+this text, or a `--new` task id another task holds; `already-filed` for an item that names a task
+already, whichever id was given; `not-linkable` for a task `file` cannot link: finished,
 started, linked to another spec, or an item already checked, or a checkout that does not keep the clone's task workspaces for `--new`; `epic-missing` for an open epic neither
 here nor on origin; and the refusals of every write, below.
 
@@ -329,7 +337,8 @@ here nor on origin; and the refusals of every write, below.
 
 With `--json` or `--revision <n>`, a decision is committed on `knowledge/decisions`, in Jig's own tree
 (adr-20261104-a-write-goes-in-jigs-own-tree). Without either, the text form changes the working tree,
-as it always did. `reviewed` also takes `--date`. Several ids are one decision: a refusal refuses them
+as it always did. With `--json` alone the write checks against the revision it reads once its tree
+stands, before it reads the knowledge there, as the spec item writes do. `reviewed` also takes `--date`. Several ids are one decision: a refusal refuses them
 all.
 
 ```json
@@ -422,7 +431,7 @@ The kinds, in the order they are listed:
 | `release-available` | project | a newer jig is out (`.ai/runtime/latest-release`, written by housekeeping) |
 | `upgrade-pull-request-waiting` | project | an upgrade's pull request is open: the forge cache's newest line for a `jig/upgrade-*` branch into `git.base_branch` says `open`, and the base branch here does not already record its version (as it does right after `jig upgrade --land`, before housekeeping hears the merge). Merge it, then `jig upgrade --land`. One item per such branch |
 | `upgrade-pull-request-merged` | project | an upgrade's pull request was merged, and the base branch here (`refs/heads/<git.base_branch>`) still records an older Jig than the version its branch is named for; `todo` is `jig upgrade --land`. A merged upgrade the base here already carries makes no item |
-| `upgrade-available` | project | this project's installed Jig (the manifest's `jig.version`) is an older release than the one on this machine; `todo` is `jig upgrade`, and the item carries `versions: {from, to}` — the project's and the machine's. Not listed while an `upgrade-pull-request-*` item is for the machine's version or a newer one (or for a branch whose name holds no version): `jig upgrade` again would cut a second branch for the same upgrade. One for an older version, such as an abandoned pull request left open, does not hold it back |
+| `upgrade-available` | project | this project's installed Jig (the manifest's `jig.version`) is an older release than the one on this machine (a machine on unreleased code, `X.Y.Z+<sha>`, offers none); `todo` is `jig upgrade`, and the item carries `versions: {from, to}` — the project's and the machine's. Not listed while an `upgrade-pull-request-*` item is for the machine's version or a newer one (or for a branch whose name holds no version): `jig upgrade` again would cut a second branch for the same upgrade. One for an older version, such as an abandoned pull request left open, does not hold it back |
 | `phase-stopped` | phase | tasks of a phase run stopped; answered once, in the coordinator's session |
 | `autopilot-stopped` | task | an autopilot run stopped with a question |
 | `gate-waiting` | task | a T3/T4 design waits at its human gate |
@@ -778,6 +787,7 @@ The knowledge waiting for a person, and the files its stubs link. Both read the 
 | `proposals[].waiting` | object or null | a decision on this document committed in Jig's own tree that has not landed: `decision` (`accepted`, `rejected`), `branch` and `pr` (string or null). The document here still says `proposed`, and it is until that lands. `null` when none waits |
 | `proposals[].decidable` | boolean | a decision sent now (`accept` or `reject` with `--json`) would be judged on this document: its file is on the tip of the decisions waiting, or, when none waits, on the base as `origin/<base>` has it (the local base without origin), as of the last fetch. The write asks the same question of the commit its tree stands on. Whether it was decided already is `waiting`'s to say, and an id that differs there is still `not-found` |
 | `proposals[].reason` | string or null | `null` when `decidable`; otherwise the code the decision would be refused with: `not-on-base` (only in this checkout or in commits the base does not have: commit and push it) or `not-on-branch` (on the base, but not on the decisions waiting, cut before it got there) |
+| `proposals[].lossy` | boolean | `true` when a string of this proposal held bytes that are not UTF-8 and they were dropped: a `path` or `source` read without them may name another file. `false` otherwise |
 | `waiting` | object or null | the [write](#jig-writes---json) those decisions are on; `null` when none waits |
 
 ```json
@@ -795,6 +805,7 @@ The knowledge waiting for a person, and the files its stubs link. Both read the 
 | `sources[].bytes` | integer or null | the linked file's size in bytes; `null` when it is `missing` or not a file |
 | `sources[].waiting` | object or null | a decision on this stub waiting on a branch, as on a proposal; `decision` is also `reviewed` here, and `rejected` for a dropped link. `state` stays what it is here until that lands. `null` when none waits |
 | `sources[].decidable`, `.reason` | boolean, string or null | as on a proposal. For a `changed` or `missing` source the change is judged too: the stub has to be there with its source there not the approved text, or a `reject` there would find nothing to drop |
+| `sources[].lossy` | boolean | as on a proposal: `true` when a string of this record lost bytes that are not UTF-8, so its `path` or `source` may name another file |
 | `waiting` | object or null | the [write](#jig-writes---json) those decisions are on; `null` when none waits |
 | `counts` | object | `linked` (the length of `sources`), `changed`, `unrecorded` and `missing`: the figures the text form's last line prints; what `jig status` counts as changed is `changed` plus `unrecorded` |
 
@@ -807,17 +818,20 @@ The knowledge waiting for a person, and the files its stubs link. Both read the 
 | Field | Type | Value |
 |---|---|---|
 | `id`, `source` | string | the stub and the file it links |
-| `state` | string | `ok`, `changed`, `unrecorded` or `missing`, as above, whatever the stub's status; the text form refuses a missing source, this answers it |
+| `state` | string | as `sources[].state` above, the same word for the same stub: `ok`, `changed`, `unrecorded` or `missing`, or for a stub that is not accepted its own status; the text form refuses a missing source, this answers it |
 | `approved_hash` | string or null | the git blob hash of the approved text (`source_hash`); `null` when none was recorded or the source is `missing` |
-| `diff` | string or null | the unified diff from the approved text to the file now, as `diff -u` prints it with the labels `<source> (approved)` and `<source>`; `null` unless `state` is `changed` and git still has the approved text. A `changed` state with a `null` diff, like `unrecorded`, means the file is to be reviewed whole |
-| `lossy` | boolean | `true` when `diff` held bytes that are not UTF-8 and they were dropped. Not set for the carriage return Git Bash drops from a CRLF line, or for a lone one a platform's `diff` turns into a line break |
+| `diff` | string or null | the unified diff from the approved text to the file now, as `diff -u` prints it with the labels `<source> (approved)` and `<source>`; `null` unless the file changed since a recorded approval (`state` is `changed`, or a status for a stub that is no longer accepted) and git still has the approved text. A `changed` state with a `null` diff, like `unrecorded`, means the file is to be reviewed whole |
+| `lossy` | boolean | `true` when `diff` or `source` held bytes that are not UTF-8 and they were dropped: a `source` read without them may name another file. Not set for the carriage return Git Bash drops from a CRLF line, or for a lone one a platform's `diff` turns into a line break |
 
 Every string escapes as the envelope says. A source file is whatever a person committed, so a
 diff may hold quotes, backslashes, tabs, control bytes or bytes that are not UTF-8: the first
 three kinds come out escaped and read back unchanged; bytes that are not valid UTF-8 are dropped
-from the answer (from `diff` with `lossy` set, from any other string without a flag), so the line
-is always valid JSON in UTF-8. Without `iconv` on the machine, or when the text holds a character above U+10FFFF, every byte
-outside ASCII is replaced by `?` instead.
+from the answer, so the line is always valid JSON in UTF-8. The object they were dropped from says
+so with its `lossy`: a proposal, a source, the `--diff` answer; a string outside those (the
+`branch` of a write waiting) carries no flag. A character from U+100000 to U+10FFFF is valid and
+kept; a lead byte above that range is dropped with the bytes that follow it. Without `iconv` on the
+machine, every byte outside ASCII is replaced by `?` instead, one `?` per byte (a Cyrillic letter is
+two), and `lossy` is set wherever one was.
 
 Refusals: `not-found` for an id no document has, and for a document that links no source;
 `usage` for an argument these commands do not take (`jig knowledge proposed x --json`, `sources
@@ -849,14 +863,14 @@ For a stub, `source` is the linked file:
 | `path` | string | the document's file, relative to the repository |
 | `bytes` | integer | the file's size in bytes, as it is on disk (the dropped bytes of a `lossy` text included) |
 | `content` | string | the whole file, frontmatter included, trailing newlines included; `""` for an empty file |
-| `lossy` | boolean | `true` when `content` held bytes that are not UTF-8 and they were dropped. A NUL byte is dropped without it |
+| `lossy` | boolean | `true` when `content` or `path` held bytes that are not UTF-8 and they were dropped. A NUL byte is dropped without it |
 | `source` | object or null | for a stub, the file it links as it is now; `null` for any other document, and for a stub whose source is not a readable file inside the repository (missing, unreadable, a link, outside the repository: the states `jig knowledge sources` calls `missing`) |
 | `source.path` | string | the linked file, relative to the repository |
 | `source.bytes` | integer | its size in bytes, as it is on disk |
-| `source.content`, `source.lossy` | string, boolean | its text and whether bytes were dropped from it, as `content` and `lossy` |
+| `source.content`, `source.lossy` | string, boolean | its text and whether bytes were dropped from it or from `source.path`, as `content` and `lossy` |
 
 Strings escape as the envelope says, and bytes that are not valid UTF-8 are dropped as in
-`sources --diff` (or, without `iconv`, every byte outside ASCII becomes `?`), so the line is always
+`sources --diff` (or, without `iconv`, every byte outside ASCII becomes `?`, one per byte), so the line is always
 valid JSON in UTF-8. A source is read whatever its state: `jig knowledge sources --json` says
 whether it changed since it was approved. The text is the checkout's: a decision waiting on
 `knowledge/decisions` is not applied to it (see `waiting` in `proposed --json`).
@@ -884,14 +898,17 @@ source holds a newer version than the jig that was called), that jig's data is t
 |---|---|
 | `mode` | `copy`, or `link` for a project installed with `jig init --link` |
 | `dry_run` | `true` for `--dry-run`, which changes nothing |
-| `from`, `to` | the project's Jig before the run (the manifest's `jig.version`) and the version it upgrades to; `null` when unknown |
+| `from`, `to` | the project's Jig before the run (the manifest's `jig.version`) and the version it upgrades to; `null` when unknown. Either carries `+<short sha>` (`0.40.0+278958c`) for unreleased code, taken with `--unreleased` |
 | `outcome` | `planned` (a dry run), `linked` (link mode, every link in place), `nothing-to-do`, `incomplete` (the self-check failed, so nothing was committed; run again), `staged` (changed and left for the person to commit: `agent.git` is `none`, or the repository has no commit yet), `upgraded` (committed) |
 | `files` | how many framework files the run placed, kept as they were, removed and left in conflict; `null` in link mode |
 | `git` | how far git went, by `agent.git` (`level`): the upgrade's `branch` (`null` when the project works on one branch), the `commit` (`null` when staged), `pushed`, the `pull_request` URL or `null`, and `merged`. `null` when nothing was staged or committed |
 | `manual_steps` | the steps this release asks for by hand, as the upgrade commit lists them; empty when there are none |
 | `would_stop` | for a dry run, every reason a real run would refuse, as `upgrade-blocked` would name it; empty otherwise |
 
-Refusals: `upgrade-blocked` before anything is touched; `usage` for an argument the command does
+Refusals: `upgrade-blocked` before anything is touched; `not-merged` when the upgrade to this version
+is already on an unmerged `jig/upgrade-<version>` branch whose pull request the forge reports open
+(the forge is asked once, only then; without its answer, or for a merged or closed pull request, the
+refusal reads `failed`); `usage` for an argument the command does
 not take or `--from` without its value; `not-initialised` and `not-a-repository` as everywhere. Any
 other refusal — a source that is not a Jig checkout, a project in link mode where links cannot be
 made — reads `failed`. A failure after the commit (the push, the pull request or the merge) also
@@ -924,7 +941,7 @@ branch's pull request counts.
 | Field | Meaning |
 |---|---|
 | `mode`, `dry_run`, `files`, `manual_steps`, `would_stop` | as in `jig upgrade --json`; `dry_run` is `false`, `files` `null`, the two lists empty |
-| `from`, `to` | the Jig the base branch here recorded before (`jig.version` in its manifest) and after the fast-forward; on `nothing-to-do` both are the base's |
+| `from`, `to` | the Jig the base branch here recorded before (`jig.version` in its manifest) and after the fast-forward; on `nothing-to-do` both are the base's. A value may carry `+<short sha>` for unreleased code |
 | `outcome` | `landed`, or `nothing-to-do` when no merged upgrade waits to be brought here (and none is open) |
 | `git` | on `landed`: `level` (`agent.git`), the upgrade's `branch`, the `commit` the base is on now, `pushed` and `merged` (both `true`), and the `pull_request` URL or `null`. `null` on `nothing-to-do` |
 | `land` | on `landed`: the `base` checked out, and whether the upgrade's branch was deleted here (`branch_deleted`) and on origin (`origin_branch_deleted`). A branch kept says why in the text on stderr. `null` on `nothing-to-do` |

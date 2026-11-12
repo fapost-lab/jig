@@ -109,3 +109,24 @@ On by default; `git.delete_merged_branches: false` (a local key) keeps every bra
 > network call goes through the credential helper, and a helper that asks the person (a macOS
 > Keychain dialog `GIT_TERMINAL_PROMPT=0` does not stop) asked up to twice per branch
 > (issue #317). `jig_ship_leave` still leaves one branch, with its `ls-remote` fallback.
+
+> **Amendment (2026-11-09).** A template with nothing before `{id}` no longer leaves Jig with no
+> branch to delete. Under such a template a branch is Jig's when a task record says Jig made it: a
+> `state` in the workspace or in trash, under any date, whose `branch:` is that branch, and the
+> branch is the name the template gives that record's own id. Only `task start` writes `branch:`,
+> and it refuses a branch that already exists. Under `git.branch_per_task: false` it cuts none and
+> records the branch the person is on — their own `PROJ-123`, for a task named `PROJ-123`, would
+> pass the name check — so in that mode no record makes a branch Jig's. The name check keeps out a
+> record of any branch other than the task's own, and the base branch is never Jig's whatever a
+> record says. The name alone still decides nothing: under `{id}` every branch shaped like an id
+> would match — a project that named its branches after its tracker's ids long before Jig keeps
+> every one of them. The check is `jig_branch_deletable` (common.sh), asked by the three deleting
+> sites — `_hk_branch_sweep`, `jig_branch_leave`, `jig_ship_leave`; `jig_branch_is_jigs` keeps its
+> meaning for the readers that want upgrade branches only. The records are read once per process,
+> and the sweep reads them afresh, after its run moved workspaces to trash. What this does not
+> do: a colleague's merged branch on origin is not swept from this clone (its record is in theirs),
+> and a branch whose record has left trash stays. Two narrow cases are accepted, both limited to
+> a branch whose work landed and both still behind `git branch -d`: a person who makes a branch by
+> hand under the name of a task whose record is still in trash, and a project that switched
+> `git.branch_per_task` from `false` to `true` with records of the old mode still in its workspace.
+> (task branch-sweep-without-template-prefix)

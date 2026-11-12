@@ -39,35 +39,3 @@ latest commit's subject as its title instead of the staging merge request's.
 **What to do instead.** Check the merge request list on GitLab after the first promotion, and give
 the title yourself with `--title` if it is not the one you want.
 
-{/* Closed by task knowledge-json-findings (F6). */}
-### One rare character turns every non-ASCII letter of a knowledge answer into `?`
-
-**What you see.** When text in a knowledge JSON answer holds a character from U+100000 to U+10FFFF, in
-a summary of `jig knowledge proposed --json` or in the file behind `sources --diff --json`, every
-non-ASCII letter of the whole answer reads `?`, in the other documents too. The same happens to any non-ASCII text on a machine with no `iconv`.
-
-**What it costs.** A program, such as Jig UI, shows summaries in Cyrillic or any other non-Latin
-script as question marks. The JSON stays valid and nothing else is lost.
-
-**What to do instead.** Read the text form, which prints the text as written, and remove the character
-where it is yours to remove.
-
-{/* Closed by task knowledge-json-findings (F3). */}
-### Knowledge JSON names a different file for a path that is not UTF-8
-
-**What you see.** In `jig knowledge sources --json` and `proposed --json`, a stub that links a file whose
-name has a byte that is not UTF-8 reports the name with the byte removed: `docs/w<FF>.md` reads `docs/w.md`, with nothing in the answer to say so.
-
-**What it costs.** A program can show, or open, a different file of that shorter name.
-
-**What to do instead.** Give the linked file a UTF-8 name.
-
-{/* Closed by task knowledge-json-findings (F4). */}
-### A proposed stub has two states in `jig knowledge sources --json` and `--diff --json`
-
-**What you see.** A stub not accepted yet reads `proposed` in `jig knowledge sources --json`, and
-`unrecorded` in `jig knowledge sources --diff <id> --json`.
-
-**What it costs.** A program that compares the two reads sees a state change that did not happen.
-
-**What to do instead.** Take the state from `jig knowledge sources --json`.

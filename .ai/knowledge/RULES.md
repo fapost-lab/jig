@@ -50,8 +50,11 @@
   touches the owner's entry it points at.
   (adr-20261002-a-worktree-shares-a-directory-by-mirroring-it) A branch is the other thing git
   deletes for jig, through `jig_branch_leave` (common.sh): one jig made
-  (`jig_branch_is_jigs` — `jig/upgrade-*`, `finish/<id>`, `close/<id>`, the name `git.branch_template` gives a
-  valid id after a non-empty prefix; never the base branch, `epic/*` or `spec/*`), checked out in
+  (`jig_branch_deletable` — `jig/upgrade-*`, `finish/<id>`, `close/<id>`, the name `git.branch_template` gives a
+  valid id after a non-empty prefix, or, with nothing before `{id}` and `git.branch_per_task` on, a
+  branch a task record in the workspace or trash names and the template gives that record's own
+  id; never the base branch,
+  `epic/*` or `spec/*`), checked out in
   no worktree, whose work landed, with `git.delete_merged_branches` not `false`. Locally `git
   branch -d`, never `-D`, run before origin is touched so that `-d` still compares the branch
   with its upstream; past a refusal of `-d` only a branch whose tip is the head of a pull
@@ -111,9 +114,13 @@
   `jig_revision_bump`'s, or `jig_revision_claim`'s for a `jig queue` write — is withdrawn by
   `rm -f` of the one name, a file, that call created, except a claim of 0 that finds a name below its own,
   which stays as the highest name. (adr-20261016-the-clone-revision-is-a-claimed-name,
-  adr-20261019-the-queue-is-one-file-written-against-a-revision) Moving to trash is not deleting, and it has two users: housekeeping moves
-  a workspace, and `jig spec` moves `.ai/specs/<id>/` — `remove`, `close` and `epic --finish` —
-  while `epic --reopen` moves aside the partial restore it has just made itself. Each is reached
+  adr-20261019-the-queue-is-one-file-written-against-a-revision) `jig pr cleanup` is the eighth, and git deletes what it takes back: a pull request's review tree only by `git worktree remove` without `--force`, only at `<git.worktree_root>/.pr-<n>`, the one path built from a number checked to be digits, and only while git lists that path detached and unlocked — the tree is only ever read, so what git deletes with it is the head's checkout and whatever the project ignores there; its links and empty directories left behind go as housekeeping's leftover does (`jig_worktree_leftover`). Its refs, `refs/jig/pr/<n>/head`, `/base` and a follow-up's `/reviewed` and no other, by `git update-ref -d` at the commit each holds when read. Its state, in `.ai/workspace/pr/<n>/` or `<git-common-dir>/jig/pr/<n>/`, by `rm -f` of the names jig writes there — `record`, `draft.md`, `payload.json`, `shown.md`, `shown`, `posted`, `post.json`, `part-<k>.json` (adr-20261109-a-review-is-posted-as-it-was-shown) and `followup` (adr-20261110-a-follow-up-answers-its-own-threads) — then `rmdir`, which refuses anything else. A worktree git refuses keeps the refs and the record with it. (adr-20261109-a-pull-request-is-read-in-a-detached-tree-of-the-clone) Moving to trash is not deleting, and it has three users: housekeeping moves
+  a workspace, `jig spec` moves `.ai/specs/<id>/` — `remove`, `close` and `epic --finish` —
+  while `epic --reopen` moves aside the partial restore it has just made itself, and an idea
+  draft goes as `idea-<id>` by `jig spec draft drop` or the `jig spec ship` that committed its
+  spec. `jig spec draft write` deletes only the temporary file it named, by `rm -f`, and `rmdir`s
+  the draft's directory only when that run made it. A draft leaves by no other way: no
+  housekeeping run and no age removes one (adr-20261110-an-idea-draft-waits-outside-git). Each is reached
   through a validated id, and that is what holds the path inside `.ai/specs/`, a valid id having
   no separator in it to climb out with. Two of them then resolve the directory and refuse one
   that lands outside anyway: `spec remove`, and housekeeping's own purge of a workspace.
@@ -183,7 +190,7 @@
   spec ids, profile names, adapter names and knowledge domain names are checked at the
   single function that builds the path (`task_dir` and its `task_dir_v`; common.sh's state
   readers `jig_task_state_var` and `jig_task_base_v`, which check with `jig_valid_id`; `spec_new` and the `spec_ids` walk,
-  `spec_task_dir` and `spec_remove`, `profiles_dir`, `adapters_dir`, `km_domain_dir`), before
+  `spec_task_dir` and `spec_remove`, `profiles_dir`, `adapters_dir`, `km_domain_dir`, and for a pull request's number `_pr_state_dir` and `_pr_worktree_path`), before
   any read, write or `sed` expression that embeds them. A path supplied by a caller rather
   than derived from a name is validated the same way at the point it is joined to the
   project root — `_ctx_check_knowledge_path` for an

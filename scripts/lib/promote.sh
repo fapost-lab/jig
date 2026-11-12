@@ -34,16 +34,17 @@ _promote_needs_person() {
 # refuse when one cannot be fetched: unlike jig_fetch_branches, which only
 # warns, a promotion judged on a stale origin/<task-branch> would open its
 # pull request on the real branch, which may hold a fix nobody tested.
-# GIT_TERMINAL_PROMPT=0 and GIT_SSH_COMMAND as every network git call
+# Through jig_git_origin, which sets GIT_TERMINAL_PROMPT=0 and GIT_SSH_COMMAND
 # (conventions/shell.md).
 _promote_fetch() {
   local who="$1" name out
   shift
   git -C "$JIG_PROJECT" remote get-url origin >/dev/null 2>&1 \
     || _promote_refuse failed "$who: this clone has no origin, so nothing can be judged against what was tested"
+  # As the clone's account (jig_git_origin), named here, in this shell.
+  jig_git_origin_account "$who" read
   for name in "$@"; do
-    if ! out=$(GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
-         jig_net git -C "$JIG_PROJECT" fetch --quiet origin \
+    if ! out=$(jig_net jig_git_origin fetch --quiet origin \
          "+refs/heads/$name:refs/remotes/origin/$name" 2>&1); then
       # Origin answered, and has no such branch: nothing there was tested.
       case "$out" in
@@ -81,7 +82,7 @@ _promote_pr_rows() {
   kind=$(jig_forge_kind 2>/dev/null) || return 0
   case "$kind" in
     github)
-      jig_net gh pr list --head "$head" --base "$base" --state "$state" --json url,title \
+      jig_net jig_gh pr list --head "$head" --base "$base" --state "$state" --json url,title \
         --jq '.[] | .url + "\t" + .title' 2>/dev/null || true ;;
     gitlab)
       if [ "$state" = all ]; then

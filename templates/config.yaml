@@ -60,8 +60,8 @@ housekeeping.stale_after: 60d         # an untouched active/ready task is archiv
 knowledge.require_frontmatter: true   # `jig knowledge check` fails on missing frontmatter
 
 # verify.full_run: local | ci. Set `ci` only when CI runs every check on each
-# pull request: `jig verify` then checks what changed since git.base_branch
-# and leaves the full set to CI. It still runs everything when CI is set or
+# pull request: `jig verify` then checks what changed since the current
+# task's base (git.base_branch without a task) and leaves the full set to CI. It still runs everything when CI is set or
 # with --full.
 # verify.full_run: local
 

@@ -1,0 +1,7 @@
+# jig-pr-review: somebody else's pull request, by its URL, to a draft of comments.
++ review this PR https://github.com/acme/widget/pull/7
++ review my colleague's pull request and prepare comments
++ prepare comments for the PR my teammate opened
+- review this change before it ships
+- is this ready to merge
+- review the diff of my task

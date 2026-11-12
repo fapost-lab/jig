@@ -28,15 +28,12 @@ task reads as verified even if files changed afterwards, and a change can be shi
 that was earned by a different tree. The result gets pinned to its inputs, the way the review is,
 and a moved tree asks for a new run.
 
-**Knowledge read as data must say what the files say.** 0.40.0 made the knowledge waiting for a
-person readable as JSON. Three faults came with it: one rare character turns every non-ASCII letter
-of an answer into `?`, a file name that is not UTF-8 reads as a different file, and a proposed stub
-has two states in two reads ([Known issues](/known-issues)).
-
 **A write from a page must only ever publish what it was meant to.** 0.40.0 made a roadmap edit and a
 knowledge decision possible without moving your checkout, and a rule stops a write publishing commits
-origin never had. Most of the faults found since, around pull requests closed or squashed under it
-and branches deleted on origin, are fixed; the rest are still open and are being fixed one by one.
+origin never had. The faults found since, around pull requests closed or squashed under it and
+branches deleted on origin, are fixed in 0.41.0. Next, a smaller step: a spec created after a write
+already took its branch name should get another name. `jig spec new` now refuses it when that branch
+is in your clone, and loses nothing; a write branch that exists only on origin is not caught yet.
 
 ## Then: what costs you time
 
@@ -49,6 +46,12 @@ them.
 is not sure of is handed to a fresh agent that has not seen the reasoning behind it, and is kept
 only if that agent confirms it. A wrong finding then costs one check instead of a round of fixes.
 
+**A profile changes one check of another in a few lines.** From 0.41.0 a profile can take over a
+check of another by its name (`covers:`), so a Laravel project runs its test suite once. Next, every
+stock profile names its checks, and a profile builds on another and changes only what differs,
+instead of copying it; until then a profile under `.ai/profiles/` that no active profile reaches
+stays silent.
+
 ## After that: new capabilities
 
 **Planning that lives in Jig.** Jig can be read by a program (0.29.0), planned with (0.31.0) and
@@ -59,7 +62,8 @@ What is left: a way for `jig init` to tell an installed Jig UI about a new proje
 **Reviewing somebody else's pull request.** Give Jig the address of a colleague's pull or merge
 request on GitHub or GitLab, read the review exactly as it will be posted, say yes, and it lands as
 one comment-only review; after the author's fixes, a follow-up answers its own earlier comments.
-The specification is written, and nothing of it is built yet.
+All of it is in 0.42.0. What is left is checking GitLab's posting and the follow-up on a live merge
+or pull request, and a follow-up in a clone where Jig is not installed.
 
 **Project hooks.** A way for a project to bind its own rules and its own checks to stages of the
 route, so that what a project insists on is asked at the stage it belongs to rather than remembered.
@@ -99,5 +103,8 @@ rather than about ten (measured on a synthetic project of 40 tasks; see the [cha
 an upgrade's pull request is in `jig status --json`, and `jig upgrade --land --json` brings it in once
 merged, from 0.39.0, so a program no longer has to remember it; closing a task with the revision it
 read, the settings as JSON, the knowledge waiting for a person, its decisions and roadmap writes that
-leave your checkout alone are in 0.40.0. Its plans
+leave your checkout alone are in 0.40.0; from 0.41.0 a finished task leaves the queue, so the board
+shows only the work left, and an upgrade from unreleased Jig is refused as `unreleased-source`; from
+0.43.0 an upgrade whose pull request is still open is refused as `not-merged`, not `failed`, and a
+refused close says why GitHub or GitLab could not be asked. Its plans
 live in its own repository, and its documentation at [jig-ui.fapost.in](https://jig-ui.fapost.in).

@@ -160,6 +160,57 @@ queue wait in a circle is refused before anything changes.
 Jig does not touch your tracker. When the receiving task ships, its commit and pull request name the
 absorbed tasks' issues in an `Absorbs:` line, so the tracker's own integration can link or close them.
 
+## Close a roadmap item for a task you gave up
+
+```bash
+jig task abandon booking-message --reason "The form covers it"
+jig spec drop booking-message
+```
+
+`jig task abandon` does this by itself where it can; `jig spec drop <task-id>` is the same edit run
+by hand, where Jig said it could not. It checks the roadmap item of a spec that names the abandoned
+task and ends it with ` — dropped (<date>): <reason>`, or ` — moved to <ref> (<date>): <reason>` when
+the task was moved elsewhere. [Read about giving a task up](/working-with-tasks#giving-a-task-up-or-moving-it-elsewhere).
+
+The edit has to be made where the roadmap is current, so the command refuses in a checkout that is
+not that place:
+
+- `lands on <base>, which is not checked out here`: the spec has an open epic, or the task was
+  started from another branch, and the roadmap there is edited in a checkout of that branch. Run
+  the command in one.
+- the task is not abandoned: abandon it first with `jig task abandon <id> --reason <text>`.
+- `spec/<id> does not name <task>`: the spec's own branch, left from an earlier session, lacks the
+  item the default branch has. Jig switches back to the default branch; merge it into the spec's
+  branch and run the command again.
+
+A task's own branch never ships the roadmap, so the command refuses there too and names the checkout
+to run it in.
+
+## Keep an idea's draft
+
+While you shape an idea with the `jig-idea` skill, the agent keeps a draft of the conversation on
+disk, so a session that ends early loses one round and not the whole. You can read and manage drafts
+yourself:
+
+```bash
+jig spec draft list
+jig spec draft write booking --from notes.md
+jig spec draft rename booking table-booking
+jig spec draft drop table-booking
+```
+
+A draft is the file `.ai/workspace/ideas/<id>/draft.md`. It is ignored by git: it is not a spec, has
+no branch, and `jig task start` and `jig spec new` do not see it. `write` takes `--from <file>`, or
+`-` to read standard input, and refuses an empty draft. `list` shows each draft with where it is, how
+long ago it was written and whether a spec of that id exists. `rename` is for an idea whose spec was
+given another id, so that `jig spec ship` finds the draft. `drop` moves it to trash.
+
+A draft stays until the specification of the same id is committed, when `jig spec ship` moves it to
+trash, or until you drop it; housekeeping never removes one, whatever its age. In a clone with no main
+checkout to find (made with `--separate-git-dir`, or the worktrees of a bare repository), drafts live
+under `<git-common-dir>/jig/ideas/`, one place for every checkout. While a draft exists, `jig status`
+prints `drafts: 1 (jig spec draft list)`.
+
 ## Order the work
 
 ```bash
@@ -326,6 +377,46 @@ for review that says `none acknowledged at review` passed on what the implemente
 be written as the guard prints it, with a leading `./`, or as an absolute path inside the project.
 `--revoke` withdraws an acknowledgement given by mistake.
 [How context works](/under-the-hood#knowledge-and-what-an-agent-reads).
+
+## Review a colleague's pull request
+
+The [`jig-pr-review`](/skills) skill drives this when you give it the link of a GitHub pull request
+or a GitLab merge request. The commands are the same ones you can run yourself, in your own checkout:
+
+```bash
+jig pr fetch https://github.com/acme/shop/pull/42
+jig pr draft 42 --from review.md
+jig pr comments check 42
+jig pr comments post 42 --shown <hash>
+```
+
+`fetch` takes the pull request's head and base into refs of Jig's own and a detached worktree beside
+the repository, `<git.worktree_root>/.pr-<n>`, without touching your checkout. Read that tree; run
+nothing in it. `draft` checks the review against the format the skill keeps and prints it; give it a
+file with `--from` to keep a new one. `comments check` places the draft on the forge's own diff and
+prints the review as it would be posted, with a hash. `comments post` posts only that version: it is
+refused unless `--shown` carries the hash `check` printed, so what you read is what goes out.
+
+After the author pushes fixes:
+
+```bash
+jig pr followup 42
+jig pr followup 42 --login my-review-account
+jig pr list
+jig pr cleanup 42
+```
+
+`followup` reads your earlier review back from the forge: its open threads and the head you reviewed,
+which it finds even after a force-push. The next draft answers each thread `fixed` or `open`, and
+`--login` names the account that reviewed when it cannot be told. `list` shows each fetched pull
+request with its head, worktree and whether a draft exists; `cleanup` takes the worktree, the refs
+and the draft of one back.
+
+The record and the draft live in `.ai/workspace/pr/<n>/`, ignored by git. In a project without Jig
+installed they live in `<git-common-dir>/jig/pr/<n>/`, inside the clone and out of its working tree.
+GitHub needs `gh`, and `gh` 2.40 or later when several accounts are signed in on the host, so that
+Jig can post as the one that may comment; GitLab needs `glab`. Posting to GitLab and the follow-up
+have not yet been checked on a live merge request or pull request.
 
 ## Run the project's checks
 

@@ -67,6 +67,22 @@ removed by each write. Its branch, the **write branch** (`spec/<id>`, `knowledge
 what waits until it lands (adr-20261104-a-write-goes-in-jigs-own-tree). Not a Task Worktree: no
 task owns it, and nobody ever works in it. Informal synonyms: write tree.
 
+## Review Tree
+
+The detached git worktree at `<git.worktree_root>/.pr-<n>` that `jig pr fetch` makes of a
+pull request's head for the `jig-pr-review` skill to read, with the head and base in
+`refs/jig/pr/<n>/`. Only read: nothing in it is run, and `jig pr cleanup` removes it with its
+refs and record (adr-20261109-a-pull-request-is-read-in-a-detached-tree-of-the-clone). Not a
+Task Worktree: no task owns it, and housekeeping leaves it alone. A follow-up adds
+`refs/jig/pr/<n>/reviewed`, the head reviewed last. Informal synonyms: PR tree.
+
+## Follow-up
+
+A second review of a pull request after its author pushed fixes: `jig pr followup` reads the
+earlier review back from the forge's hidden markers, and the next post answers each of its open
+threads "fixed" or "still open" and comments only on what changed
+(adr-20261110-a-follow-up-answers-its-own-threads). Not a re-review of a task (`jig-review` §5).
+
 ## Directory Link
 
 A link from one directory to another that bash sees as a symlink (`-L`, `find -type l`): a
@@ -133,6 +149,15 @@ stays live with `partly_in`, and `<to>` records `absorbs_partly`. Not a status o
 `.ai/runtime/trash/<date>/<task-id>/`, where a purged Workspace of a closed task is moved rather than
 deleted. Recovery is a plain `mv` back for `trash_ttl` days (ADR-0006). Never committed.
 
+## Idea Draft
+
+An idea's conversation before its Specification is written: `.ai/workspace/ideas/<id>/draft.md`
+(`<git-common-dir>/jig/ideas/` where a clone has no main checkout), ignored by git, in the human's
+language, rewritten by the `jig-idea` skill after every round through `jig spec draft write`. It
+leaves only when the `jig spec ship` that committed its spec moves it to Trash, or when a person
+runs `jig spec draft drop` (adr-20261110-an-idea-draft-waits-outside-git). Not Proposed Knowledge,
+whose informal synonym is also "draft", and not a draft pull request.
+
 ## Purge
 
 Ending the life of a closed task's Workspace, in two stages: move to Trash, then permanent
@@ -176,7 +201,7 @@ Informal synonyms: draft, candidate.
 ## Specification (Spec)
 
 The committed plan for work larger than one task, under `.ai/specs/<spec-id>/`: `spec.md`
-(the idea, its stress test, decisions, open questions) and `roadmap.md` (destination,
+(the idea, its stress test, decisions, open questions, what was set aside) and `roadmap.md` (destination,
 phases, items, fog, waves). Created by `jig spec new` and developed with the `jig-idea`
 skill. A plan, not Knowledge: `jig context` never resolves it, and it has no status —
 progress is read from the roadmap's checkboxes (ADR-0035). A task filed from it links back
@@ -303,6 +328,14 @@ its own design with `--by agent`, and the pull request says so
 An autopilot run in a clone with `autopilot.unattended: true`: it asks nothing, takes a recorded
 safe default at each stop and, at `agent.git: merge`, ends merged once CI passed. Its mode is
 fixed when the run starts. Informal synonyms: without stops, hands-off run.
+
+## Handover
+
+A person taking a stopped autopilot run over: `jig task autopilot <id> handover --by human --answer
+<their words>`. The run ends (`done`, `autopilot_handover` recorded), the gate and the git level are
+the person's from then on, and no new run starts on the task, so it gains no repairs
+(adr-20261108-a-person-takes-over-a-stopped-run). Not a `resume`, which continues the run. Informal
+synonyms: taking a run over, hand-over.
 
 ## Phase Run
 

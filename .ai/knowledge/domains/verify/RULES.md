@@ -79,7 +79,10 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
 
 - A new capability gets a name in `profile.yaml`'s `scope` list and is passed only to
   profiles that name it. Adding a capability that older profiles could observe by default
-  would break profiles written before it existed.
+  would break profiles written before it existed. One capability is declared per check
+  instead: `JIG_VERIFY_COVERED` reaches a profile only for a check it lists under `checks`,
+  because what it honours is a named check, not the whole protocol, and the name is what a
+  cover is validated against (adr-20261107-a-profile-covers-a-check-of-another).
 - `jig verify --explain` asks a profile for a plan only when it declares `scope: [..., explain]`.
   A profile in this mode MUST name every check as full, filtered, skipped or conditional;
   a conditional answer MUST name a possible full run. It MUST NOT run a project tool,
@@ -179,17 +182,20 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
 - **A shipped profile knows its stack, never a project.** A files-to-checks rule true for
   one project's layout belongs in that project's `.ai/verify/<profile>.map`. The map is
   parsed in `cmd_verify` alone; a profile reads decisions, never the map file.
-- **A profile stands a check down only for a profile that will run it, and never past its
-  own map.** `JIG_VERIFY_PROFILES` (`scope: [..., profiles]`) lists the profiles this run
-  starts, built with the same gates the run applies (a `verify.sh`, `explain` in a preview,
-  `environment` under one): a profile the run will not start covers nothing. A profile that
-  received decisions from its own map keeps the checks they route to it, because the other
-  profile reads only its own map — standing down would drop the project's decision in
-  silence. The skip it prints starts `scope:` (`scope: covered by laravel, artisan test`):
-  the check's tools are fine and the work is someone else's, so a run where everything else
-  narrowed away is not read as a gap in coverage.
+- **A check stands down only for a profile that will run it, and the profile below never
+  names the one above.** The covering profile declares `covers: [<profile>:<check>]`; the
+  covered one names its check by role in `checks` and calls `jp_covered`, and nothing in it
+  knows who covers it. `_verify_covers` decides once per run: both profiles start (the same
+  gates the run applies), the covering one applies to the project (`profiles_applies`, its
+  `detect`), and the covered one names the check — otherwise a warning, and the check runs.
+  Covers chain to the profile that finally runs the check, and a circle of covers is
+  dropped. A covered check's map goes with it: `<lower>.map` is read for that profile after
+  its own, and a covering profile that cannot read maps does not take tests whose map would
+  be dropped. The skip starts `scope:` (`scope: covered by laravel, php:tests`): the check's
+  tools are fine and the work is someone else's, so a run where everything else narrowed
+  away is not read as a gap in coverage.
 - **A test suite run by a narrowed profile must not pass the scope on.** `tests/run.sh`
-  unsets `JIG_VERIFY_SCOPE`, `JIG_VERIFY_FILES`, `JIG_VERIFY_MAPPED`, `JIG_VERIFY_EXPLAIN`, `JIG_VERIFY_PROFILES`, `JIG_VERIFY_BUSY_HELD`
+  unsets `JIG_VERIFY_SCOPE`, `JIG_VERIFY_FILES`, `JIG_VERIFY_MAPPED`, `JIG_VERIFY_EXPLAIN`, `JIG_VERIFY_COVERED`, `JIG_VERIFY_BUSY_HELD`
   and `CI` for every test:
   a test that runs a profile directly otherwise takes the scope of the run that started the
   suite.

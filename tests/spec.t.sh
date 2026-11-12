@@ -462,7 +462,7 @@ test_spec_without_subcommand_fails() {
   fixture_repo
   run jig spec
   [ "$RC" -ne 0 ] || fail "expected non-zero exit, got 0"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> | --new <task-id> [--goal <text>] (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec draft write <id> --from <file>|- | jig spec draft rename <id> <new-id> | jig spec draft list | jig spec draft drop <id> | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> | --new <task-id> [--goal <text>] (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 test_spec_unknown_subcommand_fails_naming_it() {
@@ -476,7 +476,7 @@ test_spec_help_exits_zero() {
   fixture_repo
   run jig spec --help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> | --new <task-id> [--goal <text>] (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec draft write <id> --from <file>|- | jig spec draft rename <id> <new-id> | jig spec draft list | jig spec draft drop <id> | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> | --new <task-id> [--goal <text>] (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # `help` (no dashes) is the subcommand form, same as `--help`/`-h`.
@@ -484,7 +484,7 @@ test_spec_help_subcommand_exits_zero() {
   fixture_repo
   run jig spec help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> | --new <task-id> [--goal <text>] (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec draft write <id> --from <file>|- | jig spec draft rename <id> <new-id> | jig spec draft list | jig spec draft drop <id> | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> | --new <task-id> [--goal <text>] (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # --- specs are not knowledge --------------------------------------------------
@@ -2023,7 +2023,7 @@ test_spec_close_refuses_a_spec_with_conflicting_epic_lines() {
 }
 
 # spec_leftovers (AC-01): unchecked roadmap items, fog included, and the
-# spec's own Open questions / Assumptions left untested bullets; the
+# spec's own Open questions / Set aside / Assumptions left untested bullets; the
 # template's `<placeholder>` bullets are never leftovers, and bullets under
 # any other heading (e.g. Decisions) are never counted.
 test_spec_close_lists_leftovers_including_fog_and_skips_placeholders() {
@@ -2054,6 +2054,13 @@ EOF
 - Real open question — what depends on it.
 - <placeholder question> — what depends on it.
 
+## Set aside
+
+- Real parked idea — set aside because later.
+- unexplored: a direction nobody opened.
+- <placeholder aside> — set aside because <reason>.
+- <unexplored: placeholder direction.>
+
 ## Assumptions left untested
 
 - Real assumption — untested.
@@ -2062,6 +2069,10 @@ EOF
 
   run jig spec close alpha
   assert_eq 1 "$RC"
+  assert_contains "$OUT" "  aside: Real parked idea — set aside because later."
+  assert_contains "$OUT" "  aside: unexplored: a direction nobody opened."
+  assert_not_contains "$OUT" "placeholder aside"
+  assert_not_contains "$OUT" "placeholder direction"
   assert_contains "$OUT" "  item: \`T-1\` — do the thing"
   assert_contains "$OUT" "  item: plain item not filed"
   assert_contains "$OUT" "  item: fog: something uncertain"
@@ -3754,6 +3765,30 @@ test_spec_ship_declare_at_pr_pushes_and_opens_the_pr_into_main() {
   assert_contains "$argv" "$(printf -- '--title\nDeclare idea-x')"
 }
 
+# A clone whose github.account gh does not hold: a ship that would open a pull
+# request refuses before its first commit (jig_ship_account).
+test_spec_ship_declare_at_pr_refuses_before_pushing_when_the_account_is_not_held() {
+  local head_before
+  sship_declared idea-x
+  sship_origin
+  sship_stub_gh ""
+  git remote set-url origin https://github.com/example/example.git
+  git remote set-url --push origin "$PWD/origin.git"
+  sship_cfg_local agent.git pr
+  sship_cfg_local github.account dave
+  head_before=$(git rev-parse HEAD)
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "github.account is dave"
+  assert_contains "$OUT" "Nothing was sent; the commit is on this machine"
+  assert_eq "$head_before" "$(git rev-parse HEAD~1)" "the refusal left more or less than the one local commit"
+  if git --git-dir=origin.git rev-parse --verify --quiet refs/heads/spec/idea-x >/dev/null; then
+    fail "spec/idea-x was pushed"
+  fi
+  assert_no_file gh-create.argv
+}
+
 test_spec_ship_epic_at_push_pushes_the_cut_epic() {
   sship_cut idea-x
   sship_cfg_local agent.git push
@@ -4828,6 +4863,30 @@ test_spec_item_a_move_that_changes_nothing_commits_nothing() {
   assert_contains "$OUT" '"writes":[]'
 }
 
+test_spec_item_moving_the_only_item_of_a_section_within_it_commits_nothing() {
+  own_tree_repo commit
+  run jig spec item add idea-x --phase 2 --text "Only one" --json
+  assert_eq 0 "$RC"
+  local only before
+  only=$(_si_id 'Only one')
+  before=$(git rev-parse spec/idea-x)
+  run jig spec item move idea-x "$only" --top --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"committed":false'
+  run jig spec item move idea-x "$only" --bottom --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"committed":false'
+  run jig spec item move idea-x "$only" --phase 2 --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"committed":false'
+  assert_eq "$before" "$(git rev-parse spec/idea-x)"
+  assert_contains "$(_si_roadmap)" '## Phase 2 — Two
+
+- [ ] Only one
+
+## Waves'
+}
+
 test_spec_item_edits_in_a_row_reach_what_the_last_one_added() {
   own_tree_repo commit
   run jig spec item add idea-x --phase 2 --text "Made a moment ago" --json
@@ -4946,7 +5005,7 @@ test_spec_item_file_refuses_an_item_that_names_a_task() {
   assert_eq 0 "$RC"
   run jig spec item file idea-x "$alpha" --task t-2 --json
   assert_eq 1 "$RC"
-  assert_contains "$OUT" '"code":"already-exists"'
+  assert_contains "$OUT" '"code":"already-filed"'
   assert_contains "$OUT" "already names task t-1"
 }
 
@@ -5037,7 +5096,12 @@ test_spec_item_file_new_an_item_that_names_a_task_files_nothing() {
   assert_eq 0 "$RC"
   run jig spec item file idea-x "$alpha" --new t-2 --json
   assert_eq 1 "$RC"
-  assert_contains "$OUT" '"code":"already-exists"'
+  assert_contains "$OUT" '"code":"already-filed"'
+  # The item is checked first: named and taken at once reads as the item's case,
+  # since another id would not help.
+  run jig spec item file idea-x "$alpha" --new t-1 --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"already-filed"'
   assert_no_file .ai/workspace/tasks/t-2
 }
 
@@ -5163,4 +5227,391 @@ test_spec_item_on_a_spec_only_on_its_own_branch_stays_on_it() {
   assert_eq 0 "$RC"
   assert_contains "$OUT" '"branch":"spec/fresh"'
   assert_contains "$OUT" '"commits":2'
+}
+
+# --- spec draft: a jig-idea conversation kept before there is a spec ----------
+# (.ai/workspace/ideas/<id>/draft.md in the clone's main checkout)
+
+# sdraft <id> [text] — a draft <id>, written through the command.
+sdraft() {
+  printf '%s\n' "${2:-# Draft of $1}" > draft-in.md
+  jig spec draft write "$1" --from draft-in.md >/dev/null
+}
+
+test_spec_draft_write_creates_the_draft_and_prints_its_path() {
+  fixture_jig_repo
+  printf '# Idea\n\nDecided: one thing.\n' > in.md
+
+  run jig spec draft write idea-x --from in.md
+  assert_eq 0 "$RC"
+  assert_eq ".ai/workspace/ideas/idea-x/draft.md" "$OUT"
+  assert_eq "$(cat in.md)" "$(cat .ai/workspace/ideas/idea-x/draft.md)"
+  # Outside git and outside .ai/specs: the tree stays clean.
+  assert_no_file .ai/specs/idea-x
+  assert_eq "" "$(git status --porcelain -- .ai/workspace)"
+}
+
+test_spec_draft_write_replaces_the_draft_whole() {
+  fixture_jig_repo
+  sdraft idea-x "round one"
+  printf 'round two\n' > in.md
+
+  run jig spec draft write idea-x --from in.md
+  assert_eq 0 "$RC"
+  assert_eq "round two" "$(cat .ai/workspace/ideas/idea-x/draft.md)"
+  assert_eq "draft.md" "$(ls .ai/workspace/ideas/idea-x)" "no temporary file may be left"
+}
+
+test_spec_draft_write_reads_stdin() {
+  fixture_jig_repo
+  printf 'from stdin\n' > in.md
+
+  run jig spec draft write idea-x --from - < in.md
+  assert_eq 0 "$RC"
+  assert_eq "from stdin" "$(cat .ai/workspace/ideas/idea-x/draft.md)"
+}
+
+test_spec_draft_write_refuses_an_invalid_id() {
+  fixture_jig_repo
+  printf 'x\n' > in.md
+
+  run jig spec draft write ../escape --from in.md
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec draft write: invalid draft id: ../escape (letters, digits, '.', '_', '-'; no leading dot or dash)"
+  run jig spec draft write .hidden --from in.md
+  assert_eq 1 "$RC"
+  assert_no_file .ai/workspace/ideas
+}
+
+test_spec_draft_write_refuses_an_empty_input_and_keeps_the_old_draft() {
+  fixture_jig_repo
+  : > empty.md
+
+  run jig spec draft write idea-new --from empty.md
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec draft write: refusing to write an empty draft"
+  assert_no_file .ai/workspace/ideas/idea-new "an empty directory is no draft"
+
+  sdraft idea-x "kept"
+  run jig spec draft write idea-x --from empty.md
+  assert_eq 1 "$RC"
+  assert_eq "kept" "$(cat .ai/workspace/ideas/idea-x/draft.md)"
+  assert_eq "draft.md" "$(ls .ai/workspace/ideas/idea-x)"
+}
+
+test_spec_draft_write_refuses_a_missing_source_and_a_stray_argument() {
+  fixture_jig_repo
+
+  run jig spec draft write idea-x --from nope.md
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec draft write: --from: no such file: nope.md"
+  run jig spec draft write idea-x --frm nope.md
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec draft write: unexpected argument: --frm"
+  run jig spec draft write
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec draft write: missing draft id"
+  assert_no_file .ai/workspace/ideas
+}
+
+test_spec_draft_unknown_subcommand_dies() {
+  fixture_jig_repo
+
+  run jig spec draft show idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec draft: unknown subcommand: show"
+  run jig spec draft
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec draft: missing subcommand"
+}
+
+test_spec_draft_rename_moves_the_draft() {
+  fixture_jig_repo
+  sdraft idea-x "the conversation"
+
+  run jig spec draft rename idea-x idea-y
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "renamed: idea-x -> idea-y"
+  assert_contains "$OUT" ".ai/workspace/ideas/idea-y/draft.md"
+  assert_no_file .ai/workspace/ideas/idea-x
+  assert_eq "the conversation" "$(cat .ai/workspace/ideas/idea-y/draft.md)"
+}
+
+test_spec_draft_rename_refuses_a_missing_source() {
+  fixture_jig_repo
+
+  run jig spec draft rename idea-x idea-y
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec draft rename: no such draft: idea-x"
+  assert_no_file .ai/workspace/ideas/idea-y
+}
+
+test_spec_draft_rename_refuses_an_invalid_new_id() {
+  fixture_jig_repo
+  sdraft idea-x
+
+  run jig spec draft rename idea-x "bad id"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec draft rename: invalid draft id: bad id"
+  run jig spec draft rename idea-x ../up
+  assert_eq 1 "$RC"
+  assert_file .ai/workspace/ideas/idea-x/draft.md
+}
+
+test_spec_draft_rename_refuses_a_taken_id_and_touches_neither() {
+  fixture_jig_repo
+  sdraft idea-x "mine"
+  sdraft idea-y "theirs"
+
+  run jig spec draft rename idea-x idea-y
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec draft rename: a draft idea-y already exists"
+  assert_eq "mine" "$(cat .ai/workspace/ideas/idea-x/draft.md)"
+  assert_eq "theirs" "$(cat .ai/workspace/ideas/idea-y/draft.md)"
+  assert_eq "draft.md" "$(ls .ai/workspace/ideas/idea-y)" "nothing may be moved into the taken draft"
+}
+
+test_spec_draft_list_says_when_there_are_none() {
+  fixture_jig_repo
+
+  run jig spec draft list
+  assert_eq 0 "$RC"
+  assert_eq "no drafts" "$OUT"
+}
+
+test_spec_draft_list_names_path_age_and_whether_a_spec_exists() {
+  fixture_jig_repo
+  sdraft idea-a
+  sdraft idea-b
+  mkdir -p .ai/specs/idea-b
+  printf '# Idea B\n' > .ai/specs/idea-b/spec.md
+
+  run jig spec draft list
+  assert_eq 0 "$RC"
+  assert_eq "idea-a   .ai/workspace/ideas/idea-a/draft.md   updated just now   no spec
+idea-b   .ai/workspace/ideas/idea-b/draft.md   updated just now   spec exists" "$OUT"
+}
+
+test_spec_draft_list_age_comes_from_the_files_mtime() {
+  fixture_jig_repo
+  sdraft idea-a
+  touch -t "$(date -v-3d +%Y%m%d%H%M 2>/dev/null || date -d '3 days ago' +%Y%m%d%H%M)" \
+    .ai/workspace/ideas/idea-a/draft.md
+
+  run jig spec draft list
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "updated 3 days ago"
+}
+
+test_spec_draft_list_skips_invalid_names_and_directories_without_a_draft() {
+  fixture_jig_repo
+  sdraft idea-a
+  mkdir -p .ai/workspace/ideas/.hidden .ai/workspace/ideas/empty
+  printf 'x\n' > .ai/workspace/ideas/.hidden/draft.md
+
+  run jig spec draft list
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "idea-a "
+  assert_not_contains "$OUT" ".hidden"
+  assert_not_contains "$OUT" "empty"
+}
+
+test_spec_draft_drop_moves_the_draft_to_trash() {
+  fixture_jig_repo
+  sdraft idea-x "the conversation"
+
+  run jig spec draft drop idea-x
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "dropped: idea-x -> .ai/runtime/trash/$(date +%Y-%m-%d)/idea-idea-x"
+  assert_no_file .ai/workspace/ideas/idea-x
+  assert_eq "the conversation" "$(cat ".ai/runtime/trash/$(date +%Y-%m-%d)/idea-idea-x/draft.md")"
+}
+
+test_spec_draft_drop_never_overwrites_an_earlier_trash_entry() {
+  fixture_jig_repo
+  sdraft idea-x "first"
+  jig spec draft drop idea-x >/dev/null
+  sdraft idea-x "second"
+
+  run jig spec draft drop idea-x
+  assert_eq 0 "$RC"
+  assert_eq "first" "$(cat ".ai/runtime/trash/$(date +%Y-%m-%d)/idea-idea-x/draft.md")"
+  assert_eq "second" "$(cat ".ai/runtime/trash/$(date +%Y-%m-%d)/idea-idea-x-2/draft.md")"
+}
+
+test_spec_draft_drop_refuses_a_draft_that_is_not_there() {
+  fixture_jig_repo
+
+  run jig spec draft drop idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec draft drop: no such draft: idea-x"
+  run jig spec draft drop ../x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec draft drop: invalid draft id: ../x"
+}
+
+# A task worktree borrows `workspace/tasks` alone, so a draft is kept where
+# every checkout of the clone finds it: the main checkout.
+test_spec_draft_in_a_worktree_is_the_main_checkouts() {
+  epic_setup
+  local main
+  main=$(pwd -P)
+  sdraft idea-main "written in the main checkout"
+  # Beside the test's own directory, under its name: a path every test of the
+  # run shares would hold another test's worktree.
+  local wt="$JIG_TEST_TMP.wt"
+  git worktree add -q -b side "$wt" >/dev/null 2>&1 || fail "could not add a worktree"
+  cd "$wt" || fail "no worktree"
+  printf 'written in the worktree\n' > in.md
+
+  run jig spec draft write idea-wt --from in.md
+  assert_eq 0 "$RC"
+  assert_eq "$main/.ai/workspace/ideas/idea-wt/draft.md" "$OUT"
+  assert_no_file .ai/workspace/ideas "the worktree keeps no drafts of its own"
+  run jig spec draft list
+  assert_contains "$OUT" "$main/.ai/workspace/ideas/idea-main/draft.md"
+  assert_contains "$OUT" "$main/.ai/workspace/ideas/idea-wt/draft.md"
+
+  run jig spec draft drop idea-main
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "dropped: idea-main -> $main/.ai/runtime/trash/"
+  assert_no_file .ai/runtime/trash "trash is the main checkout's, where housekeeping empties it"
+
+  cd "$main" || fail "no main checkout"
+  run jig spec draft list
+  assert_eq "idea-wt   .ai/workspace/ideas/idea-wt/draft.md   updated just now   no spec" "$OUT"
+}
+
+# A clone with no main checkout to find (here `--separate-git-dir`): every
+# checkout is its own clone root, so drafts live under the git common
+# directory, where a task worktree and the first checkout find the same ones
+# and removing the worktree takes none of them.
+test_spec_draft_without_a_main_checkout_lives_in_the_git_common_dir() {
+  epic_setup
+  local main common wt="$JIG_TEST_TMP.wt"
+  main=$(pwd -P)
+  git init -q --separate-git-dir "$JIG_TEST_TMP.gitdir" >/dev/null || fail "could not separate the git dir"
+  git worktree add -q -b side "$wt" >/dev/null 2>&1 || fail "could not add a worktree"
+  common=$(cd "$JIG_TEST_TMP.gitdir" && pwd -P)
+  cd "$wt" || fail "no worktree"
+  printf 'written in the worktree\n' > in.md
+
+  run jig spec draft write idea-odd --from in.md
+  assert_eq 0 "$RC"
+  assert_eq "$common/jig/ideas/idea-odd/draft.md" "$OUT"
+  assert_no_file .ai/workspace/ideas "the worktree keeps no drafts of its own"
+
+  cd "$main" || fail "no first checkout"
+  assert_no_file .ai/workspace/ideas "nor does the first checkout"
+  run jig spec draft list
+  assert_contains "$OUT" "$common/jig/ideas/idea-odd/draft.md"
+  run jig status
+  assert_contains "$OUT" "drafts: 1 (jig spec draft list)"
+}
+
+# --- spec ship consumes the draft its commit made redundant ------------------
+
+test_spec_ship_declare_consumes_the_draft_once_it_committed() {
+  sship_declared idea-x
+  sship_cfg_local agent.git commit
+  sdraft idea-x "the conversation"
+  sdraft idea-other "another idea"
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "draft consumed: idea-x -> .ai/runtime/trash/$(date +%Y-%m-%d)/idea-idea-x"
+  assert_no_file .ai/workspace/ideas/idea-x
+  assert_eq "the conversation" "$(cat ".ai/runtime/trash/$(date +%Y-%m-%d)/idea-idea-x/draft.md")"
+  assert_file .ai/workspace/ideas/idea-other/draft.md "a draft of another id is not this spec's"
+}
+
+test_spec_ship_declare_without_a_draft_says_nothing_of_one() {
+  sship_declared idea-x
+  sship_cfg_local agent.git commit
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "committed "
+  assert_not_contains "$OUT" "draft"
+}
+
+test_spec_ship_at_none_leaves_the_draft() {
+  sship_declared idea-x
+  sdraft idea-x "the conversation"
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 3 "$RC"
+  assert_not_contains "$OUT" "draft consumed"
+  assert_eq "the conversation" "$(cat .ai/workspace/ideas/idea-x/draft.md)"
+}
+
+test_spec_ship_that_commits_nothing_leaves_the_draft() {
+  sship_declared idea-x
+  sship_cfg_local agent.git commit
+  jig spec ship idea-x --message-file msg.txt >/dev/null 2>&1
+  # A draft written after the commit: what a later session decided is not in git.
+  sdraft idea-x "decided since"
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "nothing staged; no commit"
+  assert_not_contains "$OUT" "draft consumed"
+  assert_eq "decided since" "$(cat .ai/workspace/ideas/idea-x/draft.md)"
+}
+
+test_spec_ship_refused_before_the_commit_leaves_the_draft() {
+  sship_declared idea-x
+  sship_cfg_local agent.git commit
+  sdraft idea-x "the conversation"
+
+  run jig spec ship idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--message-file is required"
+  assert_file .ai/workspace/ideas/idea-x/draft.md
+}
+
+# The push comes after the commit, and the commit is what holds the content:
+# a ship that dies on the way out has consumed the draft already, because the
+# next run commits nothing and would never come back for it.
+test_spec_ship_consumes_the_draft_before_a_push_that_fails() {
+  sship_declared idea-x
+  sship_cfg_local agent.git push
+  sdraft idea-x "the conversation"
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC" "there is no origin to push to"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "draft consumed: idea-x"
+  assert_no_file .ai/workspace/ideas/idea-x
+}
+
+test_spec_ship_remove_leaves_a_draft_of_the_same_id() {
+  sship_closed idea-x
+  sship_cfg_local agent.git commit
+  sdraft idea-x "not in git: the commit is a removal"
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "mode: remove"
+  assert_contains "$OUT" "committed "
+  assert_not_contains "$OUT" "draft consumed"
+  assert_file .ai/workspace/ideas/idea-x/draft.md
+}
+
+test_spec_ship_warns_and_succeeds_when_the_draft_cannot_be_moved() {
+  sship_declared idea-x
+  sship_cfg_local agent.git commit
+  sdraft idea-x "the conversation"
+  # Trash cannot be made: a file stands where its directory goes.
+  rm -rf .ai/runtime/trash
+  mkdir -p .ai/runtime
+  : > .ai/runtime/trash
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "warning: spec ship: could not move the draft idea-x to trash"
+  assert_not_contains "$OUT" "draft consumed"
+  assert_eq "the conversation" "$(cat .ai/workspace/ideas/idea-x/draft.md)"
 }

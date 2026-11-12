@@ -320,6 +320,7 @@ land_task() {
   [ -z "$refusal" ] || jig_die "$who: ${refusal#task ship: }"
 
   # Origin as it is now: the staging branch, the task's branch and its base.
+  jig_git_origin_account "$who" read
   if ! failed=$(jig_fetch_fresh "$staging" "$branch" "$base"); then
     jig_die "$who: could not fetch $failed from origin; a merge into $staging needs it fresh. Nothing was merged; run again"
   fi
@@ -468,10 +469,13 @@ $(printf '%s\n' "$markers" | sed 's/^/  /')"
 # afresh, merge again in a new tree (rerere replays the resolution) and push
 # again, _LAND_PUSHES times at most. Any other refusal stops, the tree kept.
 _land_push() {
-  local who="$1" id="$2" tree="$3" staging="$4" sha="$5" pr="$6" try=1 out kind failed merged
+  local who="$1" id="$2" tree="$3" staging="$4" sha="$5" pr="$6" try=1 out kind failed merged head
+  # As the clone's account; the merge commit is in the shared object store,
+  # so it is pushed from the project by its sha.
+  jig_git_origin_account "$who" write
   while :; do
-    if out=$(GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
-             jig_net git -C "$tree" push origin "HEAD:refs/heads/$staging" 2>&1); then
+    head=$(git -C "$tree" rev-parse --verify HEAD 2>/dev/null) || head=""
+    if [ -n "$head" ] && out=$(jig_net jig_git_origin push origin "$head:refs/heads/$staging" 2>&1); then
       break
     fi
     kind=$(_land_push_kind "$out")

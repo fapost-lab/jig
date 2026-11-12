@@ -605,6 +605,17 @@ test_fm_block_still_prints_what_never_closes() {
   assert_eq 'id: x' "$OUT"
 }
 
+test_fm_block_v_reads_what_fm_block_prints_and_always_exits_0() {
+  # Closed, never closed, and no frontmatter at all: the variable holds what
+  # fm_block prints, and the reader never fails where fm_read_v would.
+  printf -- '---\nid: x\n---\nbody\n' > closed.md
+  printf -- '---\nid: y\n' > open.md
+  printf -- '# no frontmatter\n' > none.md
+  # shellcheck disable=SC2016 # expanded by the harness's own bash
+  fm_harness 'for f in closed.md open.md none.md; do b=stale; fm_block_v b "$f"; printf "%s|%s|%s;" "$?" "$b" "$(fm_block "$f")"; done'
+  assert_eq '0|id: x|id: x;0|id: y|id: y;0||;' "$OUT"
+}
+
 test_fm_v_readers_set_any_variable_the_caller_names() {
   printf -- '---\nid: x\npaths: [p]\n---\n' > doc.md
   # Whatever a reader calls its own locals, a caller's name must reach the caller.

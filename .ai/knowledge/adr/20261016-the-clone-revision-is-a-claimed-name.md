@@ -11,7 +11,7 @@ paths:
   - scripts/lib/json.sh
   - schemas/json.md
 summary: Why the clone revision is the highest name in the main checkout's .ai/runtime/revision/, raised by claiming the next one exclusively (jig_claim_file since adr-20261023; mkdir before) after every Jig write through jig_record_changed, read by --json before the data, seeded with the time.
-reviewed_at: 2026-11-05
+reviewed_at: 2026-11-10
 ---
 # The clone's revision is the highest name in one directory, raised by claiming the next with mkdir
 
@@ -158,3 +158,8 @@ caught; and when a read takes it relative to its data.
 > **Amendment (2026-11-05).** Where a clone's git common directory is not named `.git`, the names are
 > claimed in `<git-common-dir>/jig/revision/`, because no main checkout is found there
 > (adr-20261104-a-write-goes-in-jigs-own-tree). A revision a reader holds from before is simply stale.
+
+> **Amendment (2026-11-10).** An idea draft is not a record a read reports, so its writers —
+> `spec_draft_write`, `spec_draft_rename` and `_spec_draft_trash` — mark only the status page and
+> raise nothing; the writer guard in `tests/json.t.sh` lists them with the two earlier exceptions
+> (adr-20261110-an-idea-draft-waits-outside-git).
