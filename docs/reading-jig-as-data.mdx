@@ -295,6 +295,31 @@ when that run is older than your housekeeping cadence or the forge did not answe
 missing. The knowledge counts are the ones the last full `jig status` took for the page, at
 `knowledge_counts_at`.
 
+## Keeping the view current
+
+A read never fetches, so what it says about origin — a pull request merged, a decision landed — is
+as of the clone's last fetch. `jig status --json` says how old that is and how far the base branch
+here is behind:
+
+```json
+"origin": {"base": "main", "fetched_at": "2026-11-12T09:00:00Z", "behind": 5, "ahead": 0}
+```
+
+While `behind` is above 0 the attention list carries `base-behind-origin`. One command brings the
+clone up, and a program may run it from a button or when its page opens:
+
+```bash
+jig refresh --json
+```
+
+It fetches origin, then fast-forwards the base branch to `origin/<base>`, and nothing else. It never
+moves the person's checkout: on a task branch the base moves alone, and their branch and files stay
+as they are. It never stashes or forces, and changes in the checkout stop it only when the
+fast-forward would overwrite them. A base that cannot move is an answer, not an error: the command
+exits 0 and `base.outcome` says why — `blocked-by-changes` with git's message naming the files,
+`checked-out-elsewhere` with the worktree (git refuses to move a branch another worktree has checked out), `diverged`, `missing` — so the page can say it in words.
+The fields are in [`schemas/json.md`](https://github.com/fapost-lab/jig/blob/main/schemas/json.md#jig-refresh---json).
+
 ## The queue
 
 The queue holds the priority, order and dependencies of tasks and epics, one per project, shared
@@ -706,7 +731,8 @@ still reads `proposed` or `changed`, and its `waiting` says what was decided and
 The `waiting` beside the list is the write itself. Each proposal and each source also carries
 `decidable` and `reason`: `true` and `null` when a decision sent now would be judged on what the read
 shows, as of the last fetch; otherwise `false` and `not-on-base` or `not-on-branch`, the code the
-decision would be refused with.
+decision would be refused with, or `landed`: origin's base decided it already and this checkout is
+only behind, so no decision is owed — show it as decided, and offer `jig refresh`.
 
 ## Upgrading a project
 

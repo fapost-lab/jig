@@ -730,10 +730,12 @@ km_is_proposed() {
 # number on stdout. For `jig status`, which reports the count and leaves the
 # listing to `jig knowledge proposed`.
 km_proposed_count() {
-  local doc count=0
+  local doc count=0 landed
+  landed=$(_km_landed_paths)
   while IFS= read -r doc; do
     [ -n "$doc" ] || continue
     km_is_proposed "$doc" || continue
+    [ -z "$landed" ] || ! jig_has_line "$(km_rel "$doc")" "$landed" || continue
     count=$((count + 1))
   done < <(km_docs)
   printf '%s\n' "$count"
@@ -2645,12 +2647,71 @@ _km_ref_holds() {
   rm -f "$listing"
 }
 
+# _km_landed_paths — the knowledge documents, one repository-relative path a line, that
+# wait for a decision here and that origin's base already decided: a proposal the base
+# no longer holds as proposed, a stub the base holds as rejected, or one the base
+# approved at the text its source has there and here. This checkout is only behind: the
+# decision landed, and the read must not ask for it again
+# (adr-20261112-refresh-brings-the-clone-up-to-origin). The difference has to be the
+# base's: a document this checkout changed since it forked from the base (a branch that
+# proposes it again) is its own, and never listed. Only documents that differ from the
+# base are read, so a clone in step pays one `git diff`; the answer is kept for the rest
+# of the command, which asks it for each count and read. No network.
+_KM_LANDED=""
+_KM_LANDED_DONE=""
+_km_landed_paths() {
+  if [ -z "$_KM_LANDED_DONE" ]; then
+    _KM_LANDED=$(_km_landed_paths_read)
+    _KM_LANDED_DONE=1
+  fi
+  [ -z "$_KM_LANDED" ] || printf '%s\n' "$_KM_LANDED"
+}
+
+_km_landed_paths_read() {
+  local base_ref rel doc st hash bst bhash src bsrc mb
+  base_ref=$(jig_base_ref "$(cfg git.base_branch main)")
+  [ -n "$base_ref" ] || return 0
+  mb=$(git -C "$JIG_PROJECT" merge-base HEAD "$base_ref" 2>/dev/null) || return 0
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    doc="$JIG_PROJECT/$rel"
+    [ -f "$doc" ] || continue
+    git -C "$JIG_PROJECT" diff --quiet "$mb" -- "$rel" 2>/dev/null || continue
+    st=$(fm_get "$doc" status)
+    bst=$(_km_waiting_field "$base_ref" "$rel" status)
+    [ -n "$bst" ] || continue
+    if [ "$st" = proposed ]; then
+      [ "$bst" = proposed ] || printf '%s\n' "$rel"
+      continue
+    fi
+    # Approved is any status but proposed and rejected (a stub reads `active`).
+    [ "$st" != rejected ] || continue
+    if [ "$bst" = rejected ]; then
+      printf '%s\n' "$rel"
+      continue
+    fi
+    [ "$bst" != proposed ] || continue
+    src=$(jig_knowledge_source "$doc")
+    [ -n "$src" ] || continue
+    hash=$(fm_get "$doc" source_hash)
+    bhash=$(_km_waiting_field "$base_ref" "$rel" source_hash)
+    [ -n "$bhash" ] && [ "$bhash" != "$hash" ] || continue
+    # Hashed as source_hash is, without git's filters, so CRLF checkouts agree.
+    bsrc=$(jig_git_show_path "$base_ref" "$src" 2>/dev/null | jig_hash_stdin 2>/dev/null) || bsrc=""
+    [ -n "$bsrc" ] && [ "$bsrc" = "$bhash" ] || continue
+    # The text here must be the one the base approved: a source changed here again is a
+    # change nobody decided, whatever the base holds.
+    [ -f "$JIG_PROJECT/$src" ] && [ "$(jig_hash "$JIG_PROJECT/$src")" = "$bhash" ] || continue
+    printf '%s\n' "$rel"
+  done < <(git -C "$JIG_PROJECT" -c core.quotepath=off diff --name-only --no-renames "$base_ref" -- "$JIG_AI_DIR/knowledge" 2>/dev/null)
+}
+
 # _km_decidable_reasons <table> — for each row of <table> (as _km_ref_holds takes it), one
 # line: empty when a decision sent now would be judged on what the row describes, else
 # the code it would be refused with, `not-on-branch` or `not-on-base`. Judged where the
 # write judges, as of the last fetch: the tip of the decisions waiting when some wait
 # (_km_waiting_top has run), the base as jig_base_ref reads it otherwise. No network.
-_km_decidable_reasons() {
+_km_decidable_reasons_at() {
   local table="$1" base_ref tip_file base_file a b
   base_ref=$(jig_base_ref "$(cfg git.base_branch main)")
   base_file=$(mktemp "${TMPDIR:-/tmp}/jig-knowledge-base.XXXXXX")
@@ -2679,6 +2740,32 @@ _km_decidable_reasons() {
   done < "$tip_file"
   exec 4<&-
   rm -f "$base_file" "$tip_file"
+}
+
+# _km_decidable_reasons <table> — the reasons of _km_decidable_reasons_at, with `landed`
+# for a row whose document origin's base already decided (_km_landed_paths): no decision
+# is owed there, whatever a write would make of it.
+_km_decidable_reasons() {
+  local table="$1" landed reasons path reason
+  landed=$(_km_landed_paths)
+  if [ -z "$landed" ]; then
+    _km_decidable_reasons_at "$table"
+    return 0
+  fi
+  reasons=$(mktemp "${TMPDIR:-/tmp}/jig-knowledge-reasons.XXXXXX")
+  jig_cleanup_add "$reasons"
+  _km_decidable_reasons_at "$table" > "$reasons"
+  exec 6< "$reasons"
+  while IFS="$(printf '\t')" read -r path _; do
+    IFS= read -r reason <&6 || reason=""
+    if jig_has_line "$path" "$landed"; then
+      printf 'landed\n'
+    else
+      printf '%s\n' "$reason"
+    fi
+  done < "$table"
+  exec 6<&-
+  rm -f "$reasons"
 }
 
 # json_decide_row <id> <decision> <path> — _KM_ROW <- one decision of an answer; empty
@@ -2766,7 +2853,16 @@ km_source_states() {
 # km_changed_sources_count — accepted stubs whose source text nobody approved:
 # `changed` and `unrecorded`. A bare number, for `jig status`.
 km_changed_sources_count() {
-  km_source_states | awk -F '\t' '$1 == "changed" || $1 == "unrecorded" { n++ } END { print n + 0 }'
+  local landed
+  landed=$(_km_landed_paths)
+  km_source_states | KM_LANDED="$landed" KM_ROOT="$JIG_PROJECT/" awk -F '\t' '
+    BEGIN { n = split(ENVIRON["KM_LANDED"], l, "\n"); for (i = 1; i <= n; i++) if (l[i] != "") skip[l[i]] = 1 }
+    $1 == "changed" || $1 == "unrecorded" {
+      rel = $2
+      if (index(rel, ENVIRON["KM_ROOT"]) == 1) rel = substr(rel, length(ENVIRON["KM_ROOT"]) + 1)
+      if (!(rel in skip)) n2++
+    }
+    END { print n2 + 0 }'
 }
 
 # km_source_state <stub> — the state km_source_states gives one accepted stub's
@@ -3190,7 +3286,7 @@ _km_proposed_json() {
 # the state km_source_states gives it, the one definition of "changed", and the
 # counts the text form's last line gives; `decidable` and `reason` as on a proposal.
 _km_sources_json() {
-  local state doc src size n=0 changed=0 unrecorded=0 missing=0 t rec recs=()
+  local state doc src size n=0 changed=0 unrecorded=0 missing=0 landed=0 t rec recs=()
   local states table reasons reason
   _km_waiting_top
   t=$(printf '\t')
@@ -3217,6 +3313,7 @@ _km_sources_json() {
     [ -n "$doc" ] || continue
     IFS= read -r reason <&4 || reason=not-on-base
     n=$((n + 1))
+    case "$reason:$state" in landed:changed | landed:unrecorded) landed=$((landed + 1)) ;; esac
     case "$state" in
       changed) changed=$((changed + 1)) ;;
       unrecorded) unrecorded=$((unrecorded + 1)) ;;
@@ -3240,7 +3337,7 @@ _km_sources_json() {
   exec 4<&-
   rm -f "$states" "$table" "$reasons"
   _km_json_records ${recs[@]+"${recs[@]}"}
-  _km_json_print "{\"sources\":[$_JSON],\"counts\":{\"linked\":$n,\"changed\":$changed,\"unrecorded\":$unrecorded,\"missing\":$missing},\"waiting\":$_KM_WAITING_JSON}"
+  _km_json_print "{\"sources\":[$_JSON],\"counts\":{\"linked\":$n,\"changed\":$changed,\"unrecorded\":$unrecorded,\"missing\":$missing,\"landed\":$landed},\"waiting\":$_KM_WAITING_JSON}"
 }
 
 # _km_sources_diff_json <id> — the data of `knowledge sources --diff <id>

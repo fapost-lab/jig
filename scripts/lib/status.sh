@@ -2271,6 +2271,20 @@ IDS
   _status_attention_per_task worktree-kept "$kept" "A worktree was kept because it still holds work" "$hk_note" \
     "Commit or discard what is left in the task's worktree; the next housekeeping removes it."
 
+  # 6b. The base here is behind origin's, as of the last fetch: what lands there
+  # (a decision, a merged task) is not in this checkout until it is brought up
+  # (adr-20261112-refresh-brings-the-clone-up-to-origin). Before the knowledge
+  # items, which may be asking for what origin already decided.
+  local obase ocounts ofetched
+  obase=$(cfg git.base_branch main)
+  if ocounts=$(jig_origin_counts "$obase") && [ "${ocounts%% *}" -gt 0 ]; then
+    ofetched=$(jig_origin_fetched_at) || ofetched=""
+    _status_attn base-behind-origin project "" "" \
+      "This checkout is behind origin" \
+      "$obase is ${ocounts%% *} commit(s) behind origin/$obase${ofetched:+, as of the fetch at $ofetched}" \
+      "jig refresh"
+  fi
+
   # 7. Knowledge nobody has agreed to yet reaches no agent (ADR-0016).
   if [ -n "$_SC_PROPOSALS" ] && [ "$_SC_PROPOSALS" -gt 0 ]; then
     _status_attn knowledge-proposed project "" "" "Knowledge is waiting for your decision" \
@@ -2421,7 +2435,27 @@ ATTN
   fi
   json_str_or_null "$_SC_AT"
   jig_read_snapshot_end
-  printf '{"attention":[%s],"housekeeping":%s,"knowledge_counts_at":%s}\n' "$objs" "$hk" "$_JSON"
+  local kc="$_JSON" origin
+  _status_origin_json
+  origin=$_JSON
+  printf '{"attention":[%s],"housekeeping":%s,"knowledge_counts_at":%s,"origin":%s}\n' "$objs" "$hk" "$kc" "$origin"
+}
+
+# _status_origin_json — _JSON <- how this clone stands against origin, as of the last
+# fetch: the base, when the clone last fetched, and how far the base is behind and
+# ahead of origin's (`null` each when it cannot be told). No network.
+_status_origin_json() {
+  local base fetched counts o
+  base=$(cfg git.base_branch main)
+  fetched=$(jig_origin_fetched_at) || fetched=""
+  json_quote "$base"; o="{\"base\":$_JSON"
+  json_str_or_null "$fetched"; o="$o,\"fetched_at\":$_JSON"
+  if counts=$(jig_origin_counts "$base"); then
+    o="$o,\"behind\":${counts%% *},\"ahead\":${counts#* }}"
+  else
+    o="$o,\"behind\":null,\"ahead\":null}"
+  fi
+  _JSON=$o
 }
 
 # _status_html_phase_run — "Phase run": the roadmap phases a coordinator is
