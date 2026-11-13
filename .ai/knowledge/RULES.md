@@ -30,7 +30,8 @@
   `.jig-global` marker, and only after it was moved aside and a fresh copy put in its place; and
   the temporary paths it named with its own process id. It never deletes a link, and anything else
   at that path is left alone; `install.ps1 -Uninstall` removes
-  that marked copy or a link into its install directory, nothing else.
+  that marked copy or a link into its install directory, and the `.jig-pr-review.placed` record
+  beside a path that is then empty, nothing else.
   (adr-20261112-the-pr-review-skill-is-installed-per-user) `jig spec new` is the third: when a template copy fails it
   removes only the two temporary files it named in `.ai/specs/<id>/` and then `rmdir`s the
   directory it created with a plain `mkdir` in that run; `rmdir` refuses anything that is

@@ -11,7 +11,7 @@ paths:
   - scripts/lib/self-update.sh
   - "skills/jig-pr-review/**"
 summary: Why jig-pr-review is linked (or copied with a marker) into ~/.claude/skills and ~/.agents/skills by the installer and self-update, never over the person's own, and finds its method through jig pr fetch.
-reviewed_at: 2026-11-12
+reviewed_at: 2026-11-13
 ---
 # jig-pr-review is installed for the person, beside every project's copy
 
@@ -49,6 +49,12 @@ collision it does not merge the two, both may be offered, and which one is used 
   marked copy is written. Anything else there — a directory without the marker, a link elsewhere —
   is the person's: one line says it was left alone, and nothing is changed. `install.ps1
   -Uninstall` removes Jig's link or marked copy and nothing else.
+- **Removing it turns it off** (amended 2026-11-13, task pr-review-skill-opt-out). Each time
+  Jig places or finds its own skill, it leaves a record beside it, `.jig-pr-review.placed` in the
+  same skills directory. A free path with the record still there was emptied by the person: no
+  later run puts the skill back, and one line says how to have it placed again — delete the record
+  too. Each runtime's directory is its own choice. `install.ps1 -Uninstall` deletes the record of
+  a path it left empty, so installing again places the skill.
 - **No relative links.** `jig pr fetch` and `jig pr followup` print `method:` and `show:` with the
   paths of `jig-review/SKILL.md` and `show-the-document.md` in the framework that ran them; the
   skill reads those instead of `../…`. The method is then always the version of the mechanics.
@@ -67,9 +73,10 @@ collision it does not merge the two, both may be offered, and which one is used 
 - **Review from a Jig project as the hub**, as before: the problem this solves.
 - **A separate install command** instead of the installer and `self-update`: a command one must
   know about in advance is one nobody runs.
-- **An opt-out now** (`jig skills global off|on` with state under `~/.local/share/jig-state/`):
-  deferred, not rejected — a new command and a new place for state that nobody has asked for yet.
-  Until then a skill removed by hand comes back at the next `jig self-update`.
+- **An opt-out command** (`jig skills global off|on` with state under `~/.local/share/jig-state/`):
+  deferred at first, then not taken when the opt-out was asked for (2026-11-13). Deleting the skill
+  is what a person tries first; a record beside it makes that act the switch, with no command to
+  learn and no new place for state.
 - **Installing `jig-review` and `jig-task` globally too**, so the relative links resolve: they are
   project skills and would mislead outside one.
 - **Copying the method into `jig-pr-review`**: two sources of one method drift apart.
@@ -85,3 +92,5 @@ collision it does not merge the two, both may be offered, and which one is used 
 - Every change to `jig-pr-review` must keep it self-contained: no link outside its own directory.
 - RULES.md's deletion invariant names this as one more exception: only Jig's marked copy, after a
   fresh one replaced it, and temporary paths of its own; never a link.
+- A skill removed by hand stays removed, and Jig never deletes its record in `self-update` or the
+  installer; a person who wants the skill back deletes the record, as the line Jig prints says.

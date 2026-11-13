@@ -1478,6 +1478,17 @@ function Uninstall-JigGlobalSkill {
         }
         Write-JigResult -Level warn "left in place (not installed by Jig): $path"
     }
+    # The record beside each path says Jig placed the skill there, so that a
+    # skill the person removed stays removed. Once nothing is at the path, the
+    # record goes too: installing again is asking for the skill again.
+    foreach ($path in $paths) {
+        $record = Join-Path (Split-Path -Parent $path) '.jig-pr-review.placed'
+        if ((Test-Path -LiteralPath $record -PathType Leaf) -and
+            -not (Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue)) {
+            Remove-Item -Force -LiteralPath $record
+            Write-JigResult "removed: $record"
+        }
+    }
 }
 
 # --- the whole run -------------------------------------------------------------

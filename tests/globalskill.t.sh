@@ -109,3 +109,63 @@ test_globalskill_installed_names_only_jigs_own_copy() {
   assert_eq 0 "$RC"
   assert_eq "$HOME/.claude/skills/jig-pr-review" "$OUT"
 }
+
+# Removing the skill is how a person turns it off: the record Jig left beside
+# it outlives it, and no later run puts the skill back until the record goes
+# too. Each runtime is its own choice.
+test_globalskill_a_skill_the_person_removed_stays_removed() {
+  skip_unless_symlinks
+  local src
+  src=$(gs_source)
+  mkdir -p "$HOME/.claude" "$HOME/.codex"
+  gs_place "$src" >/dev/null
+  assert_file "$HOME/.claude/skills/.jig-pr-review.placed"
+  assert_file "$HOME/.agents/skills/.jig-pr-review.placed"
+
+  rm "$HOME/.claude/skills/jig-pr-review"
+  run gs_place "$src"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pr-review skill: removed by you, left out $HOME/.claude/skills/jig-pr-review (delete $HOME/.claude/skills/.jig-pr-review.placed to have it placed again)"
+  assert_no_file "$HOME/.claude/skills/jig-pr-review"
+  assert_contains "$OUT" "pr-review skill: linked $HOME/.agents/skills/jig-pr-review"
+
+  # Deleting the record too asks for the skill back.
+  rm "$HOME/.claude/skills/.jig-pr-review.placed"
+  run gs_place "$src"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pr-review skill: linked $HOME/.claude/skills/jig-pr-review"
+  assert_symlink "$HOME/.claude/skills/jig-pr-review"
+  assert_file "$HOME/.claude/skills/.jig-pr-review.placed"
+}
+
+# A removed marked copy (where links cannot be made) stays removed as well.
+test_globalskill_a_removed_copy_stays_removed() {
+  local src lndir
+  src=$(gs_source)
+  mkdir -p "$HOME/.claude"
+  lndir=$(stub_ln_copy_dir)
+  # shellcheck disable=SC2016 # expanded by the inner bash
+  run env PATH="$lndir:$PATH" bash -c '. "$JIG_HOME/scripts/lib/globalskill.sh" && jig_global_skill_place "$1" 1.2.3' _ "$src"
+  assert_eq 0 "$RC" "$OUT"
+  assert_file "$HOME/.claude/skills/.jig-pr-review.placed"
+  rm -rf "$HOME/.claude/skills/jig-pr-review"
+  # shellcheck disable=SC2016 # expanded by the inner bash
+  run env PATH="$lndir:$PATH" bash -c '. "$JIG_HOME/scripts/lib/globalskill.sh" && jig_global_skill_place "$1" 1.2.3' _ "$src"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "removed by you, left out $HOME/.claude/skills/jig-pr-review"
+  assert_no_file "$HOME/.claude/skills/jig-pr-review"
+}
+
+# A skill placed before records existed gets its record on the next run, so a
+# person who removes it afterwards is heard; one of the person's own gets none.
+test_globalskill_records_a_skill_placed_before_records_existed() {
+  skip_unless_symlinks
+  local src
+  src=$(gs_source)
+  mkdir -p "$HOME/.claude/skills" "$HOME/.codex" "$HOME/.agents/skills/jig-pr-review"
+  ln -s "$src/skills/jig-pr-review" "$HOME/.claude/skills/jig-pr-review"
+  run gs_place "$src"
+  assert_eq 0 "$RC" "$OUT"
+  assert_file "$HOME/.claude/skills/.jig-pr-review.placed"
+  assert_no_file "$HOME/.agents/skills/.jig-pr-review.placed"
+}

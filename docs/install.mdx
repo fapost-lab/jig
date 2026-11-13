@@ -54,9 +54,10 @@ if you want to inspect the script or see what it changes first.
     - links the `jig-pr-review` skill for you, so you can review a pull request from any folder:
       to `~/.claude/skills/jig-pr-review` when you have Claude Code (`~/.claude`), and to
       `~/.agents/skills/jig-pr-review` when you have Codex (`~/.codex`). A skill of your own under
-      that name is left alone. `jig self-update` keeps it current. There is no switch to turn it off
-      yet: a link you delete comes back at the next `jig self-update`. To stay without it, put a
-      folder of your own under that name, which Jig leaves alone.
+      that name is left alone. `jig self-update` keeps it current. To turn it off, delete the link:
+      Jig leaves a record beside it (`.jig-pr-review.placed`) and does not put back a skill you
+      removed. Delete that record too to have the skill placed again at the next
+      `jig self-update`.
 
       Coming from 0.43.0 or older, the first `jig self-update` runs the old updater, which does not
       place the skill; run `jig self-update` once more.
