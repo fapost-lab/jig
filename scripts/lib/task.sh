@@ -62,7 +62,7 @@ _task_usage() {
   case "${1:-}" in
     '') printf 'usage: jig task new|start|bootstrap|set|abandon|archive|unarchive|merge|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|land|promote|autopilot|gate|route ...\n' ;;
     new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file> | --goal <text>] [--lean] [--json]\n' ;;
-    start) printf 'usage: jig task start <id> [--worktree] [--no-bootstrap] [--share <dir>]...\n' ;;
+    start) printf 'usage: jig task start <id> [--worktree] [--no-bootstrap] [--share <dir>]... [--out-of-order --reason <text>]\n' ;;
     bootstrap) printf 'usage: jig task bootstrap <id> [--share <dir>]...\n' ;;
     set)
       printf 'usage: jig task set <id> <key> <value>\n'
@@ -1251,13 +1251,19 @@ _task_new_body() {
 task_start() {
   jig_require_init
   [ $# -ge 1 ] || jig_die "$(_task_usage start)"
-  local id="$1" worktree=0 bootstrap=1 share
+  local id="$1" worktree=0 bootstrap=1 share out_of_order=0 ooo_reason="" reason_given=0
   shift
   _TASK_ADD_SHARES=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --worktree) worktree=1; shift ;;
       --no-bootstrap) bootstrap=0; shift ;;
+      --out-of-order) out_of_order=1; shift ;;
+      --reason)
+        [ $# -ge 2 ] || jig_die "task start: --reason needs a text"
+        ooo_reason=$2; reason_given=1
+        shift 2
+        ;;
       --share)
         [ $# -ge 2 ] || jig_die "task start: --share needs a directory"
         share=$(_task_share_arg "task start" "$2") || exit 1
@@ -1268,6 +1274,14 @@ task_start() {
       *) jig_die "task start: unknown argument: $1" ;;
     esac
   done
+  [ "$reason_given" = 0 ] || [ "$out_of_order" = 1 ] \
+    || jig_die "task start: --reason gives the cause of --out-of-order; it needs --out-of-order"
+  if [ "$out_of_order" = 1 ]; then
+    case "$ooo_reason" in
+      *[![:space:]]*) ;;
+      *) jig_die "task start: --out-of-order needs the reason: jig task start $id --out-of-order --reason \"<why>\"" ;;
+    esac
+  fi
   [ "$bootstrap" = 1 ] || [ "$worktree" = 1 ] \
     || jig_die "task start: --no-bootstrap says what not to carry into a worktree; it needs --worktree"
   [ -z "$_TASK_ADD_SHARES" ] || [ "$worktree" = 1 ] \
@@ -1300,6 +1314,18 @@ task_start() {
   # a beginning.
   refusal=$(_task_start_goal_refusal "$id")
   [ -z "$refusal" ] || jig_die "$refusal"
+  # The queue's order: a task another one outranks is started only on a reason
+  # (adr-20261022). Before anything is created; a task that is not queued has
+  # no place in the order.
+  local ahead="" ahead_ref ahead_pri
+  _task_queue_ahead_v ahead "$id"
+  if [ -n "$ahead" ]; then
+    ahead_ref=${ahead%%$'\t'*}
+    ahead_pri=${ahead#*$'\t'}
+    if [ "$ahead_pri" = "-" ]; then ahead_pri="no priority"; else ahead_pri="P$ahead_pri"; fi
+    [ "$out_of_order" = 1 ] \
+      || jig_die "task start: first in the queue is $ahead_ref ($ahead_pri); to start $id instead: jig task start $id --out-of-order --reason \"<why>\""
+  fi
   if ! _task_has_goal "$dir/task.md"; then
     # shellcheck disable=SC2016 # the backticks quote a command for the reader
     jig_warn "$(printf 'task start: %s has no goal: `## Goal` in task.md is empty; write it with `jig task artifact write %s task --from <file>`' "$id" "$id")"
@@ -1322,6 +1348,7 @@ task_start() {
 
   if [ "$worktree" -eq 1 ]; then
     _task_start_in_worktree "$id" "$dir" "$base" "$bootstrap"
+    _task_record_out_of_order "$id" "$dir" "$out_of_order" "$ahead" "$ooo_reason"
     return 0
   fi
 
@@ -1351,7 +1378,43 @@ task_start() {
   _task_executor_freeze "$id" "$dir"
   _task_base_hint "$id" "$base"
   _task_paused_hint "$id" ""
+  _task_record_out_of_order "$id" "$dir" "$out_of_order" "$ahead" "$ooo_reason"
   printf '%s\n' "$branch"
+}
+
+# _task_queue_ahead_v <var> <id> — jig_queue_ahead_v (queue.sh, loaded here on
+# first use): `task:Y<TAB><priority or ->` of the task the queue puts before
+# <id>, or nothing.
+_task_queue_ahead_v() {
+  declare -F jig_queue_ahead_v >/dev/null 2>&1 || {
+    # shellcheck source=lib/queue.sh
+    . "$JIG_LIB/queue.sh"
+  }
+  jig_queue_ahead_v "$1" "$2"
+}
+
+# _task_record_out_of_order <id> <dir> <asked 0|1> <ahead> <reason> — after a
+# start that was asked to go out of order: the task it went ahead of and the
+# reason, into the task's state, where status shows them while the task lives.
+# <ahead> is empty when the task was first in the queue anyway: then nothing is
+# recorded, and the person is told so.
+_task_record_out_of_order() {
+  local id="$1" dir="$2" asked="$3" ahead="$4" reason="$5"
+  [ "$asked" = 1 ] || return 0
+  if [ -z "$ahead" ]; then
+    if jig_queue_place "$id"; then
+      jig_info "task start: $id is first in the queue; --out-of-order was not needed and nothing was recorded"
+    else
+      jig_info "task start: $id is not in the queue; --out-of-order was not needed and nothing was recorded"
+    fi
+    return 0
+  fi
+  _jig_replace_all_v reason "$reason" $'\t' ' '
+  _jig_replace_all_v reason "$reason" $'\r' ' '
+  _jig_replace_all_v reason "$reason" $'\n' ' '
+  _task_rewrite_state "$dir" out_of_order_over "${ahead%%$'\t'*}"
+  _task_rewrite_state "$dir" out_of_order_reason "$reason"
+  jig_info "task start: $id was started ahead of ${ahead%%$'\t'*}; the reason is recorded: $reason"
 }
 
 # _task_start_refusal <id> — why `jig task start <id>` refuses this task by its
@@ -1890,7 +1953,7 @@ _task_set_body() {
       | archived_at | archived_reason | archived_from \
       | abandoned_at | abandoned_reason | moved_to | triage_task | triage_of \
       | absorbed_into | absorbs | partly_in | absorbs_partly \
-      | route_evidence | class_lowered_from | class_lowered_reason | share | setup \
+      | route_evidence | class_lowered_from | class_lowered_reason | out_of_order_over | out_of_order_reason | share | setup \
       | executor_implement_runtime_source | executor_review_runtime_source \
       | executor_implement_model_source | executor_review_model_source)
       jig_die "task set: key is not writable: $key" ;;
@@ -5905,7 +5968,7 @@ _task_actions() {
 # fails withholds its row rather than ending the listing; it reads the task's
 # state from the snapshot it inherits.
 _task_actions_v() {
-  local __ta_out="" id="$2" pr_state="$3" status action command reason by="" mode spec gate parked
+  local __ta_out="" id="$2" pr_state="$3" status action command reason by="" mode spec gate parked ahead
   task_state_var status "$id" status
   for action in $_TASK_ACTIONS; do
     reason=""
@@ -5959,7 +6022,13 @@ _task_actions_v() {
       *:reopen) reason="task $id is $status, not abandoned" ;;
       *:start)
         _task_actions_ask_v reason "$id" "$action" _task_start_refusal "$id"
-        [ -n "$reason" ] || _task_actions_ask_v reason "$id" "$action" _task_start_goal_refusal "$id" ;;
+        [ -n "$reason" ] || _task_actions_ask_v reason "$id" "$action" _task_start_goal_refusal "$id"
+        # Offered, but with the way the command takes when the queue puts
+        # another task first: `--out-of-order` and a reason, like `abandon`'s.
+        if [ -z "$reason" ]; then
+          _task_queue_ahead_v ahead "$id"
+          [ -z "$ahead" ] || command="$command --out-of-order --reason <text>"
+        fi ;;
       *:pause) _task_actions_ask_v reason "$id" "$action" _task_pause_refusal "$id" ;;
       *:resume)
         _task_parked_lookup_v parked "$id"

@@ -10,8 +10,10 @@ paths:
   - scripts/lib/queue.sh
   - schemas/json.md
   - skills/jig-task/references/priority.md
-summary: Why jig queue next is the one place the next task is chosen, how a dependency counts as landed from task state, the last housekeeping run and a local epic-branch check, why priority, a started task and the top-level position order the rest, and why unqueued work is only counted.
-reviewed_at: 2026-11-07
+  - scripts/lib/task.sh
+  - scripts/lib/status.sh
+summary: Why jig queue next is the one place the next task is chosen, how a dependency counts as landed from task state, the last housekeeping run and a local epic-branch check, why priority and the top-level position order the rest while a started task is never advised, why task start refuses a task the advice outranks unless given a reason, and why unqueued work is only counted.
+reviewed_at: 2026-11-13
 ---
 # The next task is advised by `jig queue next`, from the queue, task state and the last housekeeping run — never a task waiting for a dependency that has not landed, then priority, a started task, and position
 
@@ -95,3 +97,16 @@ another can be started first. The next-task-advice spec settled the rules with t
 > closed task purged to trash no longer turns it `broken`. A wait on an abandoned, archived or
 > vanished task is kept and reads `broken` as before. A finished task is no longer queued at all,
 > so "a closed, abandoned or deleted task is never advised" now mostly holds by its absence.
+
+> **Amendment (2026-11-13).** The queue's order and its advice now agree, and `task start` follows
+> them. `jig queue set --priority` places a new item, or one whose number changed, after the last
+> item of its level with the same or a more urgent number (else at the top); the same number again
+> does not move it. `queue next` skips a started task: it is named on an `in progress:` line (`--json`
+> `in_progress`), `reason` gains `in_progress` (after `taken`, before `paused`), and the "a started
+> task goes first" tiebreak is gone; `next.started` stays, always false. `jig task start <id>` refuses
+> while the advice outranks the task, naming the task first in the queue, unless
+> `--out-of-order --reason <text>` is given; that start is recorded in state (`out_of_order_over`,
+> `out_of_order_reason`) and shown by `jig status` (the task line and a line under it, the page's
+> badge, and the `started-out-of-order` kind of `--json`) while the task is live. A task that is not
+> queued still starts as before, and `autopilot.parallel` is not enforced by `task start`: that limit
+> belongs to the coordinator.
