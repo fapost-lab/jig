@@ -150,6 +150,11 @@ Usage: jig <command> [args]
                                  once CI passed (<target> is spec:<id> or knowledge)
   refresh [--json]               fetch origin and fast-forward the base branch, never
                                  moving your checkout or touching your changes
+  staging ack [--dry-run] [--expect <n>]
+                                 on the staging flow, mark your own commits on the staging
+                                 branch that no task holds as known, so jig status names
+                                 only new ones; --dry-run lists them, --expect refuses
+                                 unless they are <n>
   housekeeping [--dry-run] [--verbose]  reconcile workspaces with remote state
   config set <key> <value> [...] --local [--dry-run | --revision <n>] [--json]
                                  write your own settings to .ai/config.local.yaml;
@@ -195,7 +200,7 @@ main() {
         v=$(jig_source_version "$root" 2>/dev/null) || v=""
       fi
       printf 'jig %s\n' "${v:-$JIG_VERSION}" ;;
-    init|upgrade|status|task|context|verify|knowledge|spec|queue|writes|refresh|pr|gh|housekeeping|measure|doctor|config|notify)
+    init|upgrade|status|task|context|verify|knowledge|spec|queue|writes|refresh|staging|pr|gh|housekeeping|measure|doctor|config|notify)
       if [ ! -f "$JIG_LIB/$cmd.sh" ]; then
         jig_die "command '$cmd' is not available in jig $JIG_VERSION"
       fi

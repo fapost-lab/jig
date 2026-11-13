@@ -1293,9 +1293,15 @@ EOF
 #       has open and conflicting with <base>, as of <fetched_at>.
 #   unowned<TAB><count><TAB><command>
 #       <count> commits, merges left out, are on origin's staging branch and
-#       not in the base (git.base_branch, origin first), and no live task
-#       branch — here or on origin — holds them; <command> lists exactly
-#       those: the count is that command's.
+#       not in the base (git.base_branch, origin first), no live task branch —
+#       here or on origin — holds them, they are this clone's person's
+#       (jig_staging_own) and the person has not acknowledged them
+#       (`jig staging ack`). <command> is the command that acknowledges them;
+#       `<command> --dry-run` lists exactly those: the count is its.
+#       Nobody else's commits are counted, named or listed
+#       (adr-20261113-staging-work-is-reported-to-its-own-author-until-acknowledged).
+#   unowned-commit<TAB><sha><TAB><author-date><TAB><subject>
+#       after `unowned`, those commits newest first, at most <cap> of them.
 # Read from git by branch name: the tasks are every branch
 # `git.branch_template` names, here or on origin, and this checkout's own; a
 # branch no workspace knows is judged against git.base_branch. The workspace
@@ -1304,14 +1310,16 @@ EOF
 # branch has and the base does not is counted, so a promoted task whose branch
 # was deleted after it landed is nobody's drift (the same ADR).
 #
+# <cap> (default 20) bounds the `unowned-commit` records; `all` prints every one.
+#
 # The processes it starts do not grow with the tasks or the commits
 # (conventions/shell.md): one for-each-ref, _jig_staging_walk's, one rev-list
-# of staging's own commits with their parents and times, one of those no task
-# branch holds, and one `date`.
+# of staging's own commits with their parents and times, jig_staging_own's,
+# and one `date`.
 jig_staging_drift() {
-  local staging="$1" stale="$2" rows="$3" cache="$4" t=$'\t'
+  local staging="$1" stale="$2" rows="$3" cache="$4" cap="${5:-20}" t=$'\t'
   local stip dbase base_ref bsha template prefix="" suffix="" kind a b c d e
-  local all="" rows3="" stale_s=-1 now walk landing shown shown_cmd
+  local all="" rows3="" stale_s=-1 now walk landing shown
   local -a excl=()
   stip=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/remotes/origin/$staging^{commit}" 2>/dev/null) || return 0
   [ -n "$stip" ] || return 0
@@ -1411,28 +1419,93 @@ jig_staging_drift() {
           print "conflicting\t" id[i] "\t" br[i] "\t" bs[i] "\t" cat[key] "\t" pu[i]
       }
     }'
-  # Staging's own commits no live task branch holds: one rev-list, with the
-  # same exclusions as the `git log` printed for them, so the two agree — the
-  # template's branches by glob (git's `*` crosses `/`, as the template match
-  # in _jig_staging_drift_refs does), and this checkout's other branches by ref.
-  shown=$(git -C "$JIG_PROJECT" rev-list --count --no-merges "$stip" "^$bsha" --not ${excl[@]+"${excl[@]}"} 2>/dev/null) || shown=0
-  if [ "${shown:-0}" -gt 0 ]; then
-    case "$base_ref" in
-      refs/remotes/*) b=${base_ref#refs/remotes/} ;;
-      *) b=${base_ref#refs/heads/} ;;
-    esac
-    shown_cmd="git log --no-merges origin/$staging ^$b"
-    if [ ${#excl[@]} -gt 0 ]; then
-      shown_cmd="$shown_cmd --not"
-      for a in "${excl[@]}"; do
-        case "$a" in
-          --*=*) shown_cmd="$shown_cmd ${a%%=*}='${a#*=}'" ;;
-          *) shown_cmd="$shown_cmd $a" ;;
-        esac
-      done
-    fi
-    printf 'unowned\t%s\t%s\n' "$shown" "$shown_cmd"
+  # Staging's own commits no live task branch holds, the person's own and not
+  # acknowledged: one listing, with the template's branches excluded by glob
+  # (git's `*` crosses `/`, as the template match in _jig_staging_drift_refs
+  # does) and this checkout's other branches by ref.
+  shown=$(jig_staging_own "$stip" "$bsha" ${excl[@]+"${excl[@]}"}) || shown=""
+  if [ -n "$shown" ]; then
+    printf '%s\n' "$shown" | awk -F '\t' -v cap="$cap" '
+      { n++; if (cap == "all" || n <= cap + 0) row[n] = $0 }
+      END {
+        print "unowned\t" n "\tjig staging ack"
+        for (i = 1; i <= n; i++) if (i in row) print "unowned-commit\t" row[i]
+      }'
   fi
+}
+
+# jig_staging_ack_file — where `jig staging ack` keeps the person's
+# acknowledged staging commits: .ai/runtime/staging-acked of the checkout that
+# owns the task workspaces, so a task worktree and the main checkout read the
+# same acknowledgements (as forgecache_file). Gitignored, one clone's.
+jig_staging_ack_file() {
+  local borrowed
+  if declare -F _task_borrowed_tasks_root >/dev/null && borrowed=$(_task_borrowed_tasks_root); then
+    printf '%s/runtime/staging-acked\n' "${borrowed%/workspace/tasks}"
+    return 0
+  fi
+  printf '%s/%s/runtime/staging-acked\n' "$JIG_PROJECT" "$JIG_AI_DIR"
+}
+
+# jig_staging_patch_ids — `<patch-id> <sha>` for each commit sha on stdin, by
+# content (`git patch-id --stable`): the same change rebased or cherry-picked
+# has the same patch-id. A commit with no diff prints nothing. Two processes.
+jig_staging_patch_ids() {
+  git -C "$JIG_PROJECT" log --no-walk=unsorted --stdin -p --no-color --no-ext-diff \
+    --format='commit %H' 2>/dev/null | git -C "$JIG_PROJECT" patch-id --stable 2>/dev/null || true
+}
+
+# jig_staging_own <staging-tip> <base-sha> [<exclude>...] — the commits of
+# <staging-tip>, merges left out, that <base-sha> and the <exclude> refs and
+# options (git rev-list's, after --not) do not hold, that are this clone's
+# person's and that the person has not acknowledged (jig_staging_ack_file):
+# `<sha><TAB><author-date><TAB><subject>`, newest first.
+#
+# The person's: the author's email or name (mailmap applied, case ignored) is
+# the email or name of this clone's git author (`git var GIT_AUTHOR_IDENT`:
+# user.email and user.name, or the environment that overrides them) — one
+# person often commits under more than one address, and Jig commits a task as
+# that author, so a task of this clone is covered too. No identity, no owner.
+# Acknowledged: the commit's patch-id, or its sha when it has none, is in the
+# file. The processes do not grow with the commits: one git var, one git log,
+# a cut, and jig_staging_patch_ids only when there are acknowledgements.
+jig_staging_own() {
+  local stip="$1" bsha="$2" email="" name="" ident list ackf acked="" t=$'\t'
+  shift 2
+  # `Name <email> <time> <zone>`: the author a commit made here now would carry.
+  ident=$(git -C "$JIG_PROJECT" var GIT_AUTHOR_IDENT 2>/dev/null) || ident=""
+  case "$ident" in
+    *' <'*'>'*)
+      name=${ident%% <*}
+      email=${ident#* <}
+      email=${email%%>*} ;;
+  esac
+  [ -n "$email$name" ] || return 0
+  list=$(git -C "$JIG_PROJECT" log --no-merges --no-color --format="%H$t%aE$t%aN$t%aI$t%s" \
+    "$stip" "^$bsha" ${1+--not "$@"} 2>/dev/null) || return 0
+  # Through the environment, not -v: awk -v would read `\` in a name as an escape.
+  list=$(printf '%s\n' "$list" | JIG_OWN_EMAIL=$email JIG_OWN_NAME=$name awk -F '\t' '
+    BEGIN { e = tolower(ENVIRON["JIG_OWN_EMAIL"]); n = tolower(ENVIRON["JIG_OWN_NAME"]) }
+    $1 != "" && ((e != "" && tolower($2) == e) || (n != "" && tolower($3) == n)) {
+      s = $5; for (i = 6; i <= NF; i++) s = s " " $i
+      print $1 "\t" $4 "\t" s
+    }')
+  [ -n "$list" ] || return 0
+  ackf=$(jig_staging_ack_file)
+  if [ -s "$ackf" ]; then
+    acked=$(printf '%s\n' "$list" | cut -f1 | jig_staging_patch_ids)
+    list=$( { awk '{ print "A\t" $1 "\t" $2 }' "$ackf"
+              printf '%s\n' "$acked" | awk 'NF == 2 { print "P\t" $1 "\t" $2 }'
+              printf '%s\n' "$list" | awk '$0 != "" { print "L\t" $0 }'; } | awk -F '\t' '
+      $1 == "A" { ack[$2] = 1; ack[$3] = 1; next }
+      $1 == "P" { pid[$3] = $2; next }
+      $1 == "L" {
+        if (($2 in pid) && (pid[$2] in ack)) next
+        if ($2 in ack) next
+        print substr($0, 3)
+      }')
+  fi
+  [ -z "$list" ] || printf '%s\n' "$list"
 }
 
 # _jig_staging_drift_refs <rows> <prefix> <suffix> <staging> <base> —
@@ -1487,7 +1560,7 @@ jig_staging_drift_lines() {
           printf 'staging: %s has waited on %s %s day(s) with no promotion (jig task promote %s, from any checkout, or ask its owner)\n' "$a" "$staging" "$d" "$a"
         fi ;;
       unowned)
-        printf 'staging: %s commit(s) on %s that no live task branch holds (%s)\n' "$a" "$staging" "$b" ;;
+        printf 'staging: %s commit(s) of yours on %s that the base does not have and no live task branch holds (list them: %s --dry-run; mark them as known: %s)\n' "$a" "$staging" "$b" "$b" ;;
       conflicting)
         printf 'staging: the promotion of %s conflicts with %s as of %s (run jig task promote %s again)\n' "$a" "$c" "$d" "$a" ;;
     esac

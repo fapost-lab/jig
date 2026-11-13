@@ -58,8 +58,10 @@ promoted task whose branch was deleted would read as orphaned. A read never asks
   --branches='<prefix>*<suffix>' --remotes='origin/<prefix>*<suffix>' <refs>`, in one process, the
   globs being `git.branch_template`'s and `<refs>` this checkout's task branches the template does
   not name: merges are left out, since a landing merge or a conflict resolution on staging belongs
-  to the task it lands. The line carries the same arguments as a `git log`, so what it lists is what
-  was counted.
+  to the task it lands. Amended by
+  adr-20261113-staging-work-is-reported-to-its-own-author-until-acknowledged: only the person's own
+  commits are counted, until `jig staging ack` records them, and the line names that command and its
+  `--dry-run` listing instead of a `git log`.
 - **A conflicting promotion** is one this checkout opened (`promote_url`; the spec's "in the owner's
   checkout") whose forge cache entry is `open` and `conflicting`. The cache gains an eighth column,
   `<mergeable>`, written by housekeeping from calls it already makes: GitHub's `mergeable` in the
@@ -89,7 +91,9 @@ promoted task whose branch was deleted would read as orphaned. A read never asks
   whose branch was deleted before it reached the base is counted as work nobody owns, which is
   what it has become.
 - A promotion merged into the base by a squash leaves the task's commits on staging out of the
-  base, so they count as nobody's once the branch is deleted (docs/known-issues.mdx).
+  base, so they count as nobody's once the branch is deleted (docs/known-issues.mdx) — since
+  adr-20261113-staging-work-is-reported-to-its-own-author-until-acknowledged, only for their author,
+  until acknowledged.
 - GitHub may answer `UNKNOWN` for mergeability it has not computed yet; that reads as nothing, so
   a conflict shows from the next housekeeping run after GitHub computed it.
 - `_jig_staging_walk` has one more tag; its callers already read only the tags they know.

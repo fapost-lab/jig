@@ -4361,22 +4361,22 @@ test_status_counts_staging_work_no_live_task_owns() {
   git branch -D -q staging
   git fetch -q origin
   run jig status
-  assert_contains "$OUT" "staging: 1 commit(s) on staging that no live task branch holds (git log --no-merges origin/staging ^origin/main --not --branches='task/*' --remotes='origin/task/*')"
+  assert_contains "$OUT" "staging: 1 commit(s) of yours on staging that the base does not have and no live task branch holds (list them: jig staging ack --dry-run; mark them as known: jig staging ack)"
   # A task branch deleted while its work is not in the base: orphaned.
   git branch -D -q task/on
   run jig status
-  assert_contains "$OUT" "staging: 2 commit(s) on staging that no live task branch holds"
+  assert_contains "$OUT" "staging: 2 commit(s) of yours on staging that the base does not have"
   # A promoted task's branch deleted once its work reached the base: its
   # commits are in the base, so they count for nobody.
   git push -q origin "$(git rev-parse task/promoted):refs/heads/main"
   git branch -D -q task/promoted
   git fetch -q origin
   run jig status
-  assert_contains "$OUT" "staging: 2 commit(s) on staging"
+  assert_contains "$OUT" "staging: 2 commit(s) of yours on staging"
   run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
-  assert_contains "$OUT" "staging: 2 commit(s) on staging that no live task branch holds"
+  assert_contains "$OUT" "staging: 2 commit(s) of yours on staging that the base does not have"
   # A task branch the template does not name holds its commits too, and the
-  # command printed lists exactly what was counted.
+  # command named lists exactly what was counted.
   git checkout -q -b feature/odd main
   printf 'odd\n' > odd.txt
   git add odd.txt
@@ -4389,11 +4389,47 @@ test_status_counts_staging_work_no_live_task_owns() {
   git fetch -q origin
   fixture_task odd feature/odd active "class:T2"
   run jig status
-  assert_contains "$OUT" "staging: 2 commit(s) on staging that no live task branch holds (git log --no-merges origin/staging ^origin/main --not --branches='task/*' --remotes='origin/task/*' refs/heads/feature/odd)"
-  local cmd
-  cmd=${OUT#*no live task branch holds (}
-  cmd=${cmd%%)*}
-  assert_eq 2 "$(eval "$cmd --format=%h" | wc -l | tr -d ' ')"
+  assert_contains "$OUT" "staging: 2 commit(s) of yours on staging that the base does not have and no live task branch holds (list them: jig staging ack --dry-run; mark them as known: jig staging ack)"
+  run jig staging ack --dry-run
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "staging: 2 commit(s) of yours on staging would be acknowledged (jig staging ack)"
+  assert_not_contains "$OUT" " odd"
+}
+
+# Somebody else's commits on staging are named nowhere: not in the text, the
+# page, `--json` or the dry run
+# (adr-20261113-staging-work-is-reported-to-its-own-author-until-acknowledged).
+test_status_names_no_one_elses_staging_work() {
+  fixture_staging_repo
+  git checkout -q -B staging origin/staging
+  printf 'theirs\n' > theirs.txt
+  git add theirs.txt
+  GIT_AUTHOR_NAME=colleague GIT_AUTHOR_EMAIL=colleague@test git commit -q -m "a colleague's fix"
+  git push -q origin staging
+  git checkout -q main
+  git branch -D -q staging
+  git fetch -q origin
+  run jig status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "no live task branch holds"
+  run jig status --json
+  assert_not_contains "$OUT" "staging-unowned"
+  assert_not_contains "$OUT" "a colleague's fix"
+  run jig status --html
+  assert_not_contains "$(cat .ai/runtime/status.html)" "no live task branch holds"
+  run jig staging ack --dry-run
+  assert_contains "$OUT" "staging: nothing of yours on staging to acknowledge"
+  # The same person under another address is still the person; the name is enough.
+  git checkout -q -B staging origin/staging
+  printf 'mine\n' > mine.txt
+  git add mine.txt
+  GIT_AUTHOR_EMAIL=old-address@test git commit -q -m "mine, from the old address"
+  git push -q origin staging
+  git checkout -q main
+  git branch -D -q staging
+  git fetch -q origin
+  run jig status
+  assert_contains "$OUT" "staging: 1 commit(s) of yours on staging"
 }
 
 # This checkout's open promotion that the forge cache calls conflicting with
@@ -4440,9 +4476,15 @@ test_status_json_carries_the_staging_drift() {
   assert_contains "$OUT" '"kind":"staging-unpromoted","subject":{"type":"task","id":"on"},"tasks":["on"]'
   assert_contains "$OUT" '"staging":{"branch":"task/on","days":0}'
   assert_contains "$OUT" '"kind":"staging-unowned","subject":{"type":"project","id":null},"tasks":[]'
-  assert_contains "$OUT" '"staging":{"commits":1}'
+  assert_contains "$OUT" '"staging":{"commits":1,"list":[{"sha":"'"$(git rev-parse origin/staging)"'","subject":"straight onto staging","date":"'
+  assert_contains "$OUT" '"ack":"jig staging ack --expect 1"}'
   run jig status --html
-  assert_file_contains .ai/runtime/status.html "Work on staging that no live task branch holds"
+  assert_file_contains .ai/runtime/status.html "Your work on staging that no live task branch holds"
+  # Acknowledged, it leaves every form.
+  run jig staging ack
+  assert_eq 0 "$RC"
+  run jig status --json
+  assert_not_contains "$OUT" "staging-unowned"
 }
 
 # --- parked at the staging branch

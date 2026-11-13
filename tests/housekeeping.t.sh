@@ -4280,7 +4280,7 @@ test_housekeeping_prints_the_staging_drift_report() {
   assert_contains "$OUT" "staging: on has waited on staging 0 day(s) with no promotion (jig task promote on)"
   assert_contains "$OUT" "staging: behind has waited on staging 0 day(s) with no promotion (jig task promote behind)"
   assert_not_contains "$OUT" "staging: promoted has waited"
-  assert_contains "$OUT" "staging: 1 commit(s) on staging that no live task branch holds"
+  assert_contains "$OUT" "staging: 1 commit(s) of yours on staging that the base does not have and no live task branch holds"
   assert_contains "$OUT" "staging: the promotion of promoted conflicts with main as of 2026-11-12T09:00:00Z (run jig task promote promoted again)"
   hk_cfg git.flow direct
   run jig housekeeping

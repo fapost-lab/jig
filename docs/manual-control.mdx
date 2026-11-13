@@ -375,7 +375,7 @@ from the base branch, a `staging:` line each:
 ```text
 staging: booking-form has waited on staging 20 day(s) with no promotion (jig task promote booking-form)
 staging: the promotion of booking-message conflicts with main as of 2026-11-12T09:00:00Z (run jig task promote booking-message again)
-staging: 2 commit(s) on staging that no live task branch holds (git log --no-merges origin/staging ^origin/main --not --branches='task/*' --remotes='origin/task/*')
+staging: 2 commit(s) of yours on staging that the base does not have and no live task branch holds (list them: jig staging ack --dry-run; mark them as known: jig staging ack)
 ```
 
 - **Waiting with no promotion.** A task's work has been on the staging branch for
@@ -388,12 +388,17 @@ staging: 2 commit(s) on staging that no live task branch holds (git log --no-mer
 - **A promotion that conflicts.** A promotion this checkout opened (`jig task promote`) that the
   forge, at the last housekeeping run, called conflicting with the base branch. Running the command
   again names the files to resolve, and pushes the merge once you have resolved it.
-- **Work no task owns.** Commits on the staging branch that the base branch does not have and that
-  no task branch — yours or anyone's on origin — holds: something committed onto the staging branch
-  directly, or a task whose branch was deleted before its work reached the base branch. Only what the
-  staging branch has and the base branch does not counts, so a task whose promotion was merged with a
-  merge commit and whose branch was deleted leaves nothing here; a squash-merged one still does (see
-  [Known issues](/known-issues)). The command in brackets lists exactly the commits counted.
+- **Work no task owns.** Your own commits on the staging branch that the base branch does not have,
+  that no task branch — yours or anyone's on origin — holds, and that you have not marked as known:
+  something committed onto the staging branch directly, or a task whose branch was deleted before its
+  work reached the base branch. Yours means the author's email or name is your git user's (the one
+  `git var GIT_AUTHOR_IDENT` names); a colleague's commits are not named anywhere, not even in
+  `jig status --json`. Only what the staging branch has and the base branch does not counts, so a
+  task whose promotion was merged with a merge commit and whose branch was deleted leaves nothing
+  here; a squash-merged one still does (see [Known issues](/known-issues)).
+  `jig staging ack --dry-run` lists exactly the commits counted, and `jig staging ack` marks them as
+  known in this clone (`.ai/runtime/staging-acked`, by content, so a rebase or cherry-pick on the
+  staging branch keeps the mark): from then on the line counts only new ones.
 
 All of it is read from git and from the forge cache housekeeping keeps, never from the forge
 directly; without a forge the line about conflicts does not appear. The status page and

@@ -295,7 +295,15 @@ green CI, so close the promotion before shipping a fix to staging, as the refusa
 
 - tasks on staging that nobody promoted for longer than `git.staging_stale_after`;
 - tasks whose promotion conflicts with the main branch;
-- commits on staging that belong to no task — merged by hand, or a squash.
+- your own commits on staging that belong to no task — committed there by hand, a branch merged
+  without a task, or a squash — until you mark them as known.
+
+Only your commits are named — the author's email or name is your git user's — never a colleague's.
+The first time, that can be months of your own old work. Look at it with `jig staging ack --dry-run`,
+bring to the main branch through a task whatever it still needs, and run `jig staging ack`: it marks
+the rest as known in your clone, and from then on `jig status` names only commits of yours that are
+new. A mark follows the change, not the commit, so a rebase or cherry-pick on staging does not bring
+it back.
 
 The same appears in the status page and in `jig status --json`
 ([Reading Jig as data](/reading-jig-as-data)); the lines are described in

@@ -2400,7 +2400,7 @@ PRS
   # staging flow.
   _status_drift
   if [ -n "$_STATUS_DRIFT" ]; then
-    local dk da db dc dd de staging_name todo_promote
+    local dk da db dc dd de staging_name todo_promote unowned_list
     staging_name=$_STATUS_DRIFT_STAGING
     while IFS=$'\t' read -r dk da db dc dd de; do
       case "$dk" in
@@ -2419,10 +2419,16 @@ PRS
             "Once it passed its test on $staging_name, $todo_promote. Jig takes nothing off $staging_name." \
             "" "$db	$dd" ;;
         unowned)
+          # The person's own commits only, until acknowledged
+          # (adr-20261113-staging-work-is-reported-to-its-own-author-until-acknowledged).
+          # The item carries the count, then each listed commit as
+          # <sha><GS><date><GS><subject>, tab-separated: the record is one line.
+          unowned_list=$(printf '%s\n' "$_STATUS_DRIFT" | awk -F '\t' '
+            $1 == "unowned-commit" { printf "\t%s\035%s\035%s", $2, $3, $4 }')
           _status_attn staging-unowned project "" "" \
-            "Work on $staging_name that no live task branch holds" "$da commit(s) on $staging_name that the base does not have" \
-            "Find out whose they are ($db), and bring them to the base through a task. Jig takes nothing off $staging_name." \
-            "" "$da" ;;
+            "Your work on $staging_name that no live task branch holds" "$da commit(s) of yours on $staging_name that the base does not have" \
+            "Bring what the base still needs to it through a task; once you know the rest, run $db to stop being told ($db --dry-run lists them). Jig takes nothing off $staging_name." \
+            "" "$da$unowned_list" ;;
       esac
     done <<DRIFT
 $_STATUS_DRIFT
@@ -2548,7 +2554,7 @@ _status_attention_phase_stops() {
 # _status_json [--json] — the producer json_run runs for `jig status --json`.
 _status_json() {
   local arg attn rec kind stype sid tasks title detail todo url extra objs="" o t tl hk stale root vers
-  local xb xbase xst xat xto
+  local xb xbase xst xat xto xk xl extra0 xt=$'\t'
   for arg in "$@"; do
     [ "$arg" = --json ] || jig_fail usage "status --json: unknown argument: $arg (usage: jig status --json)"
   done
@@ -2636,7 +2642,27 @@ $extra
 X
         json_quote "$xb"; o="$o,\"staging\":{\"branch\":$_JSON,\"days\":$xat}"
         ;;
-      staging-unowned) o="$o,\"staging\":{\"commits\":$extra}" ;;
+      # The count is exact; the list is the drift report's `unowned-commit`
+      # records, newest first and capped by it (see _status_attention).
+      staging-unowned)
+        extra0=$extra
+        o="$o,\"staging\":{\"commits\":${extra%%"$xt"*},\"list\":["
+        xl=""
+        case "$extra" in *"$xt"*) extra=${extra#*"$xt"} ;; *) extra="" ;; esac
+        while [ -n "$extra" ]; do
+          xk=${extra%%"$xt"*}
+          case "$extra" in *"$xt"*) extra=${extra#*"$xt"} ;; *) extra="" ;; esac
+          IFS=$'\035' read -r xb xat xst <<X
+$xk
+X
+          json_quote "$xb"; xb=$_JSON
+          json_quote "$xat"; xat=$_JSON
+          json_quote "$xst"
+          xl="$xl${xl:+,}{\"sha\":$xb,\"subject\":$_JSON,\"date\":$xat}"
+        done
+        # --expect: the ack refuses when the count moved since this read, so
+        # a program never marks a commit its reader was not shown.
+        o="$o$xl],\"ack\":\"jig staging ack --expect ${extra0%%"$xt"*}\"}" ;;
     esac
     o="$o}"
     objs="$objs${objs:+,}$o"

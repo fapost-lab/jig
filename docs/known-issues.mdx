@@ -27,15 +27,18 @@ them, see [What's next](/roadmap).
 ### A task promoted by a squash merge reads as staging work nobody owns
 
 **What you see.** After a task's promotion is merged into the base branch with "squash and merge"
-and its branch is deleted, `jig status` counts its commits in `staging: … commit(s) on staging that
-no live task branch holds`. The squashed commit in the base branch is a new commit, so the task's
-own commits on the staging branch are not in the base branch.
+and its branch is deleted, `jig status` counts its commits in `staging: … commit(s) of yours on
+staging that the base does not have and no live task branch holds` — in its author's clone only. The
+squashed commit in the base branch is a new commit, so the task's own commits on the staging branch
+are not in the base branch.
 
-**What it costs.** The count stays up and stops saying anything useful; real drift hides behind it.
+**What it costs.** The count stays up until you mark those commits as known, and new drift waits
+behind it.
 
 **What to do instead.** Merge promotions with a merge commit, not a squash: then the task's own
-commits reach the base branch and leave the count. A squash merge into the staging branch has the
-mirror fault, [below](#a-task-squash-merged-into-the-staging-branch-reads-as-not-on-it).
+commits reach the base branch and leave the count. After a squash, `jig staging ack` marks them as
+known. A squash merge into the staging branch has the mirror fault,
+[below](#a-task-squash-merged-into-the-staging-branch-reads-as-not-on-it).
 
 {/* Closed by task staging-state-findings: removed once a task squash-merged into the staging branch is told from one that is not there. */}
 ### A task squash-merged into the staging branch reads as not on it
