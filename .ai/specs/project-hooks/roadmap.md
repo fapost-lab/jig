@@ -12,7 +12,7 @@ Goal: a document can be required at named stages of every task, with no domain a
 by `jig context resolve --stage consolidate` for a task with no matching domain, is absent from
 `--stage implement`, and `jig knowledge check` fails `load: stage` without `stages`.
 
-- [ ] stage-only loading — `load: stage` through the resolver, pending/guard, `knowledge check`,
+- [ ] `stage-only-loading` — stage-only loading — `load: stage` through the resolver, pending/guard, `knowledge check`,
   `schemas/frontmatter.md`, the docs site and an ADR amending ADR-0014/0021
 
 ## Phase 2 — command hooks at completion gates
