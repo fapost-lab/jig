@@ -3266,6 +3266,41 @@ task/b${t}main${t}merged${t}-${t}T${t}bbb${t}-${t}-" "$(hk_cache_rows)"
   assert_eq 1 "$(grep -c '^mr ' stub-bin/calls)"
 }
 
+# The GitLab project sees its upgrade waiting for a merge request as a GitHub
+# project sees its pull request (task gitlab-upgrade-mr-in-status): GitLab's
+# `opened` is open in the cache, and `jig status` names it, in text and JSON.
+# The list asks for GitLab's largest page, so an upgrade behind 30 newer merge
+# requests stays in the cache.
+test_housekeeping_gitlab_upgrade_merge_request_reaches_status() {
+  hk_setup
+  hk_cfg forge gitlab
+  mkdir -p stub-bin
+  cat > stub-bin/glab <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$PWD/stub-bin/calls"
+case "\$1" in
+  auth) exit 0 ;;
+  mr) printf '[{"iid":157,"source_branch":"jig/upgrade-9.9.9","target_branch":"main","state":"opened","author":{"web_url":"https://gitlab.com/someone"},"sha":"abc123","web_url":"https://gitlab.com/example/example/-/merge_requests/157","detailed_merge_status":"mergeable"}]\n' ;;
+esac
+STUB
+  chmod +x stub-bin/glab
+  printf 'stub-bin/\n' >> .git/info/exclude
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+  git remote add origin https://gitlab.com/example/example.git
+
+  jig housekeeping >/dev/null
+  assert_contains "$(cat stub-bin/calls)" "mr list --all --per-page 100 --output json"
+
+  run jig status --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"kind":"upgrade-pull-request-waiting"'
+  assert_contains "$OUT" '"url":"https://gitlab.com/example/example/-/merge_requests/157"'
+  run jig status
+  assert_contains "$OUT" "upgrade pull request: jig/upgrade-9.9.9 into main open as of"
+  assert_contains "$OUT" "(https://gitlab.com/example/example/-/merge_requests/157)"
+}
+
 # --- the live status page (jig_status_page_touch, common.sh) ------------------
 #
 # A non-dry run does a full redraw (`status --html`) when the page exists;

@@ -220,8 +220,11 @@ New ids may appear without `schema` changing, so a consumer ignores ids it does 
 
 A read never asks the forge, so pull request state comes from `.ai/runtime/forge-cache`, which
 `jig housekeeping` writes from the lists it already fetches (not on `--dry-run`): `gh pr list
---state all` for states, and on GitHub a second `gh pr list --state open` for the checks of the open
-pull requests — two calls a run, whatever the number of tasks. One line per pull request, newest
+--state all` (or `glab mr list --all`, 100 at most) for states, and on GitHub a second `gh pr list
+--state open` for the checks of the open pull requests — two calls a run, whatever the number of
+tasks. `jig upgrade` that leaves its pull request open adds that one line itself, `open`, with
+`<ci>` and `<mergeable>` `-`, in place of an older line for the same branch and base; the next
+housekeeping run replaces the whole file. One line per pull request, newest
 first as the forge lists them, written atomically, `#` lines are comments:
 
 ```
@@ -503,7 +506,8 @@ The kinds, in the order they are listed:
 | `sources-changed` | project | adopted source files changed since they were approved |
 
 The two `upgrade-pull-request-*` kinds come from the forge cache (above), never from the forge
-itself, so they are as fresh as the last `jig housekeeping`; `jig upgrade --land` asks the forge
+itself, so they are as fresh as the last `jig housekeeping` — or the `jig upgrade` that opened the
+pull request, which records it there; `jig upgrade --land` asks the forge
 before it changes anything. The plain `jig status` prints the same facts as `upgrade pull request:`
 lines.
 
