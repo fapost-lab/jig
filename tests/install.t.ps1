@@ -774,12 +774,20 @@ function Test-UninstallRemovesOnlyJigsOwnPrReviewSkill {
         Set-Content -LiteralPath (Join-Path $ours 'SKILL.md') -Value 'jig'
         Set-Content -LiteralPath (Join-Path $ours '.jig-global') -Value 'version: 1.0.0'
         Set-Content -LiteralPath (Join-Path $theirs 'SKILL.md') -Value 'mine'
+        $ourRecord = Join-Path $profileDir '.claude\skills\.jig-pr-review.placed'
+        $theirRecord = Join-Path $profileDir '.agents\skills\.jig-pr-review.placed'
+        Set-Content -LiteralPath $ourRecord -Value 'placed'
+        Set-Content -LiteralPath $theirRecord -Value 'placed'
 
         Uninstall-JigGlobalSkill -InstallDir (Join-Path $profileDir '.local\share\jig')
 
         Assert-JigTrue (-not (Test-Path -LiteralPath $ours)) 'the marked copy must be removed'
         Assert-JigTrue (Test-Path -LiteralPath (Join-Path $theirs 'SKILL.md')) `
             'a skill without the marker must be left in place'
+        Assert-JigTrue (-not (Test-Path -LiteralPath $ourRecord)) `
+            'the record beside a removed skill must go, so installing again places it'
+        Assert-JigTrue (Test-Path -LiteralPath $theirRecord) `
+            'the record beside a skill still in place must stay'
     }
     finally {
         $env:USERPROFILE = $savedProfile
