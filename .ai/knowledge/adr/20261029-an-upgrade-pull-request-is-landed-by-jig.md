@@ -41,7 +41,8 @@ person's git work: switch to the base, pull, delete the branch. Jig UI may not r
   back for good; task upgrade-land-followups.)
 - `jig upgrade --land` is the step after the merge. It asks the forge, because only the forge knows
   whether the pull request merged; refuses `not-merged` while it is open and `upgrade-blocked` for a
-  dirty tree, a checkout on another branch than the base or the upgrade's, a linked worktree on the upgrade's
+  dirty tree, a checkout on another branch than the base or the upgrade's (amended 2026-11-13: no
+  longer refused, see the last bullet), a linked worktree on the upgrade's
   branch (amended 2026-10-30: it is never switched to the base, as `jig_ship_leave` never switches
   one — run it in the main checkout), a base checked out in another worktree, or a base origin's
   cannot fast-forward — every reason at once, nothing changed.
@@ -57,6 +58,21 @@ person's git work: switch to the base, pull, delete the branch. Jig UI may not r
   which a program shows as waiting, not as a failure; a merged or closed one is named with its
   state and reads `failed`. No forge, a bad `forge:` value or a forge that did not answer leave the
   refusal it always was: the lookup can add a pull request to the message, never another error.
+- (Amended 2026-11-13, task upgrade-land-without-checkout.) A checkout on a third branch — neither
+  the base nor the upgrade's, a detached HEAD included, in the main checkout or a linked worktree —
+  is no longer refused and never switched: other sessions may be working in it. `--land` moves only
+  the base, by `git fetch . refs/remotes/origin/<base>:refs/heads/<base>` — a fast-forward only, so
+  a commit that reached the base after the checks is never lost, and refused by git for a branch
+  any worktree has checked out or is rebasing or bisecting, which `update-ref` would not refuse. A
+  clone with no local base gets one from `origin/<base>`, tracking it. The upgrade's branch goes
+  through `jig_branch_leave` with the merged head for the local branch at every level — `git branch
+  -d` measures a branch without upstream against HEAD, which here is not the base — and for origin
+  only at `agent.git` `push` or above. Since the tree is not touched, uncommitted changes are no
+  reason to refuse there; a base checked out in any worktree, a base with commits origin's lacks and
+  an `origin/<base>` without the upgrade still are. The checkout takes the upgrade when it next
+  merges the base; a `next:` line says so while the checkout records another Jig than the base, and
+  `--json` reports `land.checkout_on_base: false`. On the base or the upgrade's branch nothing
+  changed: the tree is moved, so a dirty tree still refuses.
 
 ## Alternatives
 

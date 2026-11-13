@@ -50,8 +50,9 @@ to spare a person.
 - A dirty checkout is not refused. Git refuses a fast-forward that would overwrite a change —
   staged, unstaged, or an untracked file it would create — and that refusal is the answer
   (`blocked-by-changes`, git's message naming the files); changes it does not touch do not stop it.
-  `jig upgrade --land` refuses any tracked change, because it may switch the checkout's branch;
-  refresh never does.
+  `jig upgrade --land` refuses any tracked change where it switches or moves the checkout (on the
+  base or the upgrade's branch; from any other branch it moves only the base's ref, amended in
+  adr-20261029-an-upgrade-pull-request-is-landed-by-jig); refresh never switches.
 - Refresh is not a git right of `agent.git`: it commits and pushes nothing, and fetches as
   housekeeping does at every level, so it runs at `none` too. adr-20261104's "a write never moves
   the person's checkout" is about Jig's own write branches; refresh moves the person's base, only
@@ -91,7 +92,7 @@ to spare a person.
   being something one runs as often as one likes.
 - **`jig housekeeping` as the button**: it also sweeps branches and trash, refreshes the forge
   cache, checks for a release, and runs on a cadence; it does not fast-forward the base.
-- **Refuse any dirty tree, as `jig upgrade --land` does**: a person nearly always has a change
+- **Refuse any dirty tree, as `jig upgrade --land` does on the base**: a person nearly always has a change
   somewhere, so the button would nearly never work; git already protects every change the
   fast-forward would touch.
 - **Check the base out when the person is on another branch**: it moves their checkout;

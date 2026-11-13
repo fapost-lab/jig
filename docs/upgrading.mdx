@@ -157,7 +157,8 @@ order does not change: do it once, and read every release between yours and the 
     Once the pull request is merged (by you or a colleague), come back to your base branch, if you
     are not on it already, and take the merge in. When the pull request is on GitHub or GitLab and
     `gh` or `glab` is signed in, one command does that and the branch deletion below:
-    `jig upgrade --land`, which refuses, changing nothing, while the pull request is still open
+    `jig upgrade --land`, which refuses, changing nothing, while the pull request is still open,
+    and which, run from another branch, brings the base up to date without switching you to it
     ([more](#an-upgrade-is-a-change-of-its-own)). By hand, these are two separate commands; run them
     one after the other.
 
@@ -450,10 +451,14 @@ Once you have merged the upgrade's pull request, bring it here in one step:
 jig upgrade --land
 ```
 
-It asks the forge whether the pull request is merged, puts you on the base branch, fast-forwards it
-to origin's and deletes the upgrade's branch, here and — when your agent may push — on origin. It
-refuses, changing nothing, while the pull request is still open, while you have uncommitted changes,
-when you are on another branch than the base or the upgrade's, when your base branch has commits
+It asks the forge whether the pull request is merged, fast-forwards your base branch to origin's and
+deletes the upgrade's branch, here and — when your agent may push — on origin. Run from the base or
+the upgrade's branch, it puts you on the base. Run from any other branch, it leaves your checkout
+where it is — files, uncommitted changes and all, so work in progress there, yours or another
+session's, is not disturbed — and moves only the base branch; it ends with a line saying that branch
+still has the old Jig until you merge the base into it. It refuses, changing nothing, while the pull
+request is still open, while you have uncommitted changes on the base or the upgrade's branch, when
+the base branch is checked out in another worktree (run it there), when your base branch has commits
 origin does not have, or while origin's base here does not record the upgrade's version yet (fetch,
 then run it again). Until then `jig status` reminds you with an `upgrade pull request:` line.
 

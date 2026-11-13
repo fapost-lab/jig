@@ -1010,7 +1010,8 @@ the pull request is left to the person — a second run stages nothing and ends 
 `jig upgrade --land` brings an upgrade that ended in a pull request here once the forge has merged
 it: it asks the forge for the pull requests of `jig/upgrade-*` branches into `git.base_branch`,
 fetches the base, checks the base branch out (from the base or from the upgrade's own branch),
-fast-forwards it to `origin/<base>` and lets the upgrade's branch go the way a merge Jig made itself
+fast-forwards it to `origin/<base>` — from any other branch or a detached HEAD it moves only the
+base's ref, never the checkout — and lets the upgrade's branch go the way a merge Jig made itself
 does — here when git sees its work merged, and on origin, at the head the forge merged, only at
 `agent.git` `push` or above. It never stashes and never forces. `--land` takes no other argument
 but `--json`, and reads no framework source.
@@ -1024,7 +1025,7 @@ branch's pull request counts.
  "files": null,
  "git": {"level": "pr", "branch": "jig/upgrade-0.39.0", "commit": "<sha>", "pushed": true,
          "pull_request": "<url>", "merged": true},
- "land": {"base": "main", "branch_deleted": true, "origin_branch_deleted": true},
+ "land": {"base": "main", "checkout_on_base": true, "branch_deleted": true, "origin_branch_deleted": true},
  "manual_steps": [], "would_stop": []}
 ```
 
@@ -1033,8 +1034,8 @@ branch's pull request counts.
 | `mode`, `dry_run`, `files`, `manual_steps`, `would_stop` | as in `jig upgrade --json`; `dry_run` is `false`, `files` `null`, the two lists empty |
 | `from`, `to` | the Jig the base branch here recorded before (`jig.version` in its manifest) and after the fast-forward; on `nothing-to-do` both are the base's. A value may carry `+<short sha>` for unreleased code |
 | `outcome` | `landed`, or `nothing-to-do` when no merged upgrade waits to be brought here (and none is open) |
-| `git` | on `landed`: `level` (`agent.git`), the upgrade's `branch`, the `commit` the base is on now, `pushed` and `merged` (both `true`), and the `pull_request` URL or `null`. `null` on `nothing-to-do` |
-| `land` | on `landed`: the `base` checked out, and whether the upgrade's branch was deleted here (`branch_deleted`) and on origin (`origin_branch_deleted`). A branch kept says why in the text on stderr. `null` on `nothing-to-do` |
+| `git` | on `landed`: `level` (`agent.git`), the upgrade's `branch`, the `commit` the base branch is at now, `pushed` and `merged` (both `true`), and the `pull_request` URL or `null`. `null` on `nothing-to-do` |
+| `land` | on `landed`: the `base` fast-forwarded; `checkout_on_base`, `true` when this checkout is on it now, `false` when it stayed on another branch or a detached HEAD and only the base's ref moved (that branch takes the upgrade when it merges the base); and whether the upgrade's branch was deleted here (`branch_deleted`) and on origin (`origin_branch_deleted`). A branch kept says why in the text on stderr. `null` on `nothing-to-do` |
 
 Refusals: `not-merged` when the pull request is still open; `upgrade-blocked` with every reason at
 once; `usage` for any other argument. Both change nothing. No origin, no signed-in forge CLI, or a
