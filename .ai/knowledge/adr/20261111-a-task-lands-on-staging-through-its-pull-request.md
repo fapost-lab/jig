@@ -10,7 +10,7 @@ paths:
   - scripts/lib/task.sh
   - scripts/lib/common.sh
 summary: Why jig task land and ship at merge land a staging pull request on the forge when clean and directly only on conflict, in a temporary worktree with rerere and an unforced push retried from a fresh fetch, why review follows git.staging_review, and why a task branch stays clean of staging.
-reviewed_at: 2026-11-12
+reviewed_at: 2026-11-13
 ---
 # A task lands on staging through its pull request, and directly only when it conflicts
 
@@ -67,7 +67,10 @@ base.
   from a branch, carries what, or nested too deep. One rev-list per branch judged, never per commit.
 - **Review by `git.staging_review`**, read from the forge before either merge (`jig_pr_approval`):
   approved when GitHub's `reviewDecision` is `APPROVED`, or is empty and the latest reviews hold an
-  approval and no change request; on GitLab when `approved_by` is not empty. `none` lands without
+  approval and no change request; on GitLab when `approved_by` is not empty. Amended 2026-11-13
+  (adr-20261113-reviewers-are-read-from-the-forge): never while a reviewer the forge records as
+  requested has not answered, or GitLab's `approvals_left` is above zero — `waiting`, naming whom it
+  waits for; changes requested still win over everything. `none` lands without
   asking and says so; `require` waits; `ask` stops with exit 3 naming both answers — land without
   review (`--without-review`) or wait — and an unattended run waits. `--without-review` is refused
   under `require` and where nobody answers. A landing without an approval is said on the pull request. The person's

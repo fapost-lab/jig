@@ -24,7 +24,8 @@ Every `--json` read prints exactly one line on stdout, whether it succeeded or w
 
 The exit status is the command's: 0 with `data`, non-zero with `error`. What the command says to a
 person — warnings, notices — goes to stderr unchanged and never into the envelope. Reading never
-touches the network: no forge CLI, no fetch.
+touches the network: no forge CLI, no fetch — with one exception, `jig pr reviewers --json`, whose
+subject is the forge itself (below).
 
 Strings escape `"`, `\` and every control byte (`\n`, `\t`, `\r`, the rest as `\u00XX`); other
 bytes pass through as they are, so a value is UTF-8 when what Jig read was. A value Jig has no
@@ -80,6 +81,7 @@ need to tell it apart (`already-filed`, out of `already-exists`); the release no
 | `carries-staging` | `jig task promote` found the staging branch merged into the task's branch: its pull request would take untested work of others into the base. Nothing was pushed and no pull request opened |
 | `base-conflict` | `jig task promote` found the task's branch in conflict with the base branch; the command exits 3, and whoever merges the base into the task branch resolves it. Nothing was pushed. Reserved: promote has no `--json` yet, and exit 3 is the answer |
 | `shallow-clone` | `jig task promote` ran in a shallow clone, where what a commit contains cannot be told. Nothing was pushed |
+| `forge-unavailable` | `jig pr reviewers` could not ask the forge: no forge for this clone, its CLI missing or not signed in, or the call failed. `message` holds why |
 | `failed` | any other refusal: one that names no code of its own, a fault of the environment (a checkout that cannot be read, a failed command), or a producer that printed nothing |
 
 A refusal names its code with `jig_fail <code> <message>` (`scripts/lib/common.sh`); `jig_die
@@ -1105,3 +1107,28 @@ write, `invalid-value` for a value its key does not accept, `secret-key` for the
 never set on a command line; `usage` for a missing key or value, an unknown flag, a missing `--local`,
 a name a file cannot hold, a malformed `--revision` or `--dry-run`; `stale-revision` as above. One
 bad pair refuses the whole call.
+
+## `jig pr reviewers --json`
+
+Who may be asked to review a pull request into a branch (adr-20261113-reviewers-are-read-from-the-forge):
+the people a UI offers before `jig task ship <id> --reviewer <login>`. The one read that asks the
+forge, since what it answers lives only there: call it when a person is about to choose, never on a
+timer. It writes nothing.
+
+```json
+{"base": "staging", "source": "history", "author": "me", "candidates": [{"login": "alice", "name": "Alice Smith", "reviews": 2}, {"login": "bob", "name": null, "reviews": 1}]}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `base` | string | the branch the pull request goes into: `--base`, else the staging branch on a sound staging flow, else `git.base_branch` |
+| `source` | string | `history`: the people who reviewed the last 30 merged pull requests into `base`, most frequent first; `assignable`: nobody the repository may still ask did, so everyone it may ask, in the forge's order |
+| `author` | string | the login this clone asks the forge as — the author of a pull request `jig task ship` opens, never among the candidates |
+| `candidates` | array | `[]` when there is nobody to ask |
+| `candidates[].login` | string | what `--reviewer` takes |
+| `candidates[].name` | string or null | the person's name on the forge; `null` when it has none |
+| `candidates[].reviews` | integer or null | under `history`, how many of those pull requests the person reviewed (once per pull request, never its author); `null` under `assignable` |
+
+Only people: no team, no bot. GitHub: the reviews submitted and the repository's assignable users.
+GitLab: the reviewers each merge request named and the project's active members. Refusals: `usage`
+for an unknown argument or `--base` without a value, `not-a-repository`, `forge-unavailable`.

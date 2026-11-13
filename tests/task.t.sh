@@ -5294,7 +5294,14 @@ test_task_ship_unknown_task_dies() {
 #   gh-merge.rc  the exit code of `pr merge` (default: 0)
 #   gh-existing  the pull request `pr list` finds open (default: none)
 #   gh-review    `<reviewDecision>|<latest review states, comma-separated>`
-#                for the approval read (default: `|`, no review)
+#                for the approval read, optionally `|<pending requests,
+#                comma-separated>` after it (default: `|`, no review)
+#   gh-self      the login `api user` answers (default: me)
+#   gh-assignable `<login>\t<name>` lines, the repository's assignable users
+#                (default: alice, bob, carol and me)
+#   gh-history   the logins that reviewed recent merged pull requests, one per
+#                pull request and line, as the `--jq` filter prints them
+#                (default: none)
 #   gh-mergeable `MERGEABLE`|`CONFLICTING`|`UNKNOWN` (default: MERGEABLE)
 #   gh-state     the pull request's state for `--json state` (default: the
 #                draft-and-head line every other `pr view` gets, read as unknown)
@@ -5312,8 +5319,15 @@ printf '%s\n' "\$*" >> "\$d/gh.log"
 val() { if [ -f "\$d/\$1" ]; then cat "\$d/\$1"; else printf '%s\n' "\$2"; fi; }
 case "\$1 \$2" in
   "auth status") exit 0 ;;
+  "api user") val gh-self me ;;
+  "api graphql")
+    q=""
+    for a in "\$@"; do case "\$a" in q=*) q=\${a#q=} ;; esac; done
+    all=\$(val gh-assignable "\$(printf 'alice\tAlice Smith\nbob\tBob Sikora\ncarol\tCarol Sikora\nme\tMe Myself')")
+    if [ -n "\$q" ]; then printf '%s\n' "\$all" | grep -i -- "\$q" || true; else printf '%s\n' "\$all"; fi ;;
   "pr list")
     case "\$*" in
+      *"--state merged"*) val gh-history "" ;;
       *baseRefName*) val gh-heads "" ;;
       *) val gh-existing null ;;
     esac ;;
@@ -5369,6 +5383,10 @@ STUB
 #   glab-merge.rc  the exit code of `mr merge` (default: 0)
 #   glab-conflicts `true`|`false`, the merge request's has_conflicts (default: false)
 #   glab-approvals the approvals endpoint's answer (default: approved by nobody)
+#   glab-reviewers the merge request's `reviewers` array (default: [])
+#   glab-members   ndjson, one project member a line, for `members/all`
+#                  (default: alice, bob, carol, me and a project bot)
+#   glab-history   ndjson, one merged merge request a line (default: none)
 # `mr note` records its arguments in glab-note.argv.
 mship_stub_glab() {
   local dir="$PWD"
@@ -5388,7 +5406,13 @@ case "\$1 \$2" in
     if [ "\$p" = null ]; then pipe=null; else
       pipe="{\"id\":5,\"sha\":\"\$(val glab-psha "\$head")\",\"status\":\"\$p\",\"user\":{\"id\":1,\"state\":\"active\"}}"
     fi
-    printf '{"iid":99,"state":"opened","draft":%s,"has_conflicts":%s,"sha":"%s","head_pipeline":%s}\n' "\$(val glab-draft false)" "\$(val glab-conflicts false)" "\$head" "\$pipe" ;;
+    printf '{"iid":99,"state":"opened","author":{"id":1,"username":"me"},"draft":%s,"has_conflicts":%s,"sha":"%s","reviewers":%s,"head_pipeline":%s}\n' "\$(val glab-draft false)" "\$(val glab-conflicts false)" "\$head" "\$(val glab-reviewers '[]')" "\$pipe" ;;
+  "api user") printf '{"id":1,"username":"me","name":"Me Myself"}\n' ;;
+  "api --paginate")
+    q=\$(printf '%s' "\$*" | sed -n 's/.*query=\\([^ ]*\\).*/\\1/p')
+    all=\$(val glab-members "\$(printf '%s\n' '{"id":2,"username":"alice","name":"Alice Smith","state":"active","created_by":{"id":1,"username":"me","name":"Me Myself"}}' '{"id":3,"username":"bob","name":"Bob Sikora","state":"active"}' '{"id":4,"username":"carol","name":"Carol Sikora","state":"active"}' '{"id":1,"username":"me","name":"Me Myself","state":"active"}' '{"id":9,"username":"project_1_bot_x","name":"bot","state":"active"}')")
+    if [ -n "\$q" ]; then q=\$(printf "\$(printf '%s' "\$q" | sed 's/%/\\\\x/g')"); printf '%s\n' "\$all" | grep -i -- "\$q" || true; else printf '%s\n' "\$all"; fi ;;
+  "api --output") val glab-history "" ;;
   "mr note") shift 2; printf '%s\n' "\$@" > "\$d/glab-note.argv" ;;
   "api projects/:id/merge_requests/99/approvals") val glab-approvals '{"approved":true,"approvals_required":0,"approved_by":[]}' ;;
   "api projects/:id")
@@ -6669,6 +6693,218 @@ test_task_land_reads_an_approval_without_a_review_rule() {
   run jig task ship T-1 --message-file msg.txt
   assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" "landed https://github.com/example/example/pull/99 on staging (merged on the forge)"
+}
+
+# --- every requested reviewer, and requesting them (approval-waits-for-every-reviewer)
+
+# One reviewer approved, the other the pull request still asks has not
+# answered: not approved, and the person is told who is waited for. The ship
+# asked for both when it opened the pull request, by login and by name.
+test_task_land_waits_for_every_requested_reviewer() {
+  sship_setup merge
+  printf '|APPROVED|bob\n' > gh-review
+
+  run jig task ship T-1 --message-file msg.txt --reviewer alice --reviewer 'Bob S'
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$(cat gh-create.argv)" "$(printf -- '--reviewer\nalice,bob')"
+  assert_contains "$OUT" "task ship: --reviewer Bob S: bob"
+  assert_contains "$OUT" "task ship: review requested from alice, bob"
+  assert_contains "$OUT" "is not approved (waiting for bob). Ask the person"
+  assert_no_file gh-merge.argv
+
+  # Branch protection's decision does not end the wait either.
+  printf 'APPROVED|APPROVED|bob\n' > gh-review
+  run jig task land T-1
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "is not approved (waiting for bob)"
+
+  # Changes requested win over a pending request.
+  printf '|CHANGES_REQUESTED|bob\n' > gh-review
+  run jig task land T-1
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "is not approved (changes requested)"
+
+  printf '|APPROVED,APPROVED|\n' > gh-review
+  run jig task land T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "landed https://github.com/example/example/pull/99 on staging (merged on the forge)"
+}
+
+# A name that fits several people, a team, nobody: refused before anything
+# leaves the machine; the commit stays for the next run.
+test_task_ship_reviewer_refuses_a_name_that_is_not_one_person() {
+  sship_setup merge
+
+  run jig task ship T-1 --message-file msg.txt --reviewer sikora
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: --reviewer sikora matches several people: bob (Bob Sikora), carol (Carol Sikora); name one of them by login"
+  assert_no_file gh-create.argv
+  assert_eq "" "$(git ls-remote origin refs/heads/task/T-1)"
+
+  run jig task ship T-1 --message-file msg.txt --reviewer acme/reviewers
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "a team is not asked for a review, only people: name each of them"
+
+  run jig task ship T-1 --message-file msg.txt --reviewer zed
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: --reviewer zed: nobody this repository may ask for a review matches it; give the login"
+  assert_no_file gh-create.argv
+}
+
+# The account that opens the pull request is its author: never asked to
+# review it, and said; a login named twice is asked once.
+test_task_ship_reviewer_leaves_out_the_author() {
+  mship_setup github
+
+  run jig task ship T-1 --message-file msg.txt --reviewer @me --reviewer alice --reviewer Alice
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: --reviewer @me: me opens the pull request, and its author is not asked to review it"
+  assert_contains "$(cat gh-create.argv)" "$(printf -- '--reviewer\nalice\n')"
+}
+
+# Where the ship opens no pull request, nobody is asked, and it says so.
+test_task_ship_reviewer_below_pr_asks_nobody() {
+  ship_setup_forge
+  ship_stage_change
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_cfg_local agent.git push
+
+  run jig task ship T-1 --message-file msg.txt --reviewer alice
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: --reviewer: nobody was asked for a review: this ship opens no pull request at this level"
+  assert_not_contains "$(cat gh.log 2>/dev/null || true)" "graphql"
+}
+
+# A pull request already open, CI landing on staging, no forge: nobody is
+# asked, and the ship says why.
+test_task_ship_reviewer_says_when_nobody_is_asked() {
+  mship_setup github
+  printf 'https://github.com/example/example/pull/7\n' > gh-existing
+  run jig task ship T-1 --message-file msg.txt --reviewer alice
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: no review requested from alice: the pull request was already open, and reviewers are requested only when the ship opens it"
+}
+
+test_task_ship_reviewer_asks_nobody_when_ci_lands() {
+  sship_setup merge 'git.flow: staging
+git.staging_branch: staging
+git.staging_land: external'
+  run jig task ship T-1 --message-file msg.txt --reviewer alice
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: --reviewer: nobody was asked for a review: git.staging_land is external, so no pull request is opened"
+}
+
+test_task_ship_reviewer_without_a_forge_asks_nobody() {
+  mship_setup github
+  ship_cfg forge none
+  git add .ai/config.yaml
+  run jig task ship T-1 --message-file msg.txt --reviewer alice
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: --reviewer: nobody was asked for a review: no forge available, so the pull request is the human's"
+}
+
+# GitLab: the merge request names its reviewers; one without an approval is
+# waited for, and so are approval rules that want more.
+test_task_land_gitlab_waits_for_every_requested_reviewer() {
+  sship_setup merge
+  ship_cfg forge gitlab
+  git add .ai/config.yaml
+  mship_stub_glab
+  printf '{"approvals_left":0,"approved_by":[{"user":{"id":2,"username":"alice"}}]}\n' > glab-approvals
+  printf '[{"id":2,"username":"alice"},{"id":3,"username":"bob"}]\n' > glab-reviewers
+
+  run jig task ship T-1 --message-file msg.txt --reviewer alice --reviewer 'Bob'
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$(cat glab-create.argv)" "$(printf -- '--reviewer\nalice,bob')"
+  assert_contains "$OUT" "is not approved (waiting for bob). Ask the person"
+
+  # A `]` in a name does not end the list early.
+  printf '[{"id":2,"username":"alice","name":"Alice [QA]"},{"id":3,"username":"bob","name":"Bob"}]\n' > glab-reviewers
+  run jig task land T-1
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "is not approved (waiting for bob)"
+
+  printf '[{"id":2,"username":"alice"}]\n' > glab-reviewers
+  printf '{"approvals_left":1,"approved_by":[{"user":{"id":2,"username":"alice"}}]}\n' > glab-approvals
+  run jig task land T-1
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "is not approved (waiting for more approvals)"
+
+  printf '{"approvals_left":0,"approved_by":[{"user":{"id":2,"username":"alice"}}]}\n' > glab-approvals
+  run jig task land T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "landed https://gitlab.example/example/example/-/merge_requests/99 on staging (merged on the forge)"
+}
+
+# `jig pr reviewers`: who reviewed the last merged pull requests into the
+# staging branch, most frequent first — never the author, a bot or someone the
+# repository may no longer ask — and everyone it may ask without that history.
+test_pr_reviewers_lists_recent_reviewers_then_everyone() {
+  sship_setup merge
+  printf 'alice\nbob\nalice\nme\ndependabot[bot]\ngone\n' > gh-history
+
+  run jig pr reviewers
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "reviewers of the last merged pull requests into staging, most frequent first:"
+  assert_contains "$OUT" "$(printf '  alice (Alice Smith) — 2 review(s)\n  bob (Bob Sikora) — 1 review(s)')"
+  assert_not_contains "$OUT" "dependabot"
+  assert_not_contains "$OUT" "gone"
+  assert_contains "$(cat gh.log)" "pr list --base staging --state merged --limit 30"
+
+  run jig pr reviewers --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"data":{"base":"staging","source":"history","author":"me","candidates":[{"login":"alice","name":"Alice Smith","reviews":2},{"login":"bob","name":"Bob Sikora","reviews":1}]}}'
+
+  rm gh-history
+  run jig pr reviewers --base main --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"data":{"base":"main","source":"assignable","author":"me","candidates":[{"login":"alice","name":"Alice Smith","reviews":null},{"login":"bob","name":"Bob Sikora","reviews":null},{"login":"carol","name":"Carol Sikora","reviews":null}]}}'
+}
+
+test_pr_reviewers_reads_gitlab() {
+  sship_setup merge
+  ship_cfg forge gitlab
+  mship_stub_glab
+  printf '%s\n' '{"iid":1,"author":{"id":2,"username":"alice"},"reviewers":[{"id":3,"username":"bob"},{"id":2,"username":"alice"}]}' \
+    '{"iid":2,"author":{"id":1,"username":"me"},"reviewers":[{"id":3,"username":"bob"},{"id":4,"username":"carol"}]}' > glab-history
+
+  run jig pr reviewers --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"candidates":[{"login":"bob","name":"Bob Sikora","reviews":2},{"login":"carol","name":"Carol Sikora","reviews":1}]'
+  assert_contains "$(cat glab.log)" "merge_requests?state=merged&per_page=30&target_branch=%73%74%61%67%69%6e%67"
+}
+
+# What the commands are not given: refused before anything is asked.
+test_task_ship_reviewer_and_pr_reviewers_refuse_missing_values() {
+  sship_setup merge
+
+  run jig task ship T-1 --message-file msg.txt --reviewer
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: --reviewer requires a value"
+
+  run jig task ship T-1 --message-file msg.txt --reviewer @
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: --reviewer needs a login or a name"
+
+  run jig pr reviewers --base --json
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" '"error":{"code":"usage","message":"pr reviewers: --base requires a value"}'
+
+  run jig pr reviewers --bogus --json
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" '"error":{"code":"usage","message":"pr reviewers: unknown argument: --bogus;'
+  assert_no_file gh-create.argv
+}
+
+# Without a forge the read is refused, as an envelope with its own code.
+test_pr_reviewers_without_a_forge_is_forge_unavailable() {
+  sship_setup merge
+  ship_cfg forge none
+
+  run jig pr reviewers --json
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" '"error":{"code":"forge-unavailable","message":"pr reviewers: the forge could not be asked: no forge configured (forge: none)"}'
 }
 
 # AC-05: nobody answers in an unattended run, and `require` always waits.

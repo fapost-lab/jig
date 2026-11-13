@@ -48,7 +48,11 @@ the merge on the forge, the direct merge in a temporary tree, the unforced push
 (adr-20261111-a-task-lands-on-staging-through-its-pull-request), tested in `tests/task.t.sh` with the
 ship it ends. `lib/prgitlab.sh` is the same for `jig pr`: the GitLab half of it (glab and its
 account, the merge request, its diff, the read-back and the post) is sourced by `lib/pr.sh` alone
-and tested through `tests/pr.t.sh`. `lib/promote.sh` ("prepare for prod": `jig task promote`, with
+and tested through `tests/pr.t.sh`. `lib/reviewers.sh` is shared by two commands, `pr` and
+`task`: who may review a pull request this clone opens, read from the forge — `jig pr reviewers`
+lists the candidates, `jig task ship --reviewer` resolves a name to one login before the push
+(adr-20261113-reviewers-are-read-from-the-forge); it is tested in `tests/task.t.sh` with the ship
+and the landing whose approval waits for those reviewers. `lib/promote.sh` ("prepare for prod": `jig task promote`, with
 `tests/promote.t.sh`) follows the same rule; it reads a task's staging state through common.sh's
 `jig_staging_branch_problems` and `jig_staging_states` and never recomputes them.
 `jig_staging_branch_problems` and `jig_branch_carries_staging` answer the same question — is this a

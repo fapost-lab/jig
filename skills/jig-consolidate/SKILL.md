@@ -176,6 +176,13 @@ workspace and not in a shared directory), and run:
 .ai/scripts/jig task ship <id> --message-file <the path it printed>
 ```
 
+On the staging flow, when `git.staging_review` is `ask` or `require` and the person has not named
+reviewers for this task, run `jig pr reviewers` and ask them one question: who should review, with
+the first three or four people it lists as options and "nobody". Pass each person they name as
+`--reviewer`: the listed login their words plainly point to, else their words as given (the forge
+matches a part of a login or name); a name that fits several people is refused with the matches —
+ask which one. An unattended run asks nothing and passes none.
+
 It commits, pushes and opens the pull request into the task's base as far as this clone allows —
 `agent.git`, or `autopilot.git` for a task in an autopilot run — names the key on its
 `git level` line, and says where it stopped. At `merge` it then waits for CI and prints

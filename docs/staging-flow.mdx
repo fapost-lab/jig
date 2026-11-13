@@ -106,7 +106,19 @@ agent, when you ask) land it later with `jig task land <id>`.
 
 - **Review first**, as `git.staging_review` says. With `ask`, a pull request nobody approved stops
   (exit 3) and your agent asks you: land without review — `jig task land <id> --without-review`,
-  which also says so on the pull request — or wait. An autopilot run always waits.
+  which also says so on the pull request — or wait. An autopilot run always waits. A pull request
+  is approved only once **every** reviewer it asks has answered: one approval while another
+  requested reviewer has not looked reads `not approved (waiting for bob)`, and changes requested by
+  anyone win over everything. On GitHub a reviewer who only commented counts as answered, as GitHub
+  itself counts it; on GitLab a reviewer counts once they approved, and approval rules that want
+  more approvals wait too.
+- **Who reviews** is chosen for each task, never kept in a setting. Before the ship your agent asks
+  you one question with the three or four people who reviewed most of the recent pull requests into
+  staging (`jig pr reviewers` lists them; with no such history, everyone the repository may ask),
+  and the ship requests them on the pull request it opens: `jig task ship <id> --reviewer alice
+  --reviewer "Sikora"`. A name resolves to one login among the people the repository may ask, or is
+  refused naming the matches; teams are refused — one member's review would clear a team — and you,
+  the pull request's author, are left out. An autopilot run asks nothing and requests nobody.
 - **Merged on the forge** when it merges cleanly: with a merge commit, and only on green CI. A red
   check or a refusal from the forge leaves it open: `not landed: <why>`.
 - **Merged directly only when it conflicts.** Jig merges the task into a temporary copy of the

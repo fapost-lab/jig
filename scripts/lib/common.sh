@@ -3301,18 +3301,21 @@ $out"
 }
 
 # jig_ship_pr <who> <head> <base> <message-file> [<title>] [<body-file>] [<draft>]
-# [<match-base>] — open a pull request from <head> into <base> through
+# [<match-base>] [<reviewers>] — open a pull request from <head> into <base> through
 # whichever forge this checkout uses (jig_forge_kind), or report the one
 # already open from <head> rather than opening a second. With <match-base> 1
 # only one open from <head> into <base> counts: "prepare for prod" must not
 # take a task's open pull request into the staging branch for its promotion
 # (adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone). The title defaults to the message's first
-# line, the body to the rest of it; <draft> 1 opens it as a draft. With no
+# line, the body to the rest of it; <draft> 1 opens it as a draft. <reviewers>,
+# logins comma-separated and already resolved (lib/reviewers.sh), are requested
+# on the pull request this call opens, never on one it finds open: adding them
+# there is another command's. With no
 # usable forge it says the pull request is the human's and returns 0. Leaves
 # the URL in JIG_SHIP_URL, so it is called directly, never in `$()`.
 # shellcheck disable=SC2034 # JIG_SHIP_URL is read by the caller
 jig_ship_pr() {
-  local who="$1" head="$2" base="$3" message_file="$4" title="${5:-}" body_file="${6:-}" draft="${7:-0}" match="${8:-0}" kind
+  local who="$1" head="$2" base="$3" message_file="$4" title="${5:-}" body_file="${6:-}" draft="${7:-0}" match="${8:-0}" reviewers="${9:-}" kind
   _jig_ship_outward "$who"
   JIG_SHIP_URL=""
   kind=$(jig_forge_kind) || exit 1
@@ -3330,18 +3333,20 @@ jig_ship_pr() {
   case "$kind" in
     github)
       jig_gh_require "$who"
-      _jig_ship_pr_github "$who" "$head" "$base" "$title" "$body_file" "$draft" "$match"
+      _jig_ship_pr_github "$who" "$head" "$base" "$title" "$body_file" "$draft" "$match" "$reviewers"
       ;;
-    gitlab) _jig_ship_pr_gitlab "$who" "$head" "$base" "$title" "$body_file" "$draft" "$match" ;;
+    gitlab) _jig_ship_pr_gitlab "$who" "$head" "$base" "$title" "$body_file" "$draft" "$match" "$reviewers" ;;
   esac
 }
 
 # _jig_ship_pr_github <who> <head> <base> <title> <body-file> <draft> <match-base>
+# [<reviewers>]
 # shellcheck disable=SC2034 # JIG_SHIP_URL is read by the caller
 _jig_ship_pr_github() {
-  local who="$1" head="$2" base="$3" title="$4" body_file="$5" draft="$6" match="${7:-0}" url out
+  local who="$1" head="$2" base="$3" title="$4" body_file="$5" draft="$6" match="${7:-0}" reviewers="${8:-}" url out
   local extra="" only=""
   [ "$draft" != 1 ] || extra="--draft"
+  [ -z "$reviewers" ] || extra="$extra --reviewer $reviewers"
   [ "$match" != 1 ] || only="--base"
   # shellcheck disable=SC2086 # $only is one flag or nothing, its value follows
   url=$(jig_net jig_gh pr list --head "$head" ${only:+$only "$base"} --state open --json url --jq '.[0].url' 2>/dev/null || printf '')
@@ -3349,9 +3354,10 @@ _jig_ship_pr_github() {
   if [ -n "$url" ]; then
     JIG_SHIP_URL="$url"
     printf 'pr %s (already open)\n' "$url"
+    _jig_ship_pr_reviewers_not_added "$who" "$reviewers"
     return 0
   fi
-  # shellcheck disable=SC2086 # $extra is one flag or nothing
+  # shellcheck disable=SC2086 # $extra is flags without spaces in their values
   out=$(jig_net jig_gh pr create --base "$base" --head "$head" --title "$title" --body-file "$body_file" $extra 2>&1) \
     || jig_die "$who: gh pr create failed:
 $out
@@ -3359,32 +3365,44 @@ $(jig_gh_asked_as)"
   url=$(printf '%s\n' "$out" | tail -n 1)
   JIG_SHIP_URL="$url"
   printf 'pr %s\n' "$url"
+  [ -z "$reviewers" ] || printf '%s: review requested from %s\n' "$who" "$(printf '%s' "$reviewers" | sed 's/,/, /g')"
+}
+
+# _jig_ship_pr_reviewers_not_added <who> <reviewers> — say so when reviewers
+# were named for a pull request that was already open: they are requested only
+# on one this ship opens.
+_jig_ship_pr_reviewers_not_added() {
+  [ -n "$2" ] || return 0
+  printf '%s: no review requested from %s: the pull request was already open, and reviewers are requested only when the ship opens it\n' "$1" "$(printf '%s' "$2" | sed 's/,/, /g')"
 }
 
 # _jig_ship_pr_gitlab <who> <head> <base> <title> <body-file> <draft>
-# <match-base> — the same through `glab`, whose JSON is read by
+# <match-base> [<reviewers>] — the same through `glab`, whose JSON is read by
 # jig_glab_fields, the reader housekeeping uses.
 # shellcheck disable=SC2034 # JIG_SHIP_URL is read by the caller
 _jig_ship_pr_gitlab() {
-  local who="$1" head="$2" base="$3" title="$4" body_file="$5" draft="$6" match="${7:-0}" out url desc
+  local who="$1" head="$2" base="$3" title="$4" body_file="$5" draft="$6" match="${7:-0}" reviewers="${8:-}" out url desc
   local extra="" only=""
   [ "$draft" != 1 ] || extra="--draft"
+  [ -z "$reviewers" ] || extra="$extra --reviewer $reviewers"
   [ "$match" != 1 ] || only="--target-branch"
   out=$(jig_net glab mr list --source-branch "$head" ${only:+$only "$base"} --output json 2>/dev/null || printf '')
   url=$(printf '%s' "$out" | jig_glab_fields web_url | head -n 1)
   if [ -n "$url" ]; then
     JIG_SHIP_URL="$url"
     printf 'pr %s (already open)\n' "$url"
+    _jig_ship_pr_reviewers_not_added "$who" "$reviewers"
     return 0
   fi
   desc=$(cat "$body_file")
-  # shellcheck disable=SC2086 # $extra is one flag or nothing
+  # shellcheck disable=SC2086 # $extra is flags without spaces in their values
   out=$(jig_net glab mr create --target-branch "$base" --source-branch "$head" --title "$title" --description "$desc" $extra 2>&1) \
     || jig_die "$who: glab mr create failed:
 $out"
   url=$(printf '%s\n' "$out" | grep -oE 'https://[^[:space:]]+' | tail -n 1)
   JIG_SHIP_URL="$url"
   printf 'pr %s\n' "${url:-$out}"
+  [ -z "$reviewers" ] || printf '%s: review requested from %s\n' "$who" "$(printf '%s' "$reviewers" | sed 's/,/, /g')"
 }
 
 # --- merging a shipped pull request ----------------------------------------------
@@ -3820,48 +3838,129 @@ _jig_pr_state_no_forge() {
 # (adr-20261110-a-clone-names-its-github-account); the caller resolves it first,
 # in its own shell (land_task: jig_gh_require), since these run in `$()`.
 
-# jig_pr_approval <url> — approved|changes|none|unknown: whether somebody
-# approved the pull request. GitHub: `reviewDecision` when branch protection
-# asks for reviews; when it does not, the decision is empty even for an
-# approved pull request, so the latest review of each reviewer decides —
-# changes requested by anyone wins over an approval. GitLab: who approved
-# (`approved_by`), never `approved`, which is true with no approval at all
-# when the project requires none.
+# jig_pr_approval <url> — approved|changes|waiting|none|unknown: whether the
+# pull request is approved, as jig_pr_approval_v reads it. One word, for a
+# caller that needs no names.
 jig_pr_approval() {
-  local url="$1" kind out decision reviews iid
-  [ -n "$url" ] || { printf 'unknown\n'; return 0; }
-  kind=$(jig_forge_kind) || exit 1
-  case "$kind" in
-    github)
-      out=$(jig_net jig_gh pr view "$url" --json reviewDecision,latestReviews \
-        --jq '"\(.reviewDecision // "")|\([.latestReviews[]?.state] | join(","))"' 2>/dev/null) \
-        || { printf 'unknown\n'; return 0; }
-      decision=${out%%|*}
-      reviews=${out#*|}
-      case "$decision" in
-        APPROVED) printf 'approved\n' ;;
-        CHANGES_REQUESTED) printf 'changes\n' ;;
-        REVIEW_REQUIRED) printf 'none\n' ;;
-        '' | null)
-          case ",$reviews," in
-            *,CHANGES_REQUESTED,*) printf 'changes\n' ;;
-            *,APPROVED,*) printf 'approved\n' ;;
-            *) printf 'none\n' ;;
-          esac ;;
-        *) printf 'unknown\n' ;;
-      esac ;;
-    gitlab)
-      iid=$(_jig_ship_glab_mr "$url")
-      [ -n "$iid" ] || { printf 'unknown\n'; return 0; }
-      out=$(jig_net glab api "projects/:id/merge_requests/$iid/approvals" 2>/dev/null | tr -d ' \n') \
-        || { printf 'unknown\n'; return 0; }
-      case "$out" in
-        *'"approved_by":[]'*) printf 'none\n' ;;
-        *'"approved_by":[{'*) printf 'approved\n' ;;
-        *) printf 'unknown\n' ;;
-      esac ;;
-    *) printf 'unknown\n' ;;
-  esac
+  local __jpa_state __jpa_pending
+  jig_pr_approval_v __jpa_state __jpa_pending "$1"
+  printf '%s\n' "$__jpa_state"
+}
+
+# jig_pr_approval_v <state-var> <pending-var> <url> — whether the pull request
+# is approved, into <state-var>: `changes` when anybody's latest review asks for
+# changes, whatever else holds; `waiting` when a reviewer the forge records as
+# requested has not answered yet — added by `jig task ship --reviewer` or by
+# hand — or, on GitLab, approval rules still want more approvals; `approved`
+# when somebody approved and nobody is waited for; `none` when nobody approved;
+# `unknown` when the forge cannot say. <pending-var> gets who is waited for,
+# comma-separated, empty when the forge names nobody.
+# GitHub: `reviewDecision` when branch protection asks for reviews; when it
+# does not, the decision is empty even for an approved pull request, so the
+# latest review of each reviewer decides. A pending `reviewRequests` entry —
+# a person, or a team nobody of which answered — is `waiting` even under an
+# `APPROVED` decision. GitHub drops a request once its reviewer submits any
+# review, a comment included: that is what "answered" means there.
+# GitLab: who approved (`approved_by`), never `approved`, which is true with no
+# approval at all when the project requires none; the merge request's
+# `reviewers` who are not among them, and `approvals_left`.
+# Run in the caller's shell, never in `$(...)`: on GitHub the caller has
+# resolved this clone's account first (jig_gh_require).
+jig_pr_approval_v() {
+  local __jpav_s="unknown" __jpav_p="" __jpav_url="$3" __jpav_kind __jpav_out __jpav_dec
+  local __jpav_reviews __jpav_rest __jpav_iid __jpav_by __jpav_rv __jpav_left __jpav_r
+  if [ -n "$__jpav_url" ]; then
+    __jpav_kind=$(jig_forge_kind) || exit 1
+    case "$__jpav_kind" in
+      github)
+        if __jpav_out=$(jig_net jig_gh pr view "$__jpav_url" --json reviewDecision,latestReviews,reviewRequests \
+          --jq '"\(.reviewDecision // "")|\([.latestReviews[]?.state] | join(","))|\([.reviewRequests[]? | (if .login then .login elif .slug then .slug else .name end) | select(. != null)] | join(","))"' 2>/dev/null); then
+          __jpav_out=${__jpav_out%%$'\n'*}
+          __jpav_out=${__jpav_out%$'\r'}
+          __jpav_dec=${__jpav_out%%|*}
+          __jpav_rest=${__jpav_out#*|}
+          __jpav_reviews=${__jpav_rest%%|*}
+          __jpav_p=""
+          [ "$__jpav_rest" = "$__jpav_reviews" ] || __jpav_p=${__jpav_rest#*|}
+          case "$__jpav_dec" in
+            APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED | '' | null)
+              if [ "$__jpav_dec" = CHANGES_REQUESTED ]; then
+                __jpav_s=changes
+              elif [ "$__jpav_dec" != APPROVED ] && [ "$__jpav_dec" != REVIEW_REQUIRED ] \
+                && case ",$__jpav_reviews," in *,CHANGES_REQUESTED,*) true ;; *) false ;; esac; then
+                __jpav_s=changes
+              elif [ -n "$__jpav_p" ]; then
+                __jpav_s=waiting
+              elif [ "$__jpav_dec" = APPROVED ]; then
+                __jpav_s=approved
+              elif [ "$__jpav_dec" = REVIEW_REQUIRED ]; then
+                __jpav_s=none
+              else
+                case ",$__jpav_reviews," in
+                  *,APPROVED,*) __jpav_s=approved ;;
+                  *) __jpav_s=none ;;
+                esac
+              fi ;;
+          esac
+        fi ;;
+      gitlab)
+        __jpav_iid=$(_jig_ship_glab_mr "$__jpav_url")
+        if [ -n "$__jpav_iid" ] \
+          && __jpav_out=$(jig_net glab api "projects/:id/merge_requests/$__jpav_iid/approvals" 2>/dev/null | tr -d ' \n\r') \
+          && case "$__jpav_out" in *'"approved_by":['*) true ;; *) false ;; esac \
+          && __jpav_rv=$(jig_net glab mr view "$__jpav_iid" --output json 2>/dev/null | tr -d ' \n\r'); then
+          __jpav_by=$(_jig_pr_usernames "$__jpav_out" approved_by)
+          __jpav_left=$(printf '%s' "$__jpav_out" | sed -n 's/.*"approvals_left":\([0-9][0-9]*\).*/\1/p')
+          for __jpav_r in $(_jig_pr_usernames "$__jpav_rv" reviewers); do
+            case " $__jpav_by " in
+              *" $__jpav_r "*) ;;
+              *) __jpav_p="${__jpav_p:+$__jpav_p,}$__jpav_r" ;;
+            esac
+          done
+          case "$__jpav_out" in
+            *'"approved_by":[]'*) __jpav_s=none ;;
+            *) __jpav_s=approved ;;
+          esac
+          if [ -n "$__jpav_p" ]; then
+            __jpav_s=waiting
+          elif [ "$__jpav_s" = approved ] && [ "${__jpav_left:-0}" -gt 0 ]; then
+            __jpav_s=waiting
+          fi
+        fi ;;
+    esac
+  fi
+  [ "$__jpav_s" = waiting ] || __jpav_p=""
+  printf -v "$1" '%s' "$__jpav_s"
+  printf -v "$2" '%s' "$__jpav_p"
+}
+
+# _jig_pr_usernames <json> <key> — the `username` values inside the array
+# <json> holds under <key>, space-separated: GitLab's `approved_by` (each
+# `{"user":{...}}`) and `reviewers`. The array is walked to its own closing
+# `]`, strings skipped with their escapes, so a `]` in a person's name never
+# ends it early; the author's `username`, outside it, is never read. Inside a
+# string a quote is escaped, so `"username":"` matches only a real key.
+_jig_pr_usernames() {
+  printf '%s' "$1" | awk -v key="\"$2\":[" '
+    {
+      s = s $0
+    }
+    END {
+      i = index(s, key)
+      if (!i) exit
+      p = i + length(key); depth = 1; ins = 0; out = ""
+      while (p <= length(s) && depth > 0) {
+        c = substr(s, p, 1)
+        if (ins) {
+          if (c == "\\") { out = out c substr(s, p + 1, 1); p += 2; continue }
+          if (c == "\"") ins = 0
+        } else if (c == "\"") ins = 1
+        else if (c == "[") depth++
+        else if (c == "]") { depth--; if (!depth) break }
+        out = out c; p++
+      }
+      print out
+    }' | grep -o '"username":"[^"]*"' | sed 's/^"username":"//; s/"$//' | tr '\n' ' ' || true
 }
 
 # _jig_pr_mergeable_once <kind> <url> — clean|conflict|draft|unknown, one look.

@@ -12,7 +12,7 @@ paths:
   - scripts/lib/task.sh
   - schemas/json.md
 summary: Why every --json read is one envelope line built by json.sh around a producer run in a subshell, why revision is null and error.code failed for now, and why housekeeping flags are read through the shared hklog.sh.
-reviewed_at: 2026-10-16
+reviewed_at: 2026-11-13
 ---
 # A `--json` read prints one envelope, built by json.sh around a producer run in a subshell
 
@@ -22,7 +22,8 @@ A program that wants Jig's state — Jig UI, CI, a bot, an agent choosing work �
 written for a person. The contract-extensions spec settled the outer shape with the maintainer
 (2026-10-14): one envelope for every command, `{"schema": 1, "revision": …, "generated_at": …,
 "data": …}`, with `"error": {"code": …, "message": …}` in place of `data` on a refusal; `schema`
-raised only on an incompatible change; reading never touches the network. `jig task list --json`
+raised only on an incompatible change; reading never touches the network (amended 2026-11-13: but
+`jig pr reviewers --json`, whose subject is the forge — adr-20261113-reviewers-are-read-from-the-forge). `jig task list --json`
 is the first command to print it, and six more items of the same phase reuse it.
 
 What was left open, and is decided here: who writes the JSON, how a refusal becomes an envelope,
