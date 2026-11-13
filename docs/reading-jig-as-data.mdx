@@ -194,7 +194,7 @@ buttons without knowing Jig's rules. Every task carries the same sixteen actions
 
 | `id` | What it does |
 |---|---|
-| `start` | Start a task that was filed for later; refused for a T3 or T4 task whose `task.md` has no goal |
+| `start` | Start a task that was filed for later; refused for a T3 or T4 task whose `task.md` has no goal. Its command carries `--out-of-order --reason <text>` when the queue advises another task the plain start would be refused for |
 | `pause`, `resume` | Set the task aside, and pick it up again |
 | `request-pause`, `cancel-pause-request` | Ask a running task to pause when it finishes its current stage, and take the request back; a task nobody started is not offered a request, since no stage of it would take one — pause it with `pause` |
 | `approve-gate` | Approve the design of a T3 or T4 task waiting at its gate |
@@ -301,7 +301,7 @@ commits there that no task holds, with `"staging": {"commits", "list", "ack"}` �
 of them, and `jig staging ack --expect <count>`, the command that marks them as known (it refuses when the
 count moved since your read); `promotion-conflicting`, with the same `pull_request` as an upgrade's —
 [the staging drift report](/manual-control#the-staging-drift-report)), what housekeeping flagged (`needs-consolidation`, `wrong-base`,
-`closed-unmerged`, `worktree-kept`), knowledge to decide (`knowledge-proposed`, `sources-changed`)
+`closed-unmerged`, `worktree-kept`), a task started against the queue's advice (`started-out-of-order`), knowledge to decide (`knowledge-proposed`, `sources-changed`)
 a newer jig (`release-available`), and a project whose own Jig is older than the one on your machine
 (`upgrade-available` — the item a program lists to show which projects need `jig upgrade`; it alone
 carries `"versions": {"from": "0.32.0", "to": "0.33.0"}`, the project's Jig and your machine's),
@@ -377,17 +377,17 @@ reads the queue, the tasks' state and the last `jig housekeeping` run, never the
 changes nothing:
 
 ```json
-{"schema":1,"revision":1792693064,"generated_at":"2026-10-22T18:17:22Z","data":{"next":{"ref":"task:booking-form","kind":"task","id":"booking-form","level":null,"position":100,"priority":1,"started":true},"reason":null,"waiting":[{"ref":"task:booking-message","on":"task:booking-form","state":"unknown","reason":"The message quotes the form"}],"taken":[],"not_queued":1}}
+{"schema":1,"revision":1794604700,"generated_at":"2026-11-13T21:17:53Z","data":{"next":{"ref":"task:booking-form","kind":"task","id":"booking-form","level":null,"position":100,"priority":1,"started":false},"reason":null,"waiting":[{"ref":"task:booking-message","on":"task:booking-form","state":"unknown","reason":"The message quotes the form"}],"taken":[],"in_progress":[{"ref":"task:booking-export","id":"booking-export","priority":2}],"not_queued":1}}
 ```
 
-`next` is the task to take, or `null` with a `reason` (`waiting`, `taken`, `paused` or `empty`)
+`next` is the task to take, or `null` with a `reason` (`waiting`, `taken`, `in_progress`, `paused` or `empty`)
 when there is none. `taken` lists each candidate another session is working on, with the
 `checkout` it works in, `since` when, `idle_seconds` since it was last active and the `command`, the
 words of the Jig command it last ran; such a task is never advised. Each of `checkout`, `since` and
 `command` is `null` when the note of that session does not hold it. `waiting` lists each dependency
 that holds a candidate back, in `state` `open`, `broken`
-(it never ends; drop it with `jig queue undepend`) or `unknown`. `not_queued` counts the active
-tasks outside the queue. The fields are in [the schema](https://github.com/fapost-lab/jig/blob/main/schemas/json.md).
+(it never ends; drop it with `jig queue undepend`) or `unknown`. `in_progress` lists the queued tasks already started, which are never advised (`next.started` is
+always `false`). `not_queued` counts the active tasks outside the queue. The fields are in [the schema](https://github.com/fapost-lab/jig/blob/main/schemas/json.md).
 
 ## Changing the queue
 

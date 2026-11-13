@@ -432,6 +432,9 @@ asks [`jig queue next`](/manual-control#order-the-work) which task to take:
   T3 or T4 task to approve that task's design itself.
 - A task the queue names as taken by another session is never started, even one from your list;
   the agent names it when it hands back.
+- Once you have chosen, or the decision was made for you, a task the queue would not name is started
+  with `jig task start <id> --out-of-order --reason "<why>"`: without it `jig task start` refuses,
+  and the reason is shown by `jig status`.
 
 A [whole phase](#running-a-whole-phase) asks the queue the same way before starting each of its
 tasks.

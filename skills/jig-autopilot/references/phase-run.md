@@ -72,7 +72,9 @@ Before each start, ask `jig queue next` as `jig-autopilot` §7 says: a higher-pr
 outside the phase holds the start, so a release's notes task gets its number first (`jig-release`
 §5) — attended, a question for the message of step 4; unattended,
 the wave in flight finishes and nothing new starts — and either way it is a stop recorded with
-`jig spec stop`. A task the queue names as taken by another session is never started.
+`jig spec stop`. A task the queue names as taken by another session is never started. A wave's
+task the queue would not name is started with `jig task start <id> --worktree --out-of-order
+--reason "phase <spec>/<n>"`; the plain start is refused.
 
 Then start a background subagent with the prompt below — a subagent of your runtime, never a
 separate session of the app (`jig-autopilot` §2 says why). A slot is held by an agent still

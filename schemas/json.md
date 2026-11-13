@@ -183,7 +183,7 @@ What a person may do next with a task, as Jig decides it from the task's state
 
 | `id` | `command` | Offered when |
 |---|---|---|
-| `start` | `jig task start <id>` | the task has not been started |
+| `start` | `jig task start <id>`, or `jig task start <id> --out-of-order --reason <text>` when `jig queue next` advises another queued task the one to start outranks this one (the command would refuse the plain form: the reason says which task first in the queue and what to do) | the task has not been started |
 | `pause` | `jig task pause <id>` | it is not paused |
 | `resume` | `jig task resume <id>` | it is paused, or parked at the staging branch (`parked` is not `null`) |
 | `request-pause` | `jig queue request task:<id> pause` | it is not paused, no pause of it is requested, and it has been started: a task nobody started enters no stage, so no stage would take the request, and the reason sends the person to `pause` (the command still takes it) |
@@ -501,6 +501,7 @@ The kinds, in the order they are listed:
 | `wrong-base` | task | the work landed on another branch than planned |
 | `closed-unmerged` | task | the pull request was closed without merging (housekeeping's `abandoned?`) |
 | `worktree-kept` | task | a worktree was kept because it still holds work |
+| `started-out-of-order` | task | a live (`active` or `ready`) task was started against the queue's answer with `jig task start <id> --out-of-order --reason <text>`; `detail` is `ahead of task:<other>: <reason>`, the task the queue advised and the reason given. It stands while the task is live; `todo` is to check the reason and, if it does not hold, pause the task and take the other (adr-20261022-the-next-task-is-advised-from-the-queue) |
 | `base-behind-origin` | project | the base branch here is behind `origin/<base>` (`origin.behind` > 0), as of the last fetch: what landed there — a merged task, a knowledge decision — is not in this checkout yet; `todo` is `jig refresh` |
 | `knowledge-proposed` | project | knowledge documents wait for a decision |
 | `sources-changed` | project | adopted source files changed since they were approved |
@@ -631,7 +632,7 @@ nothing: the queue file and the revision stay as they were. The producer's rules
 documentation's ("Order the work"); this is the shape.
 
 ```json
-{"next": {"ref": "task:booking-form", "kind": "task", "id": "booking-form", "level": null, "position": 100, "priority": 1, "started": true}, "reason": null, "waiting": [{"ref": "task:booking-message", "on": "task:booking-form", "state": "unknown", "reason": "The message quotes the form"}], "taken": [{"ref": "task:booking-report", "checkout": "/home/me/shop", "since": "2026-10-30T15:09:12Z", "idle_seconds": 960, "command": "task artifact write booking-report discovery --from notes.md"}], "not_queued": 1}
+{"next": {"ref": "task:booking-form", "kind": "task", "id": "booking-form", "level": null, "position": 100, "priority": 1, "started": false}, "reason": null, "waiting": [{"ref": "task:booking-message", "on": "task:booking-form", "state": "unknown", "reason": "The message quotes the form"}], "taken": [{"ref": "task:booking-report", "checkout": "/home/me/shop", "since": "2026-10-30T15:09:12Z", "idle_seconds": 960, "command": "task artifact write booking-report discovery --from notes.md"}], "in_progress": [{"ref": "task:booking-export", "id": "booking-export", "priority": 2}], "not_queued": 1}
 ```
 
 | Field | Type | Value |
@@ -641,8 +642,8 @@ documentation's ("Order the work"); this is the shape.
 | `next.level` | string or null | as `item.level` of a write: `epic:<spec-id>`, or `null` on the top level |
 | `next.position` | integer | its place within its level, as stored |
 | `next.priority` | integer or null | `0` to `5`; `null` when not set |
-| `next.started` | boolean | `true` when the task has its branch and base commit |
-| `reason` | string or null | `null` when `next` is set; otherwise why there is none: `waiting` (a candidate waits for a dependency), `taken` (the candidates left are taken by another session), `paused` (the queued tasks left are paused or have a pause request) or `empty` (nothing queued is a task to take), the first that holds in that order |
+| `next.started` | boolean | always `false`: kept for readers. A started task is never advised (it is listed in `in_progress`), so the task advised has no branch yet |
+| `reason` | string or null | `null` when `next` is set; otherwise why there is none: `waiting` (a candidate waits for a dependency), `taken` (the candidates left are taken by another session), `in_progress` (the candidates left are all started already), `paused` (the queued tasks left are paused or have a pause request) or `empty` (nothing queued is a task to take), the first that holds in that order |
 | `waiting` | array | every dependency not finished that holds back a candidate not taken by another session, each `{"ref", "on", "state", "reason"}`; `ref` is the one that waits as the queue stores it (a task, or the epic its tasks inherit the dependency from), `on` what it waits for, `reason` the reason given, `[]` for none |
 | `waiting[].state` | string | `open` (not done yet), `broken` (the target was abandoned, is archived or is gone, so the wait never ends: drop it with `jig queue undepend`) or `unknown` (nothing says; `jig housekeeping` may) |
 | `taken` | array | every candidate another session is working on, which is therefore not advised, each `{"ref", "checkout", "since", "idle_seconds", "command"}`; `[]` for none |
@@ -650,9 +651,10 @@ documentation's ("Order the work"); this is the shape.
 | `taken[].since` | string or null | when that session took the task, UTC; kept while its record is live |
 | `taken[].idle_seconds` | integer | seconds since that session last worked on the task |
 | `taken[].command` | string or null | the jig command it last ran on the task, without `jig` |
+| `in_progress` | array | every queued task that is `active`, not paused and not taken by another session and already has its branch and base commit, in queue order, each `{"ref", "id", "priority"}` (`priority` `0` to `5`, or `null`); never advised, since the advice is what to start. `[]` for none |
 | `not_queued` | integer | how many active, unpaused tasks have no item in the queue |
 
-A candidate is a queued task whose state is `active`, not paused and with no pause request. Tasks
+A candidate is a queued task whose state is `active`, not paused, with no pause request and not started yet. Tasks
 that are ready, closed, abandoned or gone, and epics, are never advised and never listed.
 `waiting` holds the dependencies of candidates only. A candidate is taken when the newest live record
 under `.ai/runtime/taken/<id>/` in the clone's main checkout belongs to a session other than the

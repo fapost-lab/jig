@@ -3292,6 +3292,171 @@ test_task_start_on_a_paused_task_says_how_to_resume() {
   assert_eq "true" "$(sed -n 's/^paused: //p' .ai/workspace/tasks/T-1/state)"
 }
 
+# --- start follows the queue (adr-20261022) ---------------------------------------
+
+# _ooo_queue — two filed tasks, T-1 at P2 and T-2 at P4 (so T-1 is first).
+_ooo_queue() {
+  jig task new T-1 >/dev/null
+  jig task new T-2 >/dev/null
+  jig queue set T-2 --priority 4 >/dev/null
+  jig queue set T-1 --priority 2 >/dev/null
+}
+
+test_task_start_refuses_a_task_another_one_outranks() {
+  task_setup_clean
+  _ooo_queue
+  run_split jig task start T-2
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" 'task start: first in the queue is task:T-1 (P2); to start T-2 instead: jig task start T-2 --out-of-order --reason "<why>"'
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-2/state)" "base_commit:"
+  # The first one starts, and so does the second once the first is in progress.
+  run_split jig task start T-1
+  assert_eq 0 "$RC" "$ERR"
+}
+
+test_task_start_names_a_first_task_with_no_priority() {
+  task_setup_clean
+  jig task new T-1 >/dev/null
+  jig task new T-2 >/dev/null
+  jig queue set T-1 --priority none >/dev/null
+  jig queue set T-2 --priority none >/dev/null
+  run_split jig task start T-2
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" 'first in the queue is task:T-1 (no priority); to start T-2 instead'
+}
+
+test_task_start_out_of_order_starts_and_records_the_task_and_the_reason() {
+  task_setup_clean
+  _ooo_queue
+  run_split jig task start T-2 --out-of-order --reason "T-1 waits for a review"$'\t'"answer"
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "task/T-2" "$(git symbolic-ref --short HEAD)"
+  assert_contains "$ERR" "T-2 was started ahead of task:T-1"
+  assert_eq "task:T-1" "$(sed -n 's/^out_of_order_over: //p' .ai/workspace/tasks/T-2/state)"
+  assert_eq "T-1 waits for a review answer" "$(sed -n 's/^out_of_order_reason: //p' .ai/workspace/tasks/T-2/state)"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "out_of_order"
+}
+
+test_task_start_out_of_order_in_a_worktree_records_both_keys() {
+  task_setup_nested
+  _ooo_queue
+  run_split jig task start T-2 --worktree
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "first in the queue is task:T-1 (P2)"
+  assert_eq "" "$(git branch --list task/T-2)"
+  run_split jig task start T-2 --worktree --out-of-order --reason "urgent for a customer"
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "task/T-2" "$(git -C "$OUT" symbolic-ref --short HEAD)"
+  assert_eq "task:T-1" "$(sed -n 's/^out_of_order_over: //p' .ai/workspace/tasks/T-2/state)"
+  assert_eq "urgent for a customer" "$(sed -n 's/^out_of_order_reason: //p' .ai/workspace/tasks/T-2/state)"
+}
+
+test_task_start_reason_and_out_of_order_come_together() {
+  task_setup_clean
+  _ooo_queue
+  run_split jig task start T-2 --reason "why"
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "--reason gives the cause of --out-of-order; it needs --out-of-order"
+  run_split jig task start T-2 --out-of-order
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" 'task start: --out-of-order needs the reason: jig task start T-2 --out-of-order --reason "<why>"'
+  run_split jig task start T-2 --out-of-order --reason "   "
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "--out-of-order needs the reason"
+  run_split jig task start T-1 --out-of-order --reason
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "--reason needs a text"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-2/state)" "base_commit:"
+}
+
+test_task_start_out_of_order_in_order_records_nothing() {
+  task_setup_clean
+  _ooo_queue
+  run_split jig task start T-1 --out-of-order --reason "just in case"
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$ERR" "T-1 is first in the queue; --out-of-order was not needed and nothing was recorded"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "out_of_order"
+}
+
+test_task_start_of_a_task_that_is_not_queued_is_not_asked_about_the_order() {
+  task_setup_clean
+  jig task new T-1 >/dev/null
+  jig task new T-2 >/dev/null
+  jig queue set T-1 --priority 0 >/dev/null
+  run_split jig task start T-2
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "task/T-2" "$(git symbolic-ref --short HEAD)"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-2/state)" "out_of_order"
+}
+
+test_task_start_out_of_order_of_a_task_that_is_not_queued_says_so() {
+  task_setup_clean
+  jig task new T-1 >/dev/null
+  jig task new T-2 >/dev/null
+  jig queue set T-1 --priority 0 >/dev/null
+  run_split jig task start T-2 --out-of-order --reason "just in case"
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$ERR" "T-2 is not in the queue; --out-of-order was not needed and nothing was recorded"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-2/state)" "out_of_order"
+}
+
+test_task_start_out_of_order_keys_are_not_writable_by_task_set() {
+  task_setup_clean
+  jig task new T-1 >/dev/null
+  run_split jig task set T-1 out_of_order_over task:T-2
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "key is not writable: out_of_order_over"
+  run_split jig task set T-1 out_of_order_reason x
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "key is not writable: out_of_order_reason"
+}
+
+test_task_start_is_not_held_by_a_task_already_in_progress() {
+  task_setup_nested
+  _ooo_queue
+  jig task new T-3 >/dev/null
+  jig queue set T-3 --priority 5 >/dev/null
+  # T-1 is started: the queue now answers T-2, and T-3 is behind it.
+  jig task start T-1 --worktree >/dev/null 2>&1
+  run_split jig task start T-3
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "first in the queue is task:T-2 (P4)"
+  # T-2 is the one the queue names, and starts without a reason.
+  run_split jig task start T-2
+  assert_eq 0 "$RC" "$ERR"
+}
+
+test_task_start_worktree_of_a_started_task_is_not_refused_by_the_queue() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  jig task new T-2 >/dev/null
+  jig task new T-3 >/dev/null
+  jig queue set T-1 --priority 0 >/dev/null
+  jig queue set T-2 --priority 3 >/dev/null
+  jig queue set T-3 --priority 1 >/dev/null
+  jig task start T-1 >/dev/null
+  # T-2 was started by hand while T-3 (not started) outranks it.
+  git checkout -q -b task/T-2 main
+  printf 'branch: task/T-2\nbase_commit: %s\n' "$(git rev-parse HEAD)" >> .ai/workspace/tasks/T-2/state
+  git checkout -q task/T-1
+  run_split jig task start T-2 --worktree
+  assert_eq 0 "$RC" "$ERR"
+}
+
+test_task_actions_offer_start_out_of_order_when_the_queue_puts_another_first() {
+  task_setup_clean
+  _ooo_queue
+  _tl_json --all
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '{"id":"start","command":"jig task start T-2 --out-of-order --reason <text>","offered":true,"reason":null}'
+  assert_contains "$OUT" '{"id":"start","command":"jig task start T-1","offered":true,"reason":null}'
+  # The command the table offers is one the command accepts.
+  run_split jig task start T-2 --out-of-order --reason go
+  assert_eq 0 "$RC" "start is offered but its command refused: $ERR"
+}
+
 # --- start --worktree (ADR-0029) -----------------------------------------------
 
 # Worktrees are created beside the project, so the project is put one level

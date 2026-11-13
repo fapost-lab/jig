@@ -3303,13 +3303,14 @@ test_status_a_terminal_judges_a_task_by_its_own_words_only() {
       'task a class=T2 status=active paused (see blocking=2 and review=stale)' \
       'task a class=T2 status=active paused' \
       'task a class=T2 status=active lowered=T3' \
+      'task a class=T2 status=active out_of_order=task:b worktree=/x' \
       'task a class=T2 status=active worktree=/x uncommitted=1 blocking=2' \
       'task a class=T2 status=active review=stale autopilot=on' \
       'task a class=T2 status=active autopilot=stopped'; do
       if _status_task_needs "$l"; then printf 'need\n'; else printf 'fine\n'; fi
     done
   )
-  assert_eq "$(printf 'fine\nfine\nfine\nneed\nneed\nneed\nneed\nneed\nneed')" "$f"
+  assert_eq "$(printf 'fine\nfine\nfine\nneed\nneed\nneed\nneed\nneed\nneed\nneed')" "$f"
 }
 
 test_status_a_terminal_keeps_a_pause_reason_whole() {
@@ -3523,6 +3524,47 @@ test_status_json_pins_an_item_with_every_field() {
   _st_json
   assert_eq 0 "$RC" "$ERR"
   assert_eq '{"schema":1,"revision":R,"generated_at":"T","data":{"attention":[{"kind":"pull-request-waiting","subject":{"type":"task","id":"shipped"},"tasks":["shipped"],"title":"A pull request is waiting for review or merge","detail":"opened by jig task ship","todo":"Review it and merge it; jig merges one itself only at agent.git: merge, on green CI.","url":"https://example.com/o/r/pull/7"},{"kind":"pull-request-of-abandoned-task","subject":{"type":"task","id":"given-up"},"tasks":["given-up"],"title":"A pull request was open for a task you abandoned","detail":"open as of housekeeping at 2026-10-01 09:30 UTC","todo":"It may have been closed or merged since: jig last asked the forge then. Run jig housekeeping to refresh, then close on the forge what is still open, or reopen the task. Nothing here will merge it.","url":null},{"kind":"knowledge-proposed","subject":{"type":"project","id":null},"tasks":[],"title":"Knowledge is waiting for your decision","detail":"2 document(s) proposed","todo":"Ask the agent: what'"'"'s proposed? (jig-accept)","url":null}],"housekeeping":{"ran_at":"2026-10-01T09:30:00Z","forge":"github","stale":true},"knowledge_counts_at":"2026-10-15T08:00:00Z","origin":{"base":"main","fetched_at":null,"behind":null,"ahead":null}}}' "$OUT"
+}
+
+# A task started against the queue's answer is shown wherever the task is: its
+# text line and the reason under it, the page's row, and an item in `--json`.
+_st_out_of_order_fixture() {
+  fixture_jig_repo
+  fixture_task ooo task/ooo active "class:T1" "out_of_order_over:task:first" \
+    "out_of_order_reason:the person asked for it <now> & here"
+  fixture_task plain task/plain active "class:T1"
+}
+
+test_status_text_shows_a_task_started_ahead_of_the_queue() {
+  _st_out_of_order_fixture
+  run env LC_ALL=C "$JIG_BIN" status
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ooo class=T1 status=active out_of_order=task:first"
+  assert_contains "$OUT" "  started ahead of task:first: the person asked for it <now> & here"
+  assert_not_contains "$OUT" "task plain class=T1 status=active out_of_order"
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "warn  task ooo class=T1 status=active out_of_order=task:first"
+  assert_contains "$OUT" "started ahead of task:first: the person asked for it <now> & here"
+}
+
+test_status_json_names_a_task_started_ahead_of_the_queue() {
+  _st_out_of_order_fixture
+  PATH=$(_status_path_without_jig)
+  _st_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '{"kind":"started-out-of-order","subject":{"type":"task","id":"ooo"},"tasks":["ooo"],"title":"ooo was started ahead of the queue","detail":"ahead of task:first: the person asked for it <now> & here"'
+  assert_contains "$OUT" '"todo":"Check the reason; if it does not hold, pause ooo and take task:first."'
+  assert_not_contains "$OUT" '"id":"plain"'
+}
+
+test_status_html_marks_a_task_started_ahead_of_the_queue() {
+  _st_out_of_order_fixture
+  jig status --html >/dev/null
+  page=$(cat .ai/runtime/status.html)
+  assert_contains "$page" '<span class="badge warn" title="ahead of task:first: the person asked for it &lt;now&gt; &amp; here">out of order</span>'
+  assert_contains "$page" 'ooo was started ahead of the queue'
+  assert_eq 1 "$(printf '%s\n' "$page" | grep -c 'out of order</span>')"
 }
 
 # _st_origin_repo — an installed project with a bare `origin.git` holding main, fetched, and

@@ -373,7 +373,7 @@ $rel"
     # Read by the readers `jig context` and `task` read it by too
     # (jig_queue_place, jig_pause_request; common.sh). The words go before the
     # worktree, the base and the pause, where _status_task_needs reads only
-    # `lowered=`.
+    # `lowered=` and `out_of_order=`.
     qlines=""
     if jig_queue_place "$_ST_ID"; then
       line="$line queue=$_JIG_QUEUE_RANK/$_JIG_QUEUE_COUNT"
@@ -401,6 +401,12 @@ EOF
     # never quieter than the gate it may have skipped
     # (adr-20261004-a-route-stage-is-proven-by-its-record).
     [ -z "$_ST_LOWERED" ] || line="$line lowered=$_ST_LOWERED"
+    # A start against the queue's answer is shown beside the lowering, with
+    # the reason on a line of its own (adr-20261022-the-next-task-is-advised-from-the-queue).
+    if [ -n "$_ST_OOO" ]; then
+      line="$line out_of_order=$_ST_OOO"
+      qlines="$qlines  started ahead of $_ST_OOO${_ST_OOO_REASON:+: $_ST_OOO_REASON}"$'\n'
+    fi
     [ -z "$_ST_WT" ] || line="$line $_ST_WT_NOTE"
     # Only a failure is shown: a worktree the project's own command could not
     # finish stays named until a `jig task bootstrap` finishes it.
@@ -668,7 +674,8 @@ _status_need() {
 
 # _status_task_needs <task line> — exit 0 when a `task ...` line asks for the
 # reader: paused, blocking findings, a stale review, a stopped run, a lowered
-# class (adr-20261004-a-route-stage-is-proven-by-its-record). Only the fields
+# class (adr-20261004-a-route-stage-is-proven-by-its-record), a start ahead of
+# the queue. Only the fields
 # the line builder writes are looked at, never the text a person wrote — a
 # worktree path or a pause reason may hold any of those words.
 _status_task_needs() {
@@ -677,7 +684,7 @@ _status_task_needs() {
   head=${t%% worktree=*}
   head=${head%% base=*}
   head=${head%% paused*}
-  case "$head" in *" lowered="*) return 0 ;; esac
+  case "$head" in *" lowered="* | *" out_of_order="*) return 0 ;; esac
   # The words after the pause reason, peeled off from the end.
   while :; do
     last=${t##* }
@@ -1442,7 +1449,7 @@ _STATUS_US=$(printf '\037')
 # sed per key per task: the page is redrawn after every task command, and a
 # process per value made ten tasks cost seconds. One line per state file,
 # <task_id> <class> <status> <paused> <paused_reason> <branch> <base_branch>
-# <autopilot> <pr_url> <knowledge_consolidated> <route_depth> <class_lowered_from> <issue>, joined by \037; each value is
+# <autopilot> <pr_url> <knowledge_consolidated> <route_depth> <class_lowered_from> <issue> <setup> <out_of_order_over> <out_of_order_reason>, joined by \037; each value is
 # what `sed -n 's/^<key>:[[:space:]]*//p' | head -n 1` gave, the first match.
 _status_task_rows() {
   local f
@@ -1454,10 +1461,11 @@ _status_task_rows() {
   awk '
     function out() {
       if (have)
-        printf "%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\n",
+        printf "%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\n",
           v["task_id"], v["class"], v["status"], v["paused"], v["paused_reason"],
           v["branch"], v["base_branch"], v["autopilot"], v["pr_url"], v["knowledge_consolidated"],
-          v["route_depth"], v["class_lowered_from"], v["issue"], v["setup"]
+          v["route_depth"], v["class_lowered_from"], v["issue"], v["setup"],
+          v["out_of_order_over"], v["out_of_order_reason"]
     }
     FNR == 1 { out(); split("", v); split("", seen); have = 1 }
     /^[^:]+:/ {
@@ -1478,7 +1486,7 @@ _status_task_rows() {
 # `page`, also the answers only the page shows: the gate of a T3/T4 design
 # (_task_gate_state) and the autopilot run (_task_autopilot_facts).
 _status_live_collect() {
-  local page="${1:-}" row id class status paused reason branch base autopilot pr_url kc own_depth lowered issue setup
+  local page="${1:-}" row id class status paused reason branch base autopilot pr_url kc own_depth lowered issue setup ooo ooo_reason
   local wt wt_note receipt gate facts depth setting us="$_STATUS_US"
   _STATUS_FINISHED=0
   _STATUS_ARCHIVED=0
@@ -1489,7 +1497,7 @@ _status_live_collect() {
   setting=$(_task_route_setting)
   while IFS= read -r row; do
     [ -n "$row" ] || continue
-    IFS="$us" read -r id class status paused reason branch base autopilot pr_url kc own_depth lowered issue setup <<EOF
+    IFS="$us" read -r id class status paused reason branch base autopilot pr_url kc own_depth lowered issue setup ooo ooo_reason <<EOF
 $row
 EOF
     case "$status" in
@@ -1522,7 +1530,7 @@ EOF
     # person's route.depth, read once above.
     _task_route_depth_of_v depth "$own_depth" "$setting"
     depth=${depth%%$'\t'*}
-    _STATUS_LIVE="$_STATUS_LIVE$id$us$class$us$status$us$paused$us$reason$us$branch$us$base$us$autopilot$us$pr_url$us$kc$us$wt$us$wt_note$us$receipt$us$gate$us$depth$us$lowered$us$issue$us$setup$us$facts
+    _STATUS_LIVE="$_STATUS_LIVE$id$us$class$us$status$us$paused$us$reason$us$branch$us$base$us$autopilot$us$pr_url$us$kc$us$wt$us$wt_note$us$receipt$us$gate$us$depth$us$lowered$us$issue$us$setup$us$ooo$us$ooo_reason$us$facts
 "
   done <<EOF
 $(_status_task_rows)
@@ -1537,11 +1545,13 @@ EOF
 # the task was lowered from (`class_lowered_from`), empty when it never was.
 # _ST_ISSUE is the task's tracker issue (`issue`), empty when it has none.
 # _ST_SETUP is the outcome of the project's `worktree.setup` in the task's
-# worktree (`setup`): `ok`, a failure, or empty when none ran.
+# worktree (`setup`): `ok`, a failure, or empty when none ran. _ST_OOO is the
+# task the queue advised instead when this one was started against it
+# (`out_of_order_over`), _ST_OOO_REASON the reason given; both empty otherwise.
 _status_rec() {
   IFS="$_STATUS_US" read -r _ST_ID _ST_CLASS _ST_STATUS _ST_PAUSED _ST_REASON _ST_BRANCH _ST_BASE \
     _ST_AUTOPILOT _ST_PR_URL _ST_KC _ST_WT _ST_WT_NOTE _ST_RECEIPT _ST_GATE _ST_DEPTH _ST_LOWERED _ST_ISSUE \
-    _ST_SETUP _ST_APFACTS <<EOF
+    _ST_SETUP _ST_OOO _ST_OOO_REASON _ST_APFACTS <<EOF
 $1
 EOF
 }
@@ -2476,6 +2486,18 @@ IDS
     "Reopen it, or tell the agent to abandon the task."
   _status_attention_per_task worktree-kept "$kept" "A worktree was kept because it still holds work" "$hk_note" \
     "Commit or discard what is left in the task's worktree; the next housekeeping removes it."
+  # 6a. A live task started against the queue's answer: the reason was given
+  # to the person in words, and this is where they can check it.
+  while IFS= read -r rec; do
+    [ -n "$rec" ] || continue
+    _status_rec "$rec"
+    [ -n "$_ST_OOO" ] || continue
+    _status_attn started-out-of-order task "$_ST_ID" "$_ST_ID" \
+      "$_ST_ID was started ahead of the queue" "ahead of $_ST_OOO: $_ST_OOO_REASON" \
+      "Check the reason; if it does not hold, pause $_ST_ID and take ${_ST_OOO}."
+  done <<LIVE
+$_STATUS_LIVE
+LIVE
 
   # 6b. The base here is behind origin's, as of the last fetch: what lands there
   # (a decision, a merged task) is not in this checkout until it is brought up
@@ -2971,6 +2993,8 @@ _status_html_task_row() {
     "$(_status_h "$_ST_ID")" "$(_status_h "${_ST_CLASS:--}")"
   [ "$_ST_DEPTH" != lean ] || printf ' <span class="badge">lean</span>'
   [ -z "$_ST_LOWERED" ] || printf ' <span class="badge warn">lowered from %s</span>' "$(_status_h "$_ST_LOWERED")"
+  [ -z "$_ST_OOO" ] || printf ' <span class="badge warn" title="%s">out of order</span>' \
+    "$(_status_h "ahead of $_ST_OOO${_ST_OOO_REASON:+: $_ST_OOO_REASON}")"
   printf '</td><td>%s' "$(_status_h "$_ST_STATUS")"
   if [ "$_ST_PAUSED" = "true" ]; then
     printf ' <span class="badge warn">paused</span>'

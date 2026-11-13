@@ -166,6 +166,7 @@ _queue_apply() {
   [ -f "$file" ] || file=/dev/null
   Q_FORMAT="$QUEUE_FORMAT" Q_STEP="$QUEUE_STEP" awk -F '\t' '
     function num(s) { return s + 0 }
+    function pnum(p) { return (p == "-") ? 6 : p + 0 }
     function before(a, b) {   # item a sorts before item b
       if (lvl[a] != lvl[b]) {
         if (lvl[a] == "-") return 1
@@ -255,11 +256,24 @@ _queue_apply() {
       if (op == "set" || op == "move" || op == "depend") {
         if (r in idx) {
           i = idx[r]
-          if (lvl[i] != level) { lvl[i] = level; pos[i] = maxpos(level) + step }
           fresh = 0
+          if (lvl[i] != level) { lvl[i] = level; pos[i] = maxpos(level) + step; fresh = (op == "set") }
         } else { i = add(r, level); fresh = 1 }
       }
-      if (op == "set") pri[i] = ENVIRON["Q_PRIO"]
+      if (op == "set") {
+        # A new item, one that changed its level, or one whose priority
+        # changes is placed on its level by priority: right after the last
+        # other item whose number is not above its own (`-` is 6), else at the
+        # top. The same priority again leaves the place as it is.
+        oldp = pri[i]; pri[i] = ENVIRON["Q_PRIO"]
+        if (fresh || oldp != pri[i]) {
+          anc = 0
+          for (j = 1; j <= n; j++)
+            if (alive[j] && j != i && lvl[j] == lvl[i] && pnum(pri[j]) <= pnum(pri[i]) && (!anc || before(anc, j))) anc = j
+          if (anc) place(i, "after", ref[anc])
+          else place(i, "top")
+        }
+      }
       else if (op == "move") {
         how = ENVIRON["Q_PLACE"]; anchor = ENVIRON["Q_ANCHOR"]
         if (how == "before" || how == "after") {
@@ -943,6 +957,21 @@ EOF
 _queue_next() {
   [ $# -eq 0 ] || jig_fail usage "queue next: unexpected argument: $1"
   jig_require_init
+  _queue_next_gather 1
+  local result
+  result=$(printf '%s\n' "$_QN_TABLE" | _queue_next_decide)
+  if [ -n "$_QUEUE_AS_JSON" ]; then
+    _queue_next_json "$result" "$_QN_NOTQ"
+  else
+    _queue_next_text "$result" "$_QN_NOTQ"
+  fi
+}
+
+# _queue_next_gather <count not queued: 1|0> — gather the table _queue_next_decide
+# reads into _QN_TABLE (items and dependencies, then the `tf`/`tk`/`ds` lines)
+# and, when asked, the number of active tasks the queue does not know into
+# _QN_NOTQ. A queue in another format dies here, as `queue next` always did.
+_queue_next_gather() {
   # shellcheck source=lib/hklog.sh
   . "$JIG_LIB/hklog.sh"
   local file items="" facts="" kind f2 f3 f4 f5 id tasks_dir notq=0 d st
@@ -978,6 +1007,9 @@ _queue_next() {
   done <<EOF
 $items
 EOF
+  _QN_TABLE=$(printf '%s\n%s' "$items" "$facts")
+  _QN_NOTQ=0
+  [ "$1" = 1 ] || return 0
   # An epic's dependencies are inherited by its tasks, so the epic itself is
   # asked about only through them; a task that is not queued is only counted.
   # Every workspace is asked, so none of them costs a process: the id comes off
@@ -996,13 +1028,36 @@ EOF
     case "$queued" in *"${nl}task:$id$nl"*) continue ;; esac
     notq=$((notq + 1))
   done
-  local result
-  result=$(printf '%s\n%s\n' "$items" "$facts" | _queue_next_decide)
-  if [ -n "$_QUEUE_AS_JSON" ]; then
-    _queue_next_json "$result" "$notq"
-  else
-    _queue_next_text "$result" "$notq"
+  _QN_NOTQ=$notq
+}
+
+# jig_queue_ahead_v <var> <id> — set <var> to `task:Y<TAB><priority or ->` of the
+# task that should be started before task <id>, or to nothing. It is named when
+# task:<id> is queued, `jig queue next` has an answer Y other than it, and Y goes
+# before it by the order next uses (priority, the top-level position, its own
+# position, the ref). <id> need not be a candidate itself: it may wait, be paused
+# or held — the order is still the queue's. A task that is not queued, no queue
+# file, or a queue this jig cannot read answer nothing; this is never an error.
+# The table is worked out once per process (_QUEUE_AHEAD_SET), so asking about
+# every task costs no process of its own.
+_QUEUE_AHEAD_SET=""
+_QUEUE_AHEAD_LINES=""
+jig_queue_ahead_v() {
+  local __qa_nl=$'\n' __qa_tab=$'\t' __qa_rest=""
+  if [ -z "$_QUEUE_AHEAD_SET" ]; then
+    _QUEUE_AHEAD_SET=1
+    _QUEUE_AHEAD_LINES=""
+    if [ -f "$(queue_file)" ] && _jig_queue_readable "$(queue_file)"; then
+      _queue_next_gather 0
+      _QUEUE_AHEAD_LINES=$(printf '%s\n' "$_QN_TABLE" | Q_AHEAD=1 _queue_next_decide)
+    fi
   fi
+  case "$__qa_nl$_QUEUE_AHEAD_LINES" in
+    *"${__qa_nl}ahead${__qa_tab}task:$2${__qa_tab}"*)
+      __qa_rest=${_QUEUE_AHEAD_LINES#*"ahead${__qa_tab}task:$2${__qa_tab}"}
+      __qa_rest=${__qa_rest%%"$__qa_nl"*} ;;
+  esac
+  printf -v "$1" '%s' "$__qa_rest"
 }
 
 # _queue_next_task_fact <id> — the `tf` line for a queued task: ref, status
@@ -1076,19 +1131,23 @@ _queue_next_dep_state() {
 }
 
 # _queue_next_decide — the advice, from the table on stdin. Prints:
-#   next <ref> <level> <position> <priority> <started> <rank> <count>   (none when nothing)
-#   reason <waiting|taken|paused|empty>                                 (only without next)
+#   next <ref> <level> <position> <priority> <started> <rank> <count>   (none when nothing; started is always 0)
+#   reason <waiting|taken|in_progress|paused|empty>                     (only without next)
 #   wait <holder> <on> <state> <reason>                                  (each unfinished dependency holding a candidate)
 #   taken <ref> <checkout> <since> <idle seconds> <command>              (each candidate another session holds)
+#   progress <ref> <priority>                                            (each started task, in queue order)
+# With Q_AHEAD set it prints instead one line per queued task that the advice
+# outranks: `ahead <ref> <advised ref> <advised priority>` (jig_queue_ahead_v).
 #
 # A candidate is a queued task whose state file says `active`, with no pause
 # and no pause request; everything else queued is silently not one. One that
-# another session holds (a `tk` line) is named instead of advised. It waits
-# while any dependency of its own or of the epic it is built on is not
+# another session holds (a `tk` line) is named instead of advised, and a task
+# already started is named as in progress and never advised: the advice is
+# what to start, and a started task is one the person or an agent already has.
+# It waits while any dependency of its own or of the epic it is built on is not
 # finished. Among the rest the lowest priority number goes first (`-` last),
-# then a started task before one not started, then the position of the item
-# on the top level (a task's epic's, an epic that is not queued after every
-# queued one), then its own position, then its ref.
+# then the position of the item on the top level (a task's epic's, an epic that
+# is not queued after every queued one), then its own position, then its ref.
 _queue_next_decide() {
   awk -F '\t' '
     function pnum(p) { return (p == "-") ? 6 : p + 0 }
@@ -1100,8 +1159,6 @@ _queue_next_decide() {
     # better(a, b): item a goes before item b.
     function better(a, b,   x, y) {
       x = pnum(pri[a]); y = pnum(pri[b])
-      if (x != y) return x < y
-      x = (sd[ref[a]] == 1) ? 0 : 1; y = (sd[ref[b]] == 1) ? 0 : 1
       if (x != y) return x < y
       x = topkey(a); y = topkey(b)
       if (x != y) return x < y
@@ -1125,27 +1182,36 @@ _queue_next_decide() {
     $1 == "ds" { dst[$2] = $3 }
     $1 == "tk" { tk[$2] = substr($0, length($1) + length($2) + 3) }
     END {
+      ahead = ENVIRON["Q_AHEAD"] != ""
       for (i = 1; i <= n; i++) {
         r = ref[i]
         if (r !~ /^task:/ || st[r] != "active") continue
         if (pz[r] == "true" || rq[r] == 1) { paused++; continue }
         if (r in tk) { taken++; tl[++nt] = "taken\t" r "\t" tk[r]; continue }
+        if (sd[r] == 1) { inprog++; pl[++np] = "progress\t" r "\t" pri[i]; continue }
         unfinished = 0
         note(i)
         if (lvl[i] != "-" && (lvl[i] in idx)) note(idx[lvl[i]])
         if (unfinished) { waiting++; continue }
         if (!best || better(i, best)) best = i
       }
+      if (ahead) {
+        if (best) for (i = 1; i <= n; i++)
+          if (ref[i] ~ /^task:/ && i != best && better(best, i)) printf "ahead\t%s\t%s\t%s\n", ref[i], ref[best], pri[best]
+        exit
+      }
       if (best) {
         rank = 0; cnt = 0
         for (i = 1; i <= n; i++) if (lvl[i] == lvl[best]) { cnt++; if (pos[i] < pos[best]) rank++ }
-        printf "next\t%s\t%s\t%s\t%s\t%d\t%d\t%d\n", ref[best], lvl[best], pos[best], pri[best], (sd[ref[best]] == 1), rank + 1, cnt
+        printf "next\t%s\t%s\t%s\t%s\t%d\t%d\t%d\n", ref[best], lvl[best], pos[best], pri[best], 0, rank + 1, cnt
       } else if (waiting) print "reason\twaiting"
       else if (taken) print "reason\ttaken"
+      else if (inprog) print "reason\tin_progress"
       else if (paused) print "reason\tpaused"
       else print "reason\tempty"
       for (i = 1; i <= nw; i++) print wl[i]
       for (i = 1; i <= nt; i++) print tl[i]
+      for (i = 1; i <= np; i++) print pl[i]
     }
   '
 }
@@ -1153,7 +1219,7 @@ _queue_next_decide() {
 # _queue_next_json <result> <not queued> — the producer's data for `jig queue
 # next --json` (schemas/json.md, "jig queue next --json").
 _queue_next_json() {
-  local kind f2 f3 f4 f5 f6 f7 f8 next=null reason=null waiting="" taken=""
+  local kind f2 f3 f4 f5 f6 f7 f8 next=null reason=null waiting="" taken="" progress=""
   while IFS=$'\t' read -r kind f2 f3 f4 f5 f6 f7 f8; do
     case "$kind" in
       next)
@@ -1179,11 +1245,16 @@ _queue_next_json() {
         if [ "$f4" = "-" ]; then taken="$taken,\"since\":null"; else json_quote "$f4"; taken="$taken,\"since\":$_JSON"; fi
         json_int_or_null "$f5"; taken="$taken,\"idle_seconds\":$_JSON"
         if [ "$f6" = "-" ]; then taken="$taken,\"command\":null}"; else json_quote "$f6"; taken="$taken,\"command\":$_JSON}"; fi ;;
+      progress)
+        progress="$progress${progress:+,}"
+        json_quote "$f2"; progress="$progress{\"ref\":$_JSON"
+        json_quote "${f2#task:}"; progress="$progress,\"id\":$_JSON"
+        json_int_or_null "$f3"; progress="$progress,\"priority\":$_JSON}" ;;
     esac
   done <<EOF
 $1
 EOF
-  printf '{"next":%s,"reason":%s,"waiting":[%s],"taken":[%s],"not_queued":%s}\n' "$next" "$reason" "$waiting" "$taken" "$2"
+  printf '{"next":%s,"reason":%s,"waiting":[%s],"taken":[%s],"in_progress":[%s],"not_queued":%s}\n' "$next" "$reason" "$waiting" "$taken" "$progress" "$2"
 }
 
 # _queue_taken_words <checkout> <since> <idle seconds> — who holds a task and
@@ -1207,7 +1278,7 @@ _queue_taken_words() {
 # dependency is only the way things are while something is advised, so it is
 # printed when nothing is; a `broken` or `unknown` one is a thing to fix.
 _queue_next_text() {
-  local kind f2 f3 f4 f5 f6 f7 f8 advised=""
+  local kind f2 f3 f4 f5 f6 f7 f8 advised="" progress="" pword
   while IFS=$'\t' read -r kind f2 f3 f4 f5 f6 f7 f8; do
     case "$kind" in
       next)
@@ -1220,6 +1291,7 @@ _queue_next_text() {
         case "$f2" in
           waiting) printf 'next: none — every queued task waits for a dependency\n' ;;
           taken) printf 'next: none — every queued task left is taken by another session\n' ;;
+          in_progress) printf 'next: none — every queued task left is in progress\n' ;;
           paused) printf 'next: none — every queued task is paused\n' ;;
           *) printf 'next: none — the queue holds no task to take\n' ;;
         esac ;;
@@ -1234,10 +1306,14 @@ _queue_next_text() {
           *) [ -n "$advised" ] || printf '  %s waits for %s: %s\n' "$f2" "$f3" "$f4" ;;
         esac ;;
       taken) printf '  %s is %s\n' "$f2" "$(_queue_taken_words "$f3" "$f4" "$f5")" ;;
+      progress)
+        if [ "$f3" = "-" ]; then pword="no priority"; else pword="P$f3"; fi
+        progress="$progress${progress:+, }$f2 ($pword)" ;;
     esac
   done <<EOF
 $1
 EOF
+  [ -z "$progress" ] || printf 'in progress: %s\n' "$progress"
   if [ "$2" -gt 0 ]; then
     printf 'not queued: %s %s — jig queue set <id> --priority <p>\n' "$2" "$([ "$2" = 1 ] && printf task || printf tasks)"
   fi

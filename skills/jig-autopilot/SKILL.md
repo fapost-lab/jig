@@ -220,7 +220,9 @@ ask:
 ```
 
 - **It names a task of the set**, or one outside it with no higher priority than the set's next:
-  start the set's next.
+  start the set's next. When that is not the task it names, the plain start is refused: use
+  `jig task start <id> --out-of-order --reason "<the set the person named>"`. The same holds after
+  the person's choice, or an unattended `decide`, below.
 - **It names a task outside the set with a higher priority** (a lower number; a task without one
   comes last): start neither silently. Name it to the person and ask whether to take it or keep to
   the set — §3's "a decision nobody made". Unattended: `jig task autopilot <id> decide --reason`
