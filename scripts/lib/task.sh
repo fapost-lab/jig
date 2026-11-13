@@ -96,7 +96,7 @@ _task_usage() {
       printf '       jig task receipt <id> --check\n'
       printf '       jig task receipt <id> --since-review [--format report|paths]\n'
       ;;
-    ship) printf 'usage: jig task ship <id> --message-file <file> [--title <t>] [--body-file <file>] [--draft] [--partial]\n' ;;
+    ship) printf 'usage: jig task ship <id> --message-file <file> [--title <t>] [--body-file <file>] [--reviewer <login|name>]... [--draft] [--partial]\n' ;;
     land)
       printf 'usage: jig task land <id> [--without-review]\n'
       printf '       jig task land <id> --resolved --note-file <file> [--without-review]\n'
@@ -7297,14 +7297,68 @@ _task_ship_notes_last_check() {
   jig_release_notes_refusal "task ship" "$_TASK_SHIP_NOTES_BASE"
 }
 
+# _task_ship_reviewers_unused <why> — say that the reviewers named were asked
+# for nothing: no pull request is opened by this ship.
+_task_ship_reviewers_unused() {
+  printf 'task ship: --reviewer: nobody was asked for a review: %s\n' "$1"
+}
+
+# _task_ship_reviewers <staging> <land> <level> — task_ship's reviewer_args
+# resolved to logins (lib/reviewers.sh), comma-separated, into
+# _TASK_SHIP_REVIEWERS; empty, and said, where this ship opens no pull request.
+# The account the pull request is opened as is its author, whom the forge does
+# not let review it: left out, and said. Reads task_ship's reviewer_args
+# (bash scoping). Called in task_ship's shell, after
+# jig_ship_account named that account.
+_TASK_SHIP_REVIEWERS=""
+_task_ship_reviewers() {
+  local staging="$1" land="$2" level="$3" self="" login arg seen=" "
+  _TASK_SHIP_REVIEWERS=""
+  if [ -n "$staging" ] && [ "$land" = external ]; then
+    _task_ship_reviewers_unused "git.staging_land is external, so no pull request is opened"
+    return 0
+  fi
+  if [ "$level" != pr ] && [ "$level" != merge ]; then
+    _task_ship_reviewers_unused "this ship opens no pull request at this level"
+    return 0
+  fi
+  case "$(jig_forge_kind 2>/dev/null || true)" in
+    github | gitlab) ;;
+    *)
+      _task_ship_reviewers_unused "no forge available, so the pull request is the human's"
+      return 0 ;;
+  esac
+  # shellcheck source=lib/reviewers.sh
+  . "$JIG_LIB/reviewers.sh"
+  jig_reviewers_self self \
+    || jig_die "task ship: --reviewer: the forge could not say which account opens the pull request: $_RV_WHY
+Nothing was sent; the commit is on this machine, and running this again goes on from it."
+  for arg in "${reviewer_args[@]}"; do
+    jig_reviewers_resolve "task ship" login "$arg"
+    if [ "$login" = "$self" ]; then
+      printf 'task ship: --reviewer %s: %s opens the pull request, and its author is not asked to review it\n' "$arg" "$login"
+      continue
+    fi
+    case "$seen" in *" $login "*) continue ;; esac
+    seen="$seen$login "
+    [ "$arg" = "$login" ] || [ "$arg" = "@$login" ] || printf 'task ship: --reviewer %s: %s\n' "$arg" "$login"
+    _TASK_SHIP_REVIEWERS="${_TASK_SHIP_REVIEWERS:+$_TASK_SHIP_REVIEWERS,}$login"
+  done
+}
+
 task_ship() {
   jig_require_init
   [ $# -ge 1 ] || jig_die "$(_task_usage ship)"
   local id="$1"
   shift
   local message_file="" title="" body_file="" has_message=0 draft=0 partial=0
+  local reviewer_args=() reviewers=""
   while [ $# -gt 0 ]; do
     case "$1" in
+      --reviewer)
+        [ $# -ge 2 ] || jig_die "task ship: --reviewer requires a value"
+        reviewer_args+=("$2")
+        shift 2 ;;
       --draft)
         draft=1
         shift ;;
@@ -7507,6 +7561,7 @@ Nothing was committed. Stage what belongs to the task (git add -u, git add <path
 
   if [ "$level" = commit ]; then
     _task_ship_resumed_done "$id" "$dir" "$draft" "$staging"
+    [ "${#reviewer_args[@]}" -eq 0 ] || _task_ship_reviewers_unused "this ship opens no pull request at this level"
     printf "stopped at commit: push is the human's\n"
     return 0
   fi
@@ -7543,6 +7598,13 @@ The commit stays on $branch here; nothing was pushed."
   # the forge is asked nothing.
   if [ -z "$staging" ] || [ "$land" != external ]; then
     jig_ship_account "task ship" "$level"
+  fi
+  # The reviewers named, resolved to logins before the push: a name that fits
+  # nobody, or several people, is refused with nothing sent, and the commit
+  # stays here for the run that names them better.
+  if [ "${#reviewer_args[@]}" -gt 0 ]; then
+    _task_ship_reviewers "$staging" "$land" "$level"
+    reviewers=$_TASK_SHIP_REVIEWERS
   fi
   jig_ship_push "task ship" "$branch"
   _task_ship_resumed_done "$id" "$dir" "$draft" "$staging"
@@ -7594,7 +7656,7 @@ EOF
     pr_base="$staging"
     printf 'task ship: git flow staging: the pull request goes into %s, not %s\n' "$staging" "$base"
   fi
-  jig_ship_pr "task ship" "$branch" "$pr_base" "$message_file" "$title" "$body_file" "$pr_draft"
+  jig_ship_pr "task ship" "$branch" "$pr_base" "$message_file" "$title" "$body_file" "$pr_draft" 0 "$reviewers"
   # The pull request's address, kept so the status page can link it the
   # moment it exists. A fact about what ship did, not a merge state: whether
   # it was merged is still derived by housekeeping every run (ADR-0005).

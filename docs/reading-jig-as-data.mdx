@@ -6,8 +6,8 @@ description: "Read your project's tasks, specs and what needs you from a script,
 Jig's commands print text for a person. A program — a CI step, a chat bot, a dashboard such as
 [Jig UI](https://jig-ui.fapost.in) — can ask for the same answer as JSON instead, by adding
 `--json`. Today `jig task list`, `jig task artifacts`, `jig task artifact read`, `jig spec list`, `jig status`,
-`jig queue list`, `jig queue next`, `jig config keys`, `jig knowledge proposed`, `jig knowledge sources`, `jig knowledge read` and
-`jig writes` offer it, and `jig queue`, `jig task new`, `jig upgrade`, `jig config set|unset`, `jig spec item`
+`jig queue list`, `jig queue next`, `jig config keys`, `jig knowledge proposed`, `jig knowledge sources`, `jig knowledge read`,
+`jig pr reviewers` and `jig writes` offer it, and `jig queue`, `jig task new`, `jig upgrade`, `jig config set|unset`, `jig spec item`
 and `jig knowledge decide|accept|reject|reviewed` answer in it when they write; more commands will, in the
 same form.
 
@@ -26,7 +26,8 @@ jig knowledge sources --json
 <Info>
   A `--json` read never touches the network. It reads files on your disk and asks Git about your
   local repository; it never calls `gh` or fetches. You can run it as often as you like, in many
-  projects at once, without running into a forge's rate limits.
+  projects at once, without running into a forge's rate limits. The one exception is
+  `jig pr reviewers --json` (below): who may review a pull request is known only to the forge.
 </Info>
 
 ## The envelope
@@ -101,6 +102,7 @@ be reworded.
 | `upgrade-blocked` | `jig upgrade` would not start here and changed nothing; the message names every reason and what to do |
 | `not-merged` | the upgrade is done and waits for its pull request to be merged: `jig upgrade --land` found it still open, or `jig upgrade` found this version already on an unmerged `jig/upgrade-<version>` branch whose pull request is open. Nothing was changed; the message names the pull request — merge it, then run `jig upgrade --land` |
 | `unknown-key`, `not-local`, `invalid-value`, `secret-key` | `jig config set --json` refused a key or value: a name Jig does not read, a key only the team's `.ai/config.yaml` answers for, a value the key does not accept, or a secret on a command line. Nothing was written |
+| `forge-unavailable` | `jig pr reviewers --json` could not ask the forge: none set up for this clone, its CLI missing or not signed in, or the call failed |
 | `failed` | anything else: the message says what |
 
 New codes may appear, for refusals that today read `failed`. Treat a code you do not know as
@@ -388,6 +390,20 @@ words of the Jig command it last ran; such a task is never advised. Each of `che
 that holds a candidate back, in `state` `open`, `broken`
 (it never ends; drop it with `jig queue undepend`) or `unknown`. `not_queued` counts the active
 tasks outside the queue. The fields are in [the schema](https://github.com/fapost-lab/jig/blob/main/schemas/json.md).
+
+## Who may review a pull request
+
+`jig pr reviewers --json` lists the people to offer as reviewers before `jig task ship <id>
+--reviewer <login>`: those who reviewed the last merged pull requests into the staging branch (or the
+base, or `--base <branch>`), most frequent first, or, when nobody did, everyone the repository may ask.
+Only people, never teams or bots, and never the account that opens the pull request:
+
+```json
+{"base": "staging", "source": "history", "author": "me", "candidates": [{"login": "alice", "name": "Alice Smith", "reviews": 2}]}
+```
+
+It asks the forge, so call it when a person is about to choose, not on a timer. When the forge cannot
+be asked it is refused with the code `forge-unavailable`. The fields are in [the schema](https://github.com/fapost-lab/jig/blob/main/schemas/json.md#jig-pr-reviewers---json).
 
 ## Changing the queue
 

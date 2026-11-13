@@ -203,8 +203,11 @@ pull request into the staging branch instead, and none into the main branch. At 
 also lands it there; below `merge` it stops at the pull request and you land it later with
 `jig task land <id>`. When the task has been tested, "prepare for prod" (`jig task promote <id>`)
 opens a second pull request, from the task's branch into the main branch. A task of an epic still
-goes into its epic. The whole flow — setup, landing, conflicts, promoting from CI, auto-merge — is
-on [Test on staging first](/staging-flow).
+goes into its epic. Before shipping onto staging your agent asks you who should review, offering the
+people who reviewed recent pull requests there, and `jig task ship <id> --reviewer <login or name>`
+requests them on the pull request it opens; it lands only once every one of them has answered. The
+whole flow — setup, review, landing, conflicts, promoting from CI, auto-merge — is on
+[Test on staging first](/staging-flow).
 </Accordion>
 
 <span id="specs-and-epics" />

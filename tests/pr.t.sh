@@ -432,6 +432,10 @@ test_pr_refuses_to_run_inside_a_review_tree() {
   assert_eq 1 "$RC"
   assert_contains "$OUT" "is a pull request's review tree; run jig pr in your own checkout"
   assert_file feature.txt
+  # `reviewers` too: there the forge and the branches are the author's config.
+  run jig pr reviewers
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is a pull request's review tree; run jig pr in your own checkout"
 }
 
 # --- draft --------------------------------------------------------------------

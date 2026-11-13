@@ -219,17 +219,23 @@ land_abort() {
 # land now by `git.staging_review`. Sets _LAND_RC and returns 1 when it may not
 # (S7 or S8 said); 0 when it may.
 _land_approval_gate() {
-  local who="$1" id="$2" pr="$3" without="$4" review approval why
+  local who="$1" id="$2" pr="$3" without="$4" review approval pending why
   review=$(jig_staging_review) || review=ask
   if [ "$review" = none ]; then
     printf '%s: landing %s without an approval: git.staging_review is none\n' "$who" "$pr"
     _LAND_WITHOUT="git.staging_review is none"
     return 0
   fi
-  approval=$(jig_pr_approval "$pr")
+  jig_pr_approval_v approval pending "$pr"
   [ "$approval" != approved ] || return 0
   case "$approval" in
     changes) why="changes requested" ;;
+    waiting)
+      if [ -n "$pending" ]; then
+        why="waiting for $(printf '%s' "$pending" | sed 's/,/, /g')"
+      else
+        why="waiting for more approvals"
+      fi ;;
     none) why="no review" ;;
     *) why="the forge cannot say" ;;
   esac
