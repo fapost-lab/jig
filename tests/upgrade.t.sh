@@ -1866,7 +1866,8 @@ STUB
     > .ai/runtime/forge-cache
   src=$(_unit_source)
 
-  run env PATH="$dir/stub-bin:$PATH" jig upgrade --from "$src"
+  PATH="$dir/stub-bin:$PATH"
+  run jig upgrade --from "$src"
   assert_eq 0 "$RC"
   assert_contains "$OUT" "https://gitlab.com/example/example/-/merge_requests/157"
   assert_eq main "$(git symbolic-ref --short HEAD)"
