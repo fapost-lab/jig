@@ -296,8 +296,10 @@ person, and may be reworded. The kinds cover a stopped autopilot run (`autopilot
 (`gate-waiting`, `gate-changed`), a finished task waiting for your git step (`git-step`), pull
 requests to review, merge or close (`pull-request-waiting`, `pull-request-was-open`,
 `pull-request-of-abandoned-task`), on the staging flow the staging branch drifting from the base
-branch (`staging-unpromoted`, with `"staging": {"branch", "days"}`; `staging-unowned`, with
-`"staging": {"commits"}`; `promotion-conflicting`, with the same `pull_request` as an upgrade's —
+branch (`staging-unpromoted`, with `"staging": {"branch", "days"}`; `staging-unowned`, your own
+commits there that no task holds, with `"staging": {"commits", "list", "ack"}` — the count, up to 20
+of them, and `jig staging ack --expect <count>`, the command that marks them as known (it refuses when the
+count moved since your read); `promotion-conflicting`, with the same `pull_request` as an upgrade's —
 [the staging drift report](/manual-control#the-staging-drift-report)), what housekeeping flagged (`needs-consolidation`, `wrong-base`,
 `closed-unmerged`, `worktree-kept`), knowledge to decide (`knowledge-proposed`, `sources-changed`)
 a newer jig (`release-available`), and a project whose own Jig is older than the one on your machine
