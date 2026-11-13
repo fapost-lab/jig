@@ -18,6 +18,8 @@ paths:
   - scripts/lib/config.sh
   - scripts/lib/owntree.sh
   - scripts/lib/writes.sh
+  - scripts/lib/pr.sh
+  - scripts/lib/reviewers.sh
 summary: "What a command offering --json may, must and must not do: one envelope through json_run, values from existing producers, no network, schema raised only on an incompatible change."
 reviewed_at: 2026-11-13
 ---

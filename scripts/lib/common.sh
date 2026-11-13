@@ -3884,10 +3884,10 @@ jig_pr_approval_v() {
           [ "$__jpav_rest" = "$__jpav_reviews" ] || __jpav_p=${__jpav_rest#*|}
           case "$__jpav_dec" in
             APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED | '' | null)
-              if [ "$__jpav_dec" = CHANGES_REQUESTED ]; then
-                __jpav_s=changes
-              elif [ "$__jpav_dec" != APPROVED ] && [ "$__jpav_dec" != REVIEW_REQUIRED ] \
-                && case ",$__jpav_reviews," in *,CHANGES_REQUESTED,*) true ;; *) false ;; esac; then
+              # A change request wins under any decision: branch protection's
+              # leaves out reviewers without write access.
+              if [ "$__jpav_dec" = CHANGES_REQUESTED ] \
+                || case ",$__jpav_reviews," in *,CHANGES_REQUESTED,*) true ;; *) false ;; esac; then
                 __jpav_s=changes
               elif [ -n "$__jpav_p" ]; then
                 __jpav_s=waiting

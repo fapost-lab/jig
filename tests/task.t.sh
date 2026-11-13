@@ -6724,6 +6724,17 @@ test_task_land_waits_for_every_requested_reviewer() {
   assert_eq 3 "$RC" "$OUT"
   assert_contains "$OUT" "is not approved (changes requested)"
 
+  # ...and over branch protection's decision, which leaves out a reviewer
+  # without write access.
+  printf 'APPROVED|APPROVED,CHANGES_REQUESTED|\n' > gh-review
+  run jig task land T-1
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "is not approved (changes requested)"
+  printf 'REVIEW_REQUIRED|CHANGES_REQUESTED|\n' > gh-review
+  run jig task land T-1
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "is not approved (changes requested)"
+
   printf '|APPROVED,APPROVED|\n' > gh-review
   run jig task land T-1
   assert_eq 0 "$RC" "$OUT"

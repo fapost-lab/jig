@@ -11,6 +11,8 @@ paths:
   - scripts/lib/hklog.sh
   - scripts/lib/task.sh
   - schemas/json.md
+  - scripts/lib/pr.sh
+  - scripts/lib/reviewers.sh
 summary: Why every --json read is one envelope line built by json.sh around a producer run in a subshell, why revision is null and error.code failed for now, and why housekeeping flags are read through the shared hklog.sh.
 reviewed_at: 2026-11-13
 ---

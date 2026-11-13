@@ -15,13 +15,13 @@
 # on another host.
 # shellcheck shell=bash
 
-PR_USAGE="usage: jig pr reviewers [--base <branch>] [--json] | jig pr fetch <url> | jig pr followup <n|url> [--login <login>] | jig pr draft <n|url> [--from <file>] | jig pr comments check <n|url> | jig pr comments post <n|url> --shown <hash> | jig pr list | jig pr cleanup <n|url>"
+PR_USAGE="usage: jig pr fetch <url> | jig pr reviewers [--base <branch>] [--json] | jig pr followup <n|url> [--login <login>] | jig pr draft <n|url> [--from <file>] | jig pr comments check <n|url> | jig pr comments post <n|url> --shown <hash> | jig pr list | jig pr cleanup <n|url>"
 
 cmd_pr() {
   local sub="${1:-}"
   if [ $# -gt 0 ]; then shift; fi
   # `reviewers` reads this clone's own forge, not a fetched pull request, and
-  # with --json every refusal is an envelope: it runs before the checks below.
+  # with --json every refusal is an envelope: it runs the checks below itself.
   if [ "$sub" = reviewers ]; then
     _pr_reviewers "$@"
     return
@@ -93,6 +93,7 @@ _pr_reviewers_main() {
     esac
   done
   jig_require_repo
+  _pr_refuse_inside_a_review_tree
   if [ -z "$base" ]; then
     base=$(jig_staging_in_use 2>/dev/null) || base=$(cfg git.base_branch main)
   fi
