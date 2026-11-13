@@ -265,6 +265,9 @@ worktree.setup||text||A command run in a new task worktree after it is made.
 worktree.setup_timeout|10m|duration||How long worktree.setup may run; 0 waits for ever.
 forge|auto|choice|auto,github,gitlab,none|Which code forge pull requests and CI are read from.
 task.issue_pattern||text||A regular expression for the tracker issue at the start of a task id.
+hooks.ready|[]|list||The project's scripts run when a task is marked ready; a non-zero exit refuses it.
+hooks.consolidate|[]|list||The project's scripts run when a task's knowledge decision is recorded; a non-zero exit refuses it.
+hooks.ship|[]|list||The project's scripts run when a task is shipped; a non-zero exit refuses it.
 housekeeping.cadence|1d|duration||How often the session hook runs housekeeping, in whole days.
 housekeeping.fetch|true|boolean|true,false|Whether housekeeping may run git fetch.
 housekeeping.trash_ttl|7d|duration||How long trashed workspaces and specs are kept.

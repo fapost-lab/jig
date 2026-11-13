@@ -4667,3 +4667,19 @@ test_status_names_a_personal_pr_review_skill_that_shadows_the_projects() {
 
   rm -rf "$stub_root" "$stub_bin" "$me"
 }
+
+# A hook path a gate would refuse is named before anyone reaches the gate, and
+# status never runs a hook (adr-20261113-a-project-script-can-refuse-a-completion-gate).
+test_status_names_a_gate_hook_path_that_does_not_exist() {
+  fixture_jig_repo
+  mkdir -p .ai/hooks
+  printf '#!/usr/bin/env bash\ntouch ran.txt\n' > .ai/hooks/ok.sh
+  chmod +x .ai/hooks/ok.sh
+  printf 'hooks.ship: [.ai/hooks/ok.sh, .ai/hooks/gone.sh]\n' >> .ai/config.yaml
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "gate hook: hooks.ship names .ai/hooks/gone.sh, which does not exist; every ship gate refuses until it is fixed"
+  assert_not_contains "$OUT" "names .ai/hooks/ok.sh"
+  [ ! -e ran.txt ] || fail "jig status ran a hook"
+}

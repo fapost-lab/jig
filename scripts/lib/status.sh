@@ -214,6 +214,7 @@ _status_report() {
   printf '%s\n' "initialised: yes"
   [ -n "$_SC_READY" ] || _status_counts
   _status_config_local
+  _status_gate_hooks
   _status_agent_git
   _status_autopilot_git
   _status_github_account
@@ -768,6 +769,7 @@ _status_terminal() {
         ;;
       "config.local: "*) _STT_CFG+=("${l#config.local: }") ;;
       "notify: "*) _status_need warn "$l" ;;
+      "gate hook: "*) _status_need fail "$l" ;;
       "agent.git: invalid value "*) _status_need fail "$l" ;;
       "agent.git: "*) _STT_AGENT=${l#agent.git: } ;;
       "autopilot.git: invalid value "*) _status_need fail "$l" ;;
@@ -3455,6 +3457,20 @@ _status_config_local() {
     printf 'config.local: %s in %s is ignored (set it in %s)\n' \
       "$pkey" "$JIG_AI_DIR/config.yaml" "$JIG_AI_DIR/config.local.yaml"
   done < <(jig_config_project_ignored)
+}
+
+# _status_gate_hooks — one line per hook path the project names that its
+# gate would refuse (jig_gate_hook_problems, task.sh), so the person learns it
+# before a task reaches the gate. Checks paths only; never runs a hook
+# (adr-20261113-a-project-script-can-refuse-a-completion-gate).
+_status_gate_hooks() {
+  local key path problem gate
+  while IFS=$'\t' read -r key path problem; do
+    [ -n "$key" ] || continue
+    gate=${key#hooks.}
+    printf 'gate hook: %s names %s, which %s; every %s gate refuses until it is fixed\n' \
+      "$key" "$path" "$problem" "$gate"
+  done < <(jig_gate_hook_problems)
 }
 
 # _status_notify — one line while the latest Telegram message failed
