@@ -3371,7 +3371,7 @@ _jig_ship_pr_gitlab() {
   [ "$draft" != 1 ] || extra="--draft"
   [ "$match" != 1 ] || only="--target-branch"
   out=$(jig_net glab mr list --source-branch "$head" ${only:+$only "$base"} --output json 2>/dev/null || printf '')
-  url=$(printf '%s' "$out" | jig_glab_fields web_url | head -n 1)
+  url=$(printf '%s' "$out" | jig_glab_fields web_url@/merge_requests/ | head -n 1)
   if [ -n "$url" ]; then
     JIG_SHIP_URL="$url"
     printf 'pr %s (already open)\n' "$url"

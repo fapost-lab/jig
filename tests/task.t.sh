@@ -4421,7 +4421,8 @@ case "\$1" in
     case "\$1" in
       list)
         if [ -n "$existing" ]; then
-          printf '[{"iid":7,"assignee":{"id":3,"username":"joe"},"web_url":"%s","title":"x"}]\n' "$existing"
+          # As live glab answers: the author's own web_url comes before the MR's.
+          printf '[{"iid":7,"author":{"id":3,"username":"joe","web_url":"https://gitlab.example/joe"},"web_url":"%s","title":"x"}]\n' "$existing"
         else
           printf '[]\n'
         fi
@@ -5217,6 +5218,7 @@ test_task_ship_pr_level_does_not_duplicate_an_existing_open_mr() {
   run jig task ship T-1 --message-file msg.txt
   assert_eq 0 "$RC"
   assert_contains "$OUT" "pr https://gitlab.example/x/-/merge_requests/7 (already open)"
+  assert_not_contains "$OUT" "gitlab.example/joe" "the author's web_url is not the merge request's"
   assert_no_file glab-create.argv
 }
 
