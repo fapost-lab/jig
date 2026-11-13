@@ -11,7 +11,7 @@ paths:
   - scripts/lib/context.sh
   - scripts/lib/knowledge.sh
   - "templates/knowledge/**"
-reviewed_at: 2026-09-18
+reviewed_at: 2026-11-13
 summary: Why knowledge declares how it should be loaded, and why directories never decide applicability.
 ---
 # ADR-0014: Knowledge declares how it should be loaded, and directories never decide
@@ -139,3 +139,10 @@ it from validation and hidden it from every consumer, silently.
 > templates carry both fields, so an agent editing a file a pack names reached nothing unless it
 > also passed `--domains`, and never saw that something was missing. The resolver's cache
 > fingerprint names the selection rule, so a cache written under the old rule is not served.
+
+> **Amendment (2026-11-13).** `load` gains a fourth value, `stage`: such a document is required only
+> when `--stage` names one of its `stages`, and its `paths`, `domains` and `topics` never select it.
+> Elsewhere it is not listed in the catalog either, including the catalog of project-wide documents
+> amended above, and the stateless form never lists it. `--ids` and `requires` still select it.
+> `knowledge check` fails `load: stage` without `stages`
+> (adr-20261113-a-document-can-be-required-at-named-stages).

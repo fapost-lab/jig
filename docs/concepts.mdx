@@ -87,6 +87,7 @@ The catalog helps the agent discover additional knowledge without reading every 
   | `load: always` | Requires the document for every resolution. |
   | `load: domain` | Requires it when one of its declared domains is selected, or when a file under work matches one of its `paths`. |
   | `load: matched` (default) | Requires it for matching file paths or topics, an explicit ID, or a matching stage within an entered domain. Domain membership alone makes it discoverable in the catalog. |
+  | `load: stage` | Requires it only at the stages listed in its `stages`, in every task, whatever domains are entered. At other stages it is neither required nor in the catalog. |
   | `requires` | Adds the selected document's dependencies transitively. |
   | `summary` | Supplies the short description in a catalog entry. |
 
@@ -96,6 +97,9 @@ The catalog helps the agent discover additional knowledge without reading every 
 
   **Stage selection is additive.** `--stage` can bring in additional guidance for the stage;
   it never removes required globals, existing matches, or dependencies to make the context smaller.
+  `load: stage` is the author's own choice for one document — a rule that belongs to
+  consolidation, say — and changes nothing for any other document. An explicit ID or another
+  document's `requires` still brings it in at any stage.
   `--ids` explicitly selects a catalog document when the agent needs its full content.
 
   For example, in Jig's own repository, inspect what an edit to the introduction requires:

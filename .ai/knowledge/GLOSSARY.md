@@ -280,9 +280,10 @@ stub's place, and `source_hash` records the text a human approved (ADR-0036). In
 
 ## Load Policy
 
-A knowledge document's `load` field — `always`, `domain` or `matched` — stating how
+A knowledge document's `load` field — `always`, `domain`, `matched` or `stage` — stating how
 strongly it applies. Decides whether `jig context resolve` requires its body or lists it
-in the Catalog.
+in the Catalog. `stage` requires it only at the stages its `stages` names, in every task, and
+never lists it in the Catalog.
 
 ## Catalog (Context Catalog)
 

@@ -2027,6 +2027,121 @@ test_sdd_stage_and_taskless_argument_validation() {
   assert_contains "$OUT" 'conflicts'
 }
 
+# --- load: stage — required at its stage and nowhere else ------------------------
+
+stage_only_setup() {
+  ctx_setup
+  jig task new so-task --class T3 --domains payments >/dev/null
+  cat > .ai/knowledge/conventions/published-docs.md <<'DOC'
+---
+id: convention-published-docs-updates
+type: convention
+status: active
+domains: []
+paths: []
+load: stage
+stages: [consolidate]
+summary: Published docs follow the release.
+---
+Body.
+DOC
+}
+
+test_stage_only_required_at_its_stage_with_task() {
+  stage_only_setup
+  run jig context resolve --task so-task --stage consolidate --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" 'load: stage; stage: consolidate'
+  assert_contains "$OUT" '.ai/knowledge/conventions/published-docs.md'
+}
+
+test_stage_only_absent_elsewhere_even_from_catalog() {
+  stage_only_setup
+  run jig context resolve --task so-task --stage implement --catalog --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" 'published-docs.md'
+  run jig context resolve --task so-task --catalog --files - < /dev/null
+  assert_not_contains "$OUT" 'published-docs.md'
+}
+
+test_stage_only_required_without_a_task() {
+  stage_only_setup
+  run jig context resolve --no-task --stage consolidate --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" 'published-docs.md'
+}
+
+test_stage_only_ignores_paths_domains_and_topics() {
+  stage_only_setup
+  cat > .ai/knowledge/conventions/bound.md <<'DOC'
+---
+id: convention-bound
+type: convention
+status: active
+domains: [payments]
+paths: [bound.txt]
+topics: [money]
+load: stage
+stages: [verify]
+---
+Bound.
+DOC
+  run jig context resolve --task so-task --stage design --files bound.txt --topics money
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" 'conventions/bound.md'
+  run jig context resolve --task so-task --stage verify --files - < /dev/null
+  assert_contains "$OUT" 'conventions/bound.md'
+}
+
+test_stage_only_guard_fails_until_acknowledged() {
+  stage_only_setup
+  local global
+  for global in GLOSSARY ARCHITECTURE RULES; do
+    jig context acknowledge --task so-task --files ".ai/knowledge/$global.md" >/dev/null
+  done
+  run jig context guard --task so-task --stage consolidate --files - < /dev/null
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'published-docs.md'
+  jig context acknowledge --task so-task --files .ai/knowledge/conventions/published-docs.md >/dev/null
+  run jig context guard --task so-task --stage consolidate --files - < /dev/null
+  assert_eq 0 "$RC"
+}
+
+test_stage_only_ids_still_select_it() {
+  stage_only_setup
+  run jig context resolve --task so-task --stage implement --ids convention-published-docs-updates --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" 'id: convention-published-docs-updates'
+}
+
+test_stage_only_stateless_form_never_lists_it() {
+  stage_only_setup
+  cat > .ai/knowledge/conventions/bound.md <<'DOC'
+---
+id: convention-bound
+type: convention
+status: active
+domains: [payments]
+paths: [bound.txt]
+load: stage
+stages: [verify]
+---
+Bound.
+DOC
+  run jig context --files bound.txt --domains payments
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" 'conventions/bound.md'
+}
+
+test_stage_only_survives_the_resolution_cache() {
+  stage_only_setup
+  run jig context resolve --task so-task --stage consolidate --files - < /dev/null
+  assert_contains "$OUT" 'published-docs.md'
+  run jig context resolve --task so-task --stage consolidate --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" 'published-docs.md'
+}
+
 # --- resolve: catalog lists project-wide documents (ADR-0014 amendment 2026-09-18) ---
 # A document with neither `domains` nor `paths` belongs to no domain an agent
 # can enter and matches no file it can touch; the catalog is the one place it
