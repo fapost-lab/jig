@@ -57,7 +57,10 @@ evidence it inferred itself.
   requests only (about 1 s, where the check rollup for all 200 in the first call cost 13 s instead
   of 2), so a run makes two calls whatever the number of tasks. Written atomically after a list the
   forge answered, never on a dry run, never by a worktree that borrows the owner's task directory;
-  a run without an answer leaves the last cache, whose entries keep their `fetched_at`.
+  a run without an answer leaves the last cache, whose entries keep their `fetched_at`. GitLab's
+  list asks for 100 merge requests, its largest page. One other writer: `jig upgrade` puts the
+  pull request it left open at the top of the cache (`forgecache_record`), so `jig status` names it
+  before the next run, which replaces the cache whole.
 - **`jig refresh`**, outside housekeeping and on demand: the same fetch (`_hk_fetch`'s form), then
   a fast-forward of the base only, never moving the checkout or touching its changes, then the
   closing of writes in Jig's own tree that are over (ot_judge's `gone`); the button a

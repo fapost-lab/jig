@@ -58,6 +58,14 @@ person's git work: switch to the base, pull, delete the branch. Jig UI may not r
   which a program shows as waiting, not as a failure; a merged or closed one is named with its
   state and reads `failed`. No forge, a bad `forge:` value or a forge that did not answer leave the
   refusal it always was: the lookup can add a pull request to the message, never another error.
+- (Amended 2026-11-13, task gitlab-upgrade-mr-in-status.) `jig upgrade` that leaves its pull
+  request open — opened, or found already open — writes it into the forge cache itself, as `open`,
+  in place of any older line for the same branch and base, every other line kept
+  (`forgecache_record`). Housekeeping is started by a session in the project, so an upgrade made
+  from anywhere else went unmentioned by `jig status` until then: a GitLab project nobody opened a
+  session in for weeks showed only `upgrade-available` while its merge request waited. The next
+  housekeeping run still replaces the whole cache with what the forge says. Housekeeping's GitLab
+  list asks for 100 merge requests, GitLab's largest page, not glab's default 30.
 - (Amended 2026-11-13, task upgrade-land-without-checkout.) A checkout on a third branch — neither
   the base nor the upgrade's, a detached HEAD included, in the main checkout or a linked worktree —
   is no longer refused and never switched: other sessions may be working in it. `--land` moves only

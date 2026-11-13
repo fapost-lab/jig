@@ -764,7 +764,10 @@ _hk_forge_init() {
       # A row needs a branch and a state; jig_glab_fields (common.sh) splits
       # glab's compact array and drops objects without a source branch. The
       # merge request's own web_url, not its author's, which comes first.
-      _HK_FORGE_PRS=$(glab mr list --all --output json 2>/dev/null \
+      # 100, GitLab's largest page, where glab's own default is 30: an upgrade
+      # merge request behind 30 newer ones would drop out of the forge cache,
+      # which this list replaces whole (GitHub's list asks for 200).
+      _HK_FORGE_PRS=$(glab mr list --all --per-page 100 --output json 2>/dev/null \
         | jig_glab_fields source_branch target_branch state sha web_url@/merge_requests/ detailed_merge_status \
         | awk -F '\t' '$3 != ""' \
         || printf '__failed__')

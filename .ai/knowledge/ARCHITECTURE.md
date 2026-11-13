@@ -39,7 +39,8 @@ library that calls a command library's function — its rechecks ask `task_state
 of the rechecks sources `lib/task.sh` before it; `queue`, which may not source `task.sh`, reads only
 the last run's lines (`hklog_ids`) to tell `jig queue next` which dependencies have landed, and
 `jig queue prune` which of them are met (adr-20261107-a-finished-task-leaves-the-queue). `lib/forgecache.sh` follows the same rule: `housekeeping` writes the
-forge cache and `task` reads it, and both find it through `_task_borrowed_tasks_root`. A subject large enough to crowd out its command gets a library of its own even
+forge cache, `upgrade` adds the pull request it has just opened, `task` and `status` read it, and
+all of them find it through `_task_borrowed_tasks_root`. A subject large enough to crowd out its command gets a library of its own even
 with a single caller: `lib/bootstrap.sh` (carrying state into a new worktree, with
 `tests/bootstrap.t.sh`) is sourced by `lib/task.sh` alone, which keeps that file about the task
 lifecycle; so is `lib/land.sh`, landing a task's pull request on the staging branch — the approval,

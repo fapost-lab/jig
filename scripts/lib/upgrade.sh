@@ -1350,8 +1350,33 @@ _upgrade_finish() {
     # deleted here and on origin (adr-20261007-a-merged-branch-leaves-with-its-work).
     jig_ship_leave "upgrade" "$_UPGRADE_BRANCH" "$base" "$sha"
   fi
-  [ "$JIG_SHIP_MERGED" = 1 ] || _upgrade_step_back "$base"
+  if [ "$JIG_SHIP_MERGED" != 1 ]; then
+    _upgrade_record_pr "$base"
+    _upgrade_step_back "$base"
+  fi
   _upgrade_next
+}
+
+# _upgrade_record_pr <base> — put the pull request this run opened, or found
+# already open, into the forge cache as open (forgecache_record), so `jig
+# status` names the upgrade waiting for its merge at once, on GitHub and GitLab
+# alike, and not only after housekeeping next runs: housekeeping runs from a
+# session started in this project, and an upgrade made from anywhere else
+# (another session, Jig UI) would go unmentioned until then (task
+# gitlab-upgrade-mr-in-status). Nothing when no pull request was opened. The
+# URL is kept only when it is a pull or merge request's own address.
+_upgrade_record_pr() {
+  local base="$1" url="$JIG_SHIP_URL" sha
+  [ -n "$url" ] || return 0
+  case "$url" in */pull/* | */merge_requests/*) ;; *) url="" ;; esac
+  sha=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/heads/$_UPGRADE_BRANCH" 2>/dev/null) || sha=""
+  # forgecache.sh finds the cache through task.sh's _task_borrowed_tasks_root,
+  # as for every reader (ARCHITECTURE.md, Scripts layout).
+  # shellcheck source=lib/task.sh
+  . "$JIG_LIB/task.sh"
+  # shellcheck source=lib/forgecache.sh
+  . "$JIG_LIB/forgecache.sh"
+  forgecache_record "$_UPGRADE_BRANCH" "$base" open "$sha" "$url"
 }
 
 # Set by _upgrade_step_back: the branch (or commit) this checkout went back

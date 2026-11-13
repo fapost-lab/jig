@@ -1831,6 +1831,63 @@ test_upgrade_at_agent_git_pr_pushes_its_branch() {
   rm -rf "$src" "$remote"
 }
 
+# The merge request an upgrade opens on GitLab is in the forge cache at once,
+# so `jig status` says the upgrade waits for it without a housekeeping run in
+# between — in a project nobody starts a session in, that run may be weeks
+# away (task gitlab-upgrade-mr-in-status). The line replaces the cache's older
+# line for the same branch and base and keeps every other one.
+test_upgrade_records_the_merge_request_it_opened_for_status() {
+  _unit_project
+  local src remote t dir
+  t=$(printf '\t')
+  sed 's|^forge:.*|forge: gitlab|' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git commit -q -am "fixture: gitlab is the forge"
+  remote=$(mktemp -d "${TMPDIR:-/tmp}/jig-remote.XXXXXX")
+  git init -q --bare "$remote"
+  git remote add origin "$remote"
+  git push -q origin main
+  jig config set --local agent.git pr >/dev/null
+  dir="$PWD"
+  mkdir -p stub-bin .ai/runtime
+  cat > stub-bin/glab <<STUB
+#!/usr/bin/env bash
+case "\$1 \$2" in
+  "auth status") exit 0 ;;
+  "mr list") printf '[]\n' ;;
+  "mr create") printf 'Creating merge request\nhttps://gitlab.com/example/example/-/merge_requests/157\n' ;;
+  *) exit 1 ;;
+esac
+STUB
+  chmod +x stub-bin/glab
+  printf 'stub-bin/\n' >> .git/info/exclude
+  printf '%s\n' "jig/upgrade-9.9.9${t}main${t}closed${t}-${t}2026-10-01T00:00:00Z${t}-${t}-${t}-" \
+    "task/other${t}main${t}open${t}green${t}2026-10-01T00:00:00Z${t}def456${t}https://gitlab.com/example/example/-/merge_requests/11${t}-" \
+    > .ai/runtime/forge-cache
+  src=$(_unit_source)
+
+  PATH="$dir/stub-bin:$PATH"
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "https://gitlab.com/example/example/-/merge_requests/157"
+  assert_eq main "$(git symbolic-ref --short HEAD)"
+
+  local rows
+  rows=$(sed '/^#/d' .ai/runtime/forge-cache)
+  assert_eq 2 "$(printf '%s\n' "$rows" | wc -l | tr -d ' ')"
+  assert_contains "$(printf '%s\n' "$rows" | head -n 1)" \
+    "jig/upgrade-9.9.9${t}main${t}open${t}-${t}"
+  assert_contains "$(printf '%s\n' "$rows" | head -n 1)" \
+    "${t}$(git rev-parse jig/upgrade-9.9.9)${t}https://gitlab.com/example/example/-/merge_requests/157${t}-"
+  assert_contains "$rows" "task/other${t}main${t}open${t}green${t}2026-10-01T00:00:00Z"
+
+  run jig status
+  assert_contains "$OUT" "upgrade pull request: jig/upgrade-9.9.9 into main open as of"
+  assert_contains "$OUT" "(https://gitlab.com/example/example/-/merge_requests/157)"
+
+  rm -rf "$src" "$remote"
+}
+
 # Started on another branch, pushed at agent.git push: the checkout goes back
 # to that branch, not to the base.
 test_upgrade_pushed_goes_back_to_the_branch_it_started_on() {

@@ -460,7 +460,9 @@ still has the old Jig until you merge the base into it. It refuses, changing not
 request is still open, while you have uncommitted changes on the base or the upgrade's branch, when
 the base branch is checked out in another worktree (run it there), when your base branch has commits
 origin does not have, or while origin's base here does not record the upgrade's version yet (fetch,
-then run it again). Until then `jig status` reminds you with an `upgrade pull request:` line.
+then run it again). Until then `jig status` reminds you with an `upgrade pull request:` line, on
+GitHub and GitLab alike, from the moment `jig upgrade` opens the pull request — it does not wait
+for housekeeping to hear of it.
 
 A program — Jig UI, a script that upgrades many projects — runs `jig upgrade --json` and reads what
 the run did instead of these lines: the outcome, the branch, the commit and the pull request, and

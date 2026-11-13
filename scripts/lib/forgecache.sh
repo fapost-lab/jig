@@ -1,8 +1,11 @@
 # The forge cache: what housekeeping last heard from the forge about pull
 # requests, kept so that a read never asks the forge itself
 # (adr-20261015-a-read-is-one-json-envelope; schemas/json.md). Written by
-# `jig housekeeping` from the list it already fetches, read by
-# `jig task list --json`.
+# `jig housekeeping` from the list it already fetches, which replaces it whole;
+# `jig upgrade` adds the one pull request it has just opened (forgecache_record),
+# so the upgrade waiting for its merge is known before housekeeping next runs
+# (adr-20261029-an-upgrade-pull-request-is-landed-by-jig). Read by
+# `jig task list --json` and `jig status`.
 #
 #   .ai/runtime/forge-cache, one line per pull request, newest first as the
 #   forge listed them:
@@ -61,10 +64,30 @@ forgecache_write() {
   mv "$tmp" "$file" 2>/dev/null || return 0
   # `task list --json` reports what the cache holds, so a written cache raises
   # the clone's revision (adr-20261016-the-clone-revision-is-a-claimed-name).
-  # housekeeping, today's one writer, raises it again when its run ends; this
-  # one keeps any other writer from forgetting.
+  # housekeeping raises it again when its run ends; this one keeps any other
+  # writer (forgecache_record) from forgetting.
   jig_record_changed
   return 0
+}
+
+# forgecache_record <head> <base> <state> <head-commit> <url> — put one pull
+# request a command has just heard of at the top of the cache, in place of any
+# line for the same <head> and <base>, every other line kept as it was: the
+# newest is first, as the forge lists them. <ci> and <mergeable> are `-`, not
+# asked; <fetched_at> is now; <head-commit> or <url> that is empty or does not
+# look like one is `-`. The next housekeeping run replaces the whole cache with
+# what the forge says. Never fails the caller (forgecache_write).
+forgecache_record() {
+  local head="$1" base="$2" state="$3" sha="$4" url="$5" t at rest
+  [ -n "$head" ] && [ -n "$base" ] || return 0
+  case "$state" in open | merged | closed) ;; *) return 0 ;; esac
+  case "$sha" in '' | *[!0-9a-f]*) sha="-" ;; esac
+  case "$url" in '' | *[[:space:]]*) url="-" ;; esac
+  t=$(printf '\t')
+  at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  rest=$(forgecache_read | awk -F '\t' -v h="$head" -v b="$base" '!($1 == h && $2 == b)')
+  forgecache_write "$head$t$base$t$state$t-$t$at$t$sha$t$url$t-${rest:+
+$rest}"
 }
 
 # forgecache_read — the cache's lines, comments left out; nothing when there is
