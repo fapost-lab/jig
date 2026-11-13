@@ -54,8 +54,10 @@ Usage: jig <command> [args]
                                  update framework-owned files (manifest-aware); a copy
                                  takes a released source only, unless --unreleased; --json
                                  reports what it did as data (schemas/json.md)
-  upgrade --land [--json]        once an upgrade's pull request is merged: back on the
-                                 base branch, fast-forwarded, the upgrade branch let go
+  upgrade --land [--json]        once an upgrade's pull request is merged: the base branch
+                                 fast-forwarded (checked out from the base or the upgrade
+                                 branch; on any other branch only its ref moves), the
+                                 upgrade branch let go
   status [--html | --open | --json]
                                  active tasks, housekeeping flags, drift;
                                  --html writes the status page to .ai/runtime/status.html,

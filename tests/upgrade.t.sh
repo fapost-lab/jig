@@ -2587,9 +2587,11 @@ test_upgrade_refusal_stays_when_the_forge_does_not_answer() {
   rm -rf "$src" "$LAND_REMOTE"
 }
 
-# Uncommitted work and a checkout on somebody else's branch stop it, both
-# named at once; nothing is stashed and nothing moves.
-test_upgrade_land_refuses_a_dirty_tree_on_another_branch() {
+# On somebody else's branch, with uncommitted work in the tree, the checkout
+# is never switched (task upgrade-land-without-checkout): main's ref is
+# fast-forwarded to origin's, the upgrade's branch let go, and the tree, its
+# changes and HEAD stay as they were. Nothing is stashed.
+test_upgrade_land_from_another_branch_leaves_the_checkout_alone() {
   _land_project merged
   PATH=$LAND_PATH
   local head
@@ -2597,14 +2599,156 @@ test_upgrade_land_refuses_a_dirty_tree_on_another_branch() {
   printf 'work\n' >> README.md
   head=$(git rev-parse HEAD)
 
-  _up_json upgrade --land --json
-  assert_eq 1 "$RC"
-  assert_contains "$OUT" '"error":{"code":"upgrade-blocked","message":"upgrade --land: nothing was changed:\n  - the working tree has uncommitted changes'
-  assert_contains "$OUT" '\n  - this checkout is on task/elsewhere, not on main or jig/upgrade-9.9.9'
+  run jig upgrade --land
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "upgrade: landed jig/upgrade-9.9.9 (https://github.com/example/example/pull/12); main at"
+  assert_contains "$OUT" "this checkout stays on task/elsewhere"
+  assert_contains "$OUT" "next: task/elsewhere is still at Jig $(sed -n 's/^jig.version: //p' .ai/manifest); merge main into it to take the upgrade"
+  assert_contains "$OUT" "upgrade: deleted branch jig/upgrade-9.9.9"
+  assert_contains "$OUT" "upgrade: deleted branch jig/upgrade-9.9.9 on origin"
   assert_eq task/elsewhere "$(git symbolic-ref --short HEAD)"
   assert_eq "$head" "$(git rev-parse HEAD)"
   assert_contains "$(git diff --name-only)" README.md
   [ -z "$(git stash list)" ] || fail "something was stashed"
+  assert_eq "$(git rev-parse origin/main)" "$(git rev-parse main)"
+  assert_contains "$(git show main:.ai/manifest)" "jig.version: 9.9.9"
+  if git show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9; then fail "the local branch is still here"; fi
+
+  run jig upgrade --land
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "upgrade: no merged upgrade waits to be brought here"
+
+  rm -rf "$LAND_REMOTE"
+}
+
+# A squash merge whose branch the forge already deleted: the local branch has
+# no upstream left and `git branch -d` would measure it against HEAD, the
+# task's branch. The merged head the forge reported lets it go anyway, also
+# below agent.git push, where origin is never touched. The data says the
+# checkout is not on the base.
+test_upgrade_land_from_another_branch_after_a_squash_merge() {
+  _land_project merged squash
+  PATH=$LAND_PATH
+  jig config set --local agent.git commit >/dev/null
+  git push -q origin :refs/heads/jig/upgrade-9.9.9
+  git fetch -q --prune origin
+  git checkout -q -b task/elsewhere
+
+  _up_json upgrade --land --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"to":"9.9.9","outcome":"landed"'
+  assert_contains "$OUT" '"commit":"'"$(git rev-parse origin/main)"'"'
+  assert_contains "$OUT" '"land":{"base":"main","checkout_on_base":false,"branch_deleted":true,"origin_branch_deleted":false}'
+  assert_contains "$ERR" "upgrade: deleted branch jig/upgrade-9.9.9"
+  assert_eq task/elsewhere "$(git symbolic-ref --short HEAD)"
+  assert_eq "$(git rev-parse origin/main)" "$(git rev-parse main)"
+  if git show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9; then fail "the local branch is still here"; fi
+
+  rm -rf "$LAND_REMOTE"
+}
+
+# On a detached HEAD in a clone with no local main, main is created from
+# origin's, tracking it; HEAD stays detached where it was.
+test_upgrade_land_on_a_detached_head_creates_a_missing_base() {
+  _land_project merged
+  PATH=$LAND_PATH
+  local head
+  git checkout -q --detach
+  head=$(git rev-parse HEAD)
+  git branch -q -D main
+
+  run jig upgrade --land
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "this checkout stays on a detached HEAD"
+  assert_eq "$(git rev-parse origin/main)" "$(git rev-parse main)"
+  assert_eq origin/main "$(git rev-parse --abbrev-ref "main@{upstream}")"
+  assert_eq "$head" "$(git rev-parse HEAD)"
+  if git symbolic-ref -q HEAD >/dev/null; then fail "HEAD was attached to a branch"; fi
+
+  rm -rf "$LAND_REMOTE"
+}
+
+# A branch that has merged origin's main already has the upgrade: no `next:`
+# line tells it to merge main again.
+test_upgrade_land_from_a_branch_that_has_the_upgrade_says_no_next() {
+  _land_project merged
+  PATH=$LAND_PATH
+  git checkout -q -b task/elsewhere
+  git merge -q --ff-only origin/main
+
+  run jig upgrade --land
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "this checkout stays on task/elsewhere"
+  assert_not_contains "$OUT" "next:"
+  assert_eq "$(git rev-parse origin/main)" "$(git rev-parse main)"
+
+  rm -rf "$LAND_REMOTE"
+}
+
+# A main another worktree is rebasing shows there as a detached HEAD, so the
+# checks pass; git itself refuses to move a branch in use, and nothing moves.
+test_upgrade_land_from_another_branch_never_moves_a_base_being_rebased() {
+  _land_project merged
+  PATH=$LAND_PATH
+  local wt main_before
+  git checkout -q -b task/elsewhere
+  wt=$(mktemp -d "${TMPDIR:-/tmp}/jig-land-wt.XXXXXX")
+  rmdir "$wt"
+  git worktree add -q "$wt" main
+  ( cd "$wt" && GIT_SEQUENCE_EDITOR="sed -i.bak s/^pick/edit/" git rebase -q -i HEAD~1 >/dev/null 2>&1 ) || true
+  git -C "$wt" status | grep -q "rebase in progress" || fail "the fixture is not rebasing"
+  main_before=$(git rev-parse main)
+
+  run jig upgrade --land
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "upgrade --land: main could not be fast-forwarded to origin/main (another worktree uses it, or it moved while this ran); nothing was changed"
+  assert_eq "$main_before" "$(git rev-parse main)"
+  assert_eq task/elsewhere "$(git symbolic-ref --short HEAD)"
+  git show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 || fail "the branch was deleted"
+
+  git -C "$wt" rebase --abort >/dev/null 2>&1 || true
+  git worktree remove --force "$wt"
+  rm -rf "$LAND_REMOTE"
+}
+
+# From another branch, main checked out in another worktree is that
+# worktree's to move, and a main with a commit origin's lacks is never moved:
+# both named at once, nothing moves.
+test_upgrade_land_from_another_branch_keeps_the_refusals_that_protect() {
+  _land_project merged
+  PATH=$LAND_PATH
+  local wt main_before
+  git commit -q --allow-empty -m "local only"
+  main_before=$(git rev-parse main)
+  git checkout -q -b task/elsewhere
+  wt=$(mktemp -d "${TMPDIR:-/tmp}/jig-land-wt.XXXXXX")
+  rmdir "$wt"
+  git worktree add -q "$wt" main
+
+  run jig upgrade --land
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "main is checked out in another worktree; run \`jig upgrade --land\` there"
+  assert_contains "$OUT" "main here has commits origin/main does not have, so it cannot be fast-forwarded"
+  assert_eq "$main_before" "$(git rev-parse main)"
+  assert_eq task/elsewhere "$(git symbolic-ref --short HEAD)"
+  git show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 || fail "the branch was deleted"
+
+  git worktree remove --force "$wt"
+  rm -rf "$LAND_REMOTE"
+}
+
+# On main itself the tree is moved, so uncommitted changes still stop it.
+test_upgrade_land_on_the_base_refuses_a_dirty_tree() {
+  _land_project merged
+  PATH=$LAND_PATH
+  local head
+  printf 'work\n' >> README.md
+  head=$(git rev-parse HEAD)
+
+  _up_json upgrade --land --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"upgrade-blocked","message":"upgrade --land: nothing was changed:\n  - the working tree has uncommitted changes'
+  assert_eq "$head" "$(git rev-parse HEAD)"
   git show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 || fail "the branch was deleted"
 
   rm -rf "$LAND_REMOTE"
@@ -2640,7 +2784,7 @@ test_upgrade_land_json_reports_a_landed_upgrade() {
   _up_json upgrade --land --json
   assert_eq 0 "$RC" "$ERR"
   assert_eq 1 "$(printf '%s\n' "$OUT" | grep -c .)" "stdout held more than one line: $OUT"
-  assert_contains "$OUT" '"data":{"mode":"copy","dry_run":false,"from":"'"$from"'","to":"9.9.9","outcome":"landed","files":null,"git":{"level":"commit","branch":"jig/upgrade-9.9.9","commit":"'"$(git rev-parse HEAD)"'","pushed":true,"pull_request":"https://github.com/example/example/pull/12","merged":true},"land":{"base":"main","branch_deleted":true,"origin_branch_deleted":false},"manual_steps":[],"would_stop":[]}}'
+  assert_contains "$OUT" '"data":{"mode":"copy","dry_run":false,"from":"'"$from"'","to":"9.9.9","outcome":"landed","files":null,"git":{"level":"commit","branch":"jig/upgrade-9.9.9","commit":"'"$(git rev-parse HEAD)"'","pushed":true,"pull_request":"https://github.com/example/example/pull/12","merged":true},"land":{"base":"main","checkout_on_base":true,"branch_deleted":true,"origin_branch_deleted":false},"manual_steps":[],"would_stop":[]}}'
   assert_contains "$ERR" "upgrade: landed jig/upgrade-9.9.9"
   git -C "$LAND_REMOTE" show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 || fail "origin's branch was deleted below agent.git push"
 
@@ -2703,7 +2847,7 @@ test_upgrade_land_keeps_the_branch_when_the_key_is_off() {
   _up_json upgrade --land --json
   assert_eq 0 "$RC" "$ERR"
   assert_contains "$OUT" '"outcome":"landed"'
-  assert_contains "$OUT" '"land":{"base":"main","branch_deleted":false,"origin_branch_deleted":false}'
+  assert_contains "$OUT" '"land":{"base":"main","checkout_on_base":true,"branch_deleted":false,"origin_branch_deleted":false}'
   assert_eq "$(git rev-parse origin/main)" "$(git rev-parse HEAD)"
   git show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 || fail "the local branch was deleted"
   git -C "$LAND_REMOTE" show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 || fail "origin's branch was deleted"

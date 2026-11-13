@@ -72,10 +72,13 @@
   branch a caller lets go, never `--atomic`, through `jig_branches_leave_origin`; when origin no longer
   has it, `git branch -d -r` drops the stale `origin/` ref once the local branch is gone — there,
   or in `_hk_branch_sweep` for an `origin/` ref with no local branch, checked by one `ls-remote`
-  per run. Two callers: `jig_ship_leave`, right after a merge `jig upgrade`, `jig task ship` or `jig spec
+  per run. Three callers: `jig_ship_leave`, right after a merge `jig upgrade`, `jig task ship` or `jig spec
   ship` made, in the main checkout only — and from `jig upgrade --land`, once the forge reports the
   upgrade's pull request merged and this checkout is on the base, fast-forwarded to origin's, with
-  the merged head passed for origin only at `agent.git` `push` or above; and housekeeping's `_hk_branch_sweep`, which leaves the
+  the merged head passed for origin only at `agent.git` `push` or above; `jig upgrade --land` from a
+  checkout on a third branch, which moves only the base's ref and calls `jig_branch_leave` itself,
+  with the merged head for the local branch at every level and for origin only at `push` or above
+  (adr-20261029-an-upgrade-pull-request-is-landed-by-jig); and housekeeping's `_hk_branch_sweep`, which leaves the
   branch of every workspace it keeps, touches origin only at `agent.git` `push` or above, and
   fetches with `--no-prune` so the upstream `-d` needs is still there.
   (adr-20261007-a-merged-branch-leaves-with-its-work)
