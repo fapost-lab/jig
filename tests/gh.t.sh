@@ -990,6 +990,8 @@ _git_bare_calls() {
       skip && /^}/ { skip = 0; next }
       skip { next }
       /^[[:space:]]*#/ { next }
+      # A fetch from "." reads this repository itself, never origin.
+      /git[[:space:]]+(-[cC][[:space:]]+[^[:space:]]+[[:space:]]+)*fetch([[:space:]]+-[^[:space:]]+)*[[:space:]]+\.([[:space:]]|$)/ { next }
       /(^|[$(|&;{])[[:space:]]*((then|do|else|if|exec|command|jig_net|!|[A-Z_][A-Z0-9_]*=[^[:space:]]*)[[:space:]]+)*git[[:space:]]+(-[cC][[:space:]]+[^[:space:]]+[[:space:]]+)*(fetch|push|ls-remote|pull)([[:space:]]|$)/ {
         printf "%s:%d:%s\n", file, NR, $0
       }' "$f"
@@ -1004,6 +1006,7 @@ jig_die "git push failed"
 printf 'push it with `git push -u origin %s`\n' "$b"
 jig_net jig_git_origin fetch --quiet origin
 git -C "$JIG_PROJECT" stash push -u
+git -C "$JIG_PROJECT" fetch -q --no-tags --no-recurse-submodules . \
 G
   assert_eq "" "$(_git_bare_calls guard)" "the guard flags what is not a call"
   cat > guard/lib/y.sh <<'G'
