@@ -12,7 +12,7 @@ Goal: a document can be required at named stages of every task, with no domain a
 by `jig context resolve --stage consolidate` for a task with no matching domain, is absent from
 `--stage implement`, and `jig knowledge check` fails `load: stage` without `stages`.
 
-- [ ] stage-only loading — `load: stage` through the resolver, pending/guard, `knowledge check`,
+- [ ] `stage-only-loading` — stage-only loading — `load: stage` through the resolver, pending/guard, `knowledge check`,
   `schemas/frontmatter.md`, the docs site and an ADR amending ADR-0014/0021
 
 ## Phase 2 — command hooks at completion gates
@@ -22,7 +22,7 @@ exits non-zero makes the gate refuse with the hook's name and output, a hook tha
 output passes and shows it as a warning, a missing hook path refuses and is reported by
 `jig status`, and a waiver with a reason lets that one task through and appears in `jig status`.
 
-- [ ] gate hooks — `hooks.ready|consolidate|ship` read from `.ai/config.yaml` only, run in
+- [ ] `gate-hooks` — gate hooks — `hooks.ready|consolidate|ship` read from `.ai/config.yaml` only, run in
   `task set` and `task ship` after the findings and receipt checks, exit-code contract,
   environment, misconfiguration reporting, docs and an ADR
 - [ ] hook waivers — a per-task waiver with a reason, shown by `jig status` and in the pull
