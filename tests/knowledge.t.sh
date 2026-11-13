@@ -1602,7 +1602,7 @@ load: sometimes
 EOF
   run jig knowledge check
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "FAIL .ai/knowledge/features/a.md: invalid load: sometimes (expected always, domain or matched)"
+  assert_contains "$OUT" "FAIL .ai/knowledge/features/a.md: invalid load: sometimes (expected always, domain, matched or stage)"
 }
 
 test_load_valid_values_pass() {
@@ -2527,6 +2527,29 @@ DOC
   run jig knowledge stages add
   assert_eq 1 "$RC"
   assert_contains "$OUT" 'usage:'
+}
+
+test_stage_only_load_requires_stages() {
+  km_setup
+  printf -- '---\nid: feature-so\ntype: feature\nstatus: active\nload: stage\nsummary: S.\n---\n' \
+    > .ai/knowledge/features/so.md
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'load: stage without stages'
+  printf -- '---\nid: feature-so\ntype: feature\nstatus: active\nload: stage\nstages: []\nsummary: S.\n---\n' \
+    > .ai/knowledge/features/so.md
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'load: stage without stages'
+}
+
+test_stage_only_load_with_stages_has_no_catalog_warning() {
+  km_setup
+  printf -- '---\nid: feature-so\ntype: feature\nstatus: active\ndomains: []\npaths: []\nload: stage\nstages: [consolidate]\nsummary: S.\n---\n' \
+    > .ai/knowledge/features/so.md
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" 'neither domains nor paths'
 }
 
 # --- knowledge changed (ADR-0022 precedent: the base is stated, never guessed) -

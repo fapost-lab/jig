@@ -401,7 +401,7 @@ km_check_doc_frontmatter() {
 
   domains=$(fm_list "$file" domains)
   paths_out=$(fm_list "$file" paths)
-  if [ -z "$domains" ] && [ -z "$paths_out" ]; then
+  if [ -z "$domains" ] && [ -z "$paths_out" ] && [ "$(fm_get "$file" load)" != stage ]; then
     km_warn "$relpath" "document has neither domains nor paths: listed in every catalog, never required"
   fi
 
@@ -468,7 +468,10 @@ km_check_load() {
   [ -n "$load" ] || return 0
   case "$load" in
     always | domain | matched) ;;
-    *) km_fail "$relpath" "invalid load: $load (expected always, domain or matched)" ;;
+    stage)
+      [ -n "$(fm_list "$file" stages)" ] ||
+        km_fail "$relpath" "load: stage without stages: the document is required at no stage" ;;
+    *) km_fail "$relpath" "invalid load: $load (expected always, domain, matched or stage)" ;;
   esac
 }
 

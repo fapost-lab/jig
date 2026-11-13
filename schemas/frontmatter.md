@@ -49,8 +49,8 @@ key:
 | `summary` | no | one-line scalar shown in the `jig context resolve --catalog` listing |
 | `domains` | no | list of `^[a-z0-9-]+$` tags used by `jig context --domains` |
 | `topics` | no | list of `^[a-z0-9-]+$` tags describing conceptual applicability, matched by `jig context --topics`; how a document reaches a task that touches no file it claims |
-| `load` | no | `always`, `domain` or `matched` (default `matched`) — see below |
-| `stages` | no | list of route-stage names; additive promotion for matched catalog documents inside entered domains (ADR-0021) |
+| `load` | no | `always`, `domain`, `matched` (default `matched`) or `stage` — see below |
+| `stages` | no | list of route-stage names; additive promotion for matched catalog documents inside entered domains (ADR-0021); with `load: stage`, the only stages the document is required at |
 | `requires` | no | list of document ids that must be loaded whenever this document is; transitive and acyclic |
 | `paths` | no | list of globs relative to the repository root, matched by `jig context --files`; `**` matches any depth. `*` is the only wildcard — `?`, `[...]` and brace groups (`{a,b}`) are literal characters, not glob syntax. A glob ending in `/` names a directory and matches any file under it, including directly under it, the same as if `*` (or `**`) had been appended — never the directory itself: a glob is checked against files that exist, and an otherwise-empty directory is not a match (ADR-20260930-a-paths-glob-has-one-wildcard) |
 | `supersedes` | no | id of the document this one replaces |
@@ -131,6 +131,7 @@ by hand.
 | `always` | every resolution |
 | `domain` | one of its `domains` is among the entered domains |
 | `matched` (default) | one of its `paths` matches an affected file, or one of its `topics` matches a requested topic |
+| `stage` | `--stage` names one of its `stages` — whatever domains are entered, with or without a task; its `paths`, `domains` and `topics` never select it |
 
 A `matched` document whose *domain* matches but whose paths and topics do not is **not**
 required: it appears in the catalog (`--catalog`), where an agent can see its id and
@@ -140,6 +141,14 @@ defeat the purpose of resolving context at all.
 
 The stateless `jig context` form is unchanged and still promotes a domain match to
 `matched:`. That difference is deliberate and is the one seam between the two forms.
+
+A `load: stage` document is the one-stage rule — "a public API change updates the published
+docs" belongs to `consolidate` — without a domain it has no claim to and without the cost of
+`load: always`. At any other stage, and with no `--stage`, it is neither required nor listed in
+the catalog, and the stateless form, which has no stage, never lists it. Explicit selection still
+reaches it: `--ids` at any stage, and the `requires` closure wherever a selected document requires
+it — so a `matched` document that requires a stage-only one carries it along
+(adr-20261113-a-document-can-be-required-at-named-stages).
 
 ## Domain packs
 
@@ -163,6 +172,7 @@ domain just as well.
 | missing frontmatter on a non-global document | fail when `knowledge.require_frontmatter: true`, else warn |
 | missing or invalid `id`, `type`, `status` | fail |
 | invalid `load` value | fail |
+| `load: stage` with no `stages`, or `stages: []` | fail |
 | invalid `topics` item | fail |
 | invalid `stages` item | fail |
 | document under `domains/<d>/` that does not declare domain `<d>` | fail |
@@ -180,7 +190,7 @@ domain just as well.
 | two documents with the same `source` | fail |
 | `paths` glob that matches no file in the repository | warn |
 | resolvable document (`active`/`accepted`) with no `summary` | warn |
-| document without `domains` and without `paths` | warn |
+| document without `domains` and without `paths`, unless `load: stage` | warn |
 
 ## Maintenance
 
@@ -215,7 +225,9 @@ appears at its path only once, complete, so there is no moment when a proposal r
 Progressive resolve/pending/guard accept --stage: analyze, discover, specify, alternatives,
 design, plan, implement, review, architecture-review, verify, consolidate. Human gates
 use design context. `stages: [implement, review]` promotes a load: matched catalog document
-only when one of its domains is entered and its stage matches. Existing path/topic/ID,
+only when one of its domains is entered and its stage matches. With `load: stage` the same
+list is the whole selection: the document is required at those stages, domain or not, and
+nowhere else (see Load policy). Existing path/topic/ID,
 load: always/domain and requires selection is preserved. Stage is never an intersecting
 filter. No stage/domain match leaves existing selection unchanged; metadata is optional.
 New dependencies receive the same lifecycle filtering and hash-ledger checks as any other

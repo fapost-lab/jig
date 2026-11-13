@@ -21,7 +21,12 @@ This is the last stage of **every** route, T0 included, and it has two entries (
   fixes can follow it, and only the close says the task is done.
 
 Finishing analysis, a backlog, or a design does not complete its implementation task: keep
-it active or explicitly paused. Resolve/read context with `--stage consolidate`.
+it active or explicitly paused. Resolve context for this stage and read what it requires — a
+project rule that belongs to consolidation (`load: stage`) reaches you only here:
+
+```
+.ai/scripts/jig context resolve --task <id> --stage consolidate --catalog
+```
 
 A T0/T1 task without a workspace has no state to record: state the decision in the report
 and stop there.

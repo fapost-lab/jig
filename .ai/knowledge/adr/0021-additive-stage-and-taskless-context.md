@@ -11,7 +11,7 @@ paths:
   - scripts/lib/knowledge.sh
   - schemas/frontmatter.md
 summary: Why stage relevance is additive and standalone exploration bypasses task selection.
-reviewed_at: 2026-10-21
+reviewed_at: 2026-11-13
 ---
 # ADR-0021: Stage relevance adds knowledge; exploration can be taskless
 
@@ -49,3 +49,10 @@ Existing documents need no migration. Additional relevance can increase context 
 Stage changes require consistent selectors across resolve/pending/guard. Missing globals
 now fail progressive requests rather than disappearing. This extends ADR-0014/0015 and
 was approved in the SDD/OpenSpec design on 2026-09-10.
+
+> **Amendment (2026-11-13).** A document may opt itself into stage-only loading with `load: stage`
+> and `stages`: required at those stages of every task, with no domain, and otherwise neither
+> required nor in the catalog (adr-20261113-a-document-can-be-required-at-named-stages). This does
+> not make stage an intersecting filter: the rule above protects documents from being hidden by a
+> stage they did not ask for, and here only the author's own document is scoped, by its author.
+> `stages` on a `load: matched` document keeps its meaning — promotion inside an entered domain.
