@@ -3,6 +3,8 @@
 Destination: a project rule reaches the agent at exactly the stage it belongs to, and a project
 script can refuse a task's completion gate until the rule is met or a human waives it with a reason.
 
+Epic: epic/project-hooks
+
 ## Phase 1 — stage-only knowledge
 
 Goal: a document can be required at named stages of every task, with no domain and no
@@ -34,5 +36,5 @@ output passes and shows it as a warning, a missing hook path refuses and is repo
 
 ## Waves
 
-1. stage-only loading, gate hooks
+1. stage-only loading; gate hooks
 2. hook waivers
