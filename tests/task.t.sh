@@ -5455,6 +5455,8 @@ test_task_ship_unknown_task_dies() {
 # directory, so each test sets only what differs:
 #   gh-checks    the pull request's check buckets, one per line (default: pass)
 #   gh-draft     `true`|`false` for `pr view` (default: false)
+#   gh-view.rc   when present, `pr view --json state,isDraft` fails
+#   gh-base      the base `pr view --json state,isDraft` reports (default: main)
 #   gh-head      the head `pr view` reports (default: HEAD where gh runs, so a
 #                ship from a worktree reads that worktree's)
 #   gh-repo      merge-commit, squash and rebase allowed (default: true true true)
@@ -5511,7 +5513,7 @@ case "\$1 \$2" in
   "pr view")
     case "\$*" in
       *reviewDecision*) val gh-review "|" ;;
-      *"--json state,isDraft"*) printf 'OPEN|%s|main|%s|MERGEABLE|CLEAN\n' "\$(val gh-draft false)" "\$(val gh-head "\$(git rev-parse HEAD)")" ;;
+      *"--json state,isDraft"*) [ ! -f "\$d/gh-view.rc" ] || { printf 'HTTP 502: bad gateway\\n' >&2; exit 1; }; printf 'OPEN|%s|%s|%s|MERGEABLE|CLEAN\n' "\$(val gh-draft false)" "\$(val gh-base main)" "\$(val gh-head "\$(git rev-parse HEAD)")" ;;
       *mergeable*) printf '%s %s\n' "\$(val gh-draft false)" "\$(val gh-mergeable MERGEABLE)" ;;
       *"--json state "*) if [ -f "\$d/gh-state" ]; then cat "\$d/gh-state"; else printf '%s %s\n' "\$(val gh-draft false)" "\$(val gh-head "\$(git rev-parse HEAD)")"; fi ;;
       *) printf '%s %s\n' "\$(val gh-draft false)" "\$(val gh-head "\$(git rev-parse HEAD)")" ;;
@@ -12845,6 +12847,22 @@ test_task_list_landing_hint_waits_for_an_approval() {
   assert_eq '{"reason":"review","hint":"landing","review":{"state":"approved","waiting_for":[]}}' "$(_tl_parked_of behind)"
 }
 
+# The landing hint reads the git level of a task landing on staging:
+# agent.git_staging when set, agent.git otherwise.
+test_task_list_landing_hint_reads_the_staging_level() {
+  _park_repo
+  _park_cache task/behind staging open - approved
+  # agent.git_staging merge: the agent lands it, whatever agent.git says.
+  printf 'agent.git: pr\nagent.git_staging: merge\n' > .ai/config.local.yaml
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq '{"reason":"review","hint":null,"review":{"state":"approved","waiting_for":[]}}' "$(_tl_parked_of behind)"
+  # agent.git_staging below merge: the person lands it, even at agent.git merge.
+  printf 'agent.git: merge\nagent.git_staging: pr\n' > .ai/config.local.yaml
+  _tl_json
+  assert_eq '{"reason":"review","hint":"landing","review":{"state":"approved","waiting_for":[]}}' "$(_tl_parked_of behind)"
+}
+
 # A pull request nobody opened with `jig task ship` is the task's all the same,
 # found by its branch into the staging branch, with the state of that line (not
 # of a line into the base) and what the forge said of its review; the promotion
@@ -15592,7 +15610,7 @@ test_task_land_of_an_own_flow_pull_request_into_main_merges_nothing() {
 
   run jig task land T-1 --by human --json
   assert_contains "$OUT" '"code":"wrong-flow"'
-  assert_contains "$OUT" "landing is for a pull request into the staging branch"
+  assert_contains "$OUT" "landing is for a pull request into the staging branch; merge it: jig task merge-pr T-1 --by human"
   [ "$RC" -ne 0 ] || fail "a person's land of a pull request into main must refuse: $OUT"
   assert_no_file gh-merge.argv
 }
@@ -15763,4 +15781,126 @@ test_task_route_names_the_staging_level_when_it_differs() {
   ship_cfg_local autopilot.git pr
   run jig task route T-1
   assert_not_contains "$OUT" "autopilot git on staging"
+}
+
+# --- a pull request an older Jig opened: no pr_into recorded
+# (adr-20261114-landing-on-staging-has-its-own-git-level)
+
+# slegacy_setup <agent.git> <agent.git_staging> — a task shipped to staging,
+# whose state then loses `pr_into` as if an older Jig had shipped it.
+slegacy_setup() {
+  sship_setup pr
+  printf 'APPROVED|APPROVED\n' > gh-review
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "pr_into: staging"
+  sed '/^pr_into:/d' .ai/workspace/tasks/T-1/state > state.tmp
+  mv state.tmp .ai/workspace/tasks/T-1/state
+  ship_cfg_local agent.git "$1"
+  ship_cfg_local agent.git_staging "$2"
+  rm -f gh-merge.argv
+}
+
+# The pull request may go into main: the agent at agent.git pr, whose staging
+# level says merge, is held at the lower level before the forge is asked.
+test_task_land_of_a_legacy_pull_request_answers_to_the_lower_level() {
+  slegacy_setup pr merge
+  run jig task land T-1
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "needs agent.git: merge (git level pr (agent.git))"
+  assert_no_file gh-merge.argv
+}
+
+# At merge on both keys the forge is asked: a pull request into main is not
+# landed, and the base is recorded.
+test_task_land_of_a_legacy_pull_request_into_main_merges_nothing() {
+  slegacy_setup merge merge
+  printf 'main\n' > gh-base
+
+  run jig task land T-1
+  [ "$RC" -ne 0 ] || fail "must refuse: $OUT"
+  assert_contains "$OUT" "goes into main, not staging; landing is for a pull request into the staging branch; merge it: jig task merge-pr T-1 --by human"
+  assert_no_file gh-merge.argv
+  assert_file_contains .ai/workspace/tasks/T-1/state "pr_into: main"
+
+  # A person's land is refused the same way.
+  sed '/^pr_into:/d' .ai/workspace/tasks/T-1/state > state.tmp
+  mv state.tmp .ai/workspace/tasks/T-1/state
+  run jig task land T-1 --by human --json
+  assert_contains "$OUT" '"code":"wrong-flow"'
+  assert_no_file gh-merge.argv
+  # It writes nothing: a person's landing writes only once its claim stands.
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "pr_into:"
+}
+
+# A person's landing of one the forge puts into staging is not refused as
+# stale by its own record of the base, which follows the claim.
+test_task_land_by_human_of_a_legacy_pull_request_into_staging_lands() {
+  slegacy_setup merge merge
+  printf 'staging\n' > gh-base
+
+  run jig task land T-1 --by human --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"outcome":"landed"'
+  assert_file gh-merge.argv
+  assert_file_contains .ai/workspace/tasks/T-1/state "pr_into: staging"
+}
+
+test_task_land_of_a_legacy_pull_request_into_staging_goes_on_and_records_it() {
+  slegacy_setup merge merge
+  printf 'staging\n' > gh-base
+
+  run jig task land T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "landed https://github.com/example/example/pull/99 on staging"
+  assert_file gh-merge.argv
+  assert_file_contains .ai/workspace/tasks/T-1/state "pr_into: staging"
+}
+
+# A forge that cannot say where the pull request goes lands nothing.
+test_task_land_of_a_legacy_pull_request_fails_closed_when_the_forge_is_silent() {
+  slegacy_setup merge merge
+  printf '1\n' > gh-view.rc
+
+  run jig task land T-1
+  [ "$RC" -ne 0 ] || fail "must refuse: $OUT"
+  assert_contains "$OUT" "could not say which branch"
+  assert_no_file gh-merge.argv
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "pr_into:"
+}
+
+# Both directions: the lower of the two levels answers, and names its key; a
+# tie is agent.git_staging's; an invalid one is named and never skipped.
+test_task_ship_git_for_a_legacy_pull_request_is_the_lower_level() {
+  slegacy_setup pr merge
+  ship_cfg_local agent.git none
+  ship_cfg_local agent.git_staging merge
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: agent.git is none in this clone; the human commits"
+
+  ship_cfg_local agent.git merge
+  ship_cfg_local agent.git_staging none
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: agent.git_staging is none in this clone; the human commits"
+
+  ship_cfg_local agent.git none
+  run jig task ship T-1 --message-file msg.txt
+  assert_contains "$OUT" "task ship: agent.git_staging is none in this clone"
+
+  # The route names the level the resolver answers with.
+  ship_cfg_local agent.git merge
+  ship_cfg_local agent.git_staging pr
+  run jig task route T-1
+  assert_contains "$OUT" "autopilot git on staging: pr (agent.git_staging)"
+  ship_cfg_local agent.git pr
+  ship_cfg_local agent.git_staging merge
+  run jig task route T-1
+  assert_not_contains "$OUT" "autopilot git on staging"
+
+  ship_cfg_local agent.git_staging yolo
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "invalid agent.git_staging: yolo"
 }

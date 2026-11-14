@@ -321,6 +321,15 @@ _land_approval_gate() {
 # why, for the pull request comment.
 _LAND_WITHOUT=""
 
+# _land_other_branch_text <who> <id> <pr> <into> <staging> <base-branch> — the
+# refusal for a pull request that goes into <into>, not the staging branch;
+# into the base branch it names its path, `jig task merge-pr`.
+_land_other_branch_text() {
+  local text="$1: $3 goes into $4, not $5; landing is for a pull request into the staging branch"
+  [ "$4" != "$6" ] || text="$text; merge it: jig task merge-pr $2 --by human"
+  printf '%s' "$text"
+}
+
 # land_task <who> <id> <without-review> <resolved> <note-file> — land <id>'s
 # pull request on the staging branch, or say why not. The git level is the
 # caller's to have checked (`merge`). Refuses with jig_die (exit 1) before it
@@ -354,10 +363,10 @@ land_task() {
   # A pull request a ship opened into another branch — the base, for a task
   # that changes the flow itself — is not landed here, whoever asks
   # (adr-20261114-landing-on-staging-has-its-own-git-level).
-  local into
+  local into record_into=""
   into=$(task_state_get "$id" pr_into)
   [ -z "$into" ] || [ "$into" = "$staging" ] \
-    || _land_refuse wrong-flow "$who: $pr goes into $into, not $staging; landing is for a pull request into the staging branch"
+    || _land_refuse wrong-flow "$(_land_other_branch_text "$who" "$id" "$pr" "$into" "$staging" "$base_branch")"
   if [ "$resolved" = 1 ]; then
     if [ -z "$note" ] || [ ! -s "$note" ] || ! grep -q '[^[:space:]]' "$note"; then
       jig_die "$who: --resolved needs --note-file with how each conflict was resolved; it goes into the merge commit and the pull request"
@@ -388,6 +397,31 @@ land_task() {
   # never as an account nobody named (adr-20261110-a-clone-names-its-github-account).
   if [ "$(jig_forge_kind 2>/dev/null || true)" = github ]; then
     jig_gh_require "$who"
+  fi
+
+  # A pull request a ship of an older Jig opened has no recorded `pr_into`:
+  # the forge says where it goes, and the answer is recorded. One into any
+  # other branch is not landed, and one the forge cannot place is not either.
+  if [ -z "$into" ]; then
+    local kind
+    kind=$(jig_forge_kind 2>/dev/null || true)
+    # shellcheck source=lib/prdo.sh
+    . "$JIG_LIB/prdo.sh"
+    _PRDO_WHY=""
+    if [ -z "$kind" ] || ! _prdo_view "$kind" "$pr" || [ -z "$_PRDO_BASE" ]; then
+      _land_refuse forge-unavailable "$who: the forge could not say which branch $pr goes into${_PRDO_WHY:+ ($_PRDO_WHY)}; nothing was merged. Run again"
+    fi
+    into=$_PRDO_BASE
+    # Recorded at once for the agent, whose landing claims no revision; a
+    # person's landing writes nothing before its claim stands, so theirs is
+    # recorded after it, when the merge is sent.
+    if [ "$_LAND_BY_HUMAN" = 1 ]; then
+      record_into=$into
+    else
+      _task_rewrite_state "$(task_dir "$id")" pr_into "$into"
+    fi
+    [ "$into" = "$staging" ] \
+      || _land_refuse wrong-flow "$(_land_other_branch_text "$who" "$id" "$pr" "$into" "$staging" "$base_branch")"
   fi
 
   state=$(jig_pr_state "$pr")
@@ -454,6 +488,7 @@ land_task() {
       return 0 ;;
     clean)
       _land_claim "$who"
+      [ -z "$record_into" ] || _task_rewrite_state "$(task_dir "$id")" pr_into "$record_into"
       _land_on_forge "$who" "$id" "$pr" "$sha" "$staging"
       return 0 ;;
   esac

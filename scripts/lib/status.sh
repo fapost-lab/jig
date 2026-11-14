@@ -2395,9 +2395,10 @@ UPR
     _task_parked_lookup_v parked "$_ST_ID"
     if [ "$_ST_STATUS" = ready ] && [ "$_ST_KC" = true ] && [ -z "$_ST_PR_URL" ] && [ -z "$parked" ]; then
       queue=""
-      # The task's own level: agent.git_staging for a task whose pull request
-      # goes into the staging branch (_task_ship_git_v), else the agent.git
-      # read once above.
+      # The level `task ship` will actually use for this task
+      # (_task_ship_git_v), and the key it came from: autopilot.git in an `on`
+      # run that sets it, agent.git_staging for a task whose pull request goes
+      # into the staging branch, else the agent.git read once above.
       local task_line task_level task_key
       if _task_ship_git_v task_line "$_ST_ID"; then
         task_level=${task_line%%$'\t'*}
