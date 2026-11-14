@@ -91,8 +91,12 @@ id, and as a pattern it matches `a.b` against `axb`. `spec remove` abandons befo
 failed abandon leaves the `Spec:` line that lets a rerun find the task.
 
 `Spec:` and `Epic:` are parsed in `common.sh` (`jig_spec_link`, `jig_spec_epic`), not here, because
-`task start` reads both to choose a task's base. Nothing in housekeeping reads a spec: a phase's link to
-its epic is the task's `base_branch`.
+`task start` reads both to choose a task's base; so is the unchecked-item grammar
+(`jig_roadmap_open_ids`). Housekeeping reads a spec for one question only: whether a roadmap still
+waits on a closed task that was never started — an unchecked item naming it, here or on an open
+epic's ref — before that task's workspace, its only record of being merged, goes to trash
+(adr-20261114-a-closed-task-never-started-goes-to-trash). A phase's link to its epic is otherwise
+the task's `base_branch`.
 
 `status.sh` consumes `spec_count` and `spec_epic_status`, never recounts, and its status page renders
 `spec_list_rows` — the unformatted rows `spec list` aligns — so the page and `spec list` cannot disagree

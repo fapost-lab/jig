@@ -24,6 +24,9 @@ _HK_WT_NOTE=""      # ... and as a note in the grouped report
 _HK_BASE_LOG=""     # "<base>\t<ref>\t<epoch>\t<sha>" reflog of every task base's refs, newest first, read once per run
 _HK_WRONG_NOTE=""   # why the last task was flagged wrong-base, as a note in the grouped report
 _HK_KEEP_NOTE=""    # why the last closed task without a branch counts as started, as a note in the grouped report
+_HK_ROADMAP_OPEN="" # "<spec><TAB><id>" per unchecked roadmap item of every spec in this checkout; read once per run, on the first never-started candidate
+_HK_ROADMAP_UNSEEN="" # " <spec> ..." whose open epic has no ref here, so its current roadmap cannot be read; with _HK_ROADMAP_OPEN
+_HK_ROADMAP_READ=0  # 1 once _HK_ROADMAP_OPEN has been read
 _HK_DEFAULT_BASE="" # git.base_branch, read once per run
 _HK_STAGING_BRANCH="" # git.staging_branch on a sound staging flow, empty otherwise; read once per run
 _HK_STAGING=""      # "<task><TAB>on|behind" for the tasks on the staging branch (jig_staging_states), once per run
@@ -197,7 +200,7 @@ EOF
       started=true
       _HK_KEEP_NOTE=""
       if [ "$st" = consolidated ] && [ -z "$branch" ] && [ -z "$base_commit" ]; then
-        _hk_never_started "$tid" "$task_base" && started=false
+        _hk_never_started "$tid" && started=false
       fi
 
       decision=$(housekeeping_decide \
@@ -1970,35 +1973,117 @@ $_HK_STAGING
 EOF
 }
 
-# _hk_never_started <task> <base> — exit 0 when a closed task without a
-# recorded branch or fork point shows no sign of ever having been started;
-# otherwise exit 1 with the reason it is kept in _HK_KEEP_NOTE. Kept: a ref or
-# a pull request at its template branch name, a forge that did not answer, and
-# a triage task whose source is still here — that source's next ship reads the
-# triage workspace to file its findings only once
-# (adr-20261029-a-ship-hands-open-findings-to-one-triage-task).
+# _hk_roadmap_open_read — every unchecked roadmap item of every spec in this
+# checkout into _HK_ROADMAP_OPEN, once per run, as "<spec><TAB><id>" lines. A
+# spec with an open epic that is not checked out here is read from the epic's
+# ref as well, as `spec plan` reads it (spec_roadmap_ref): its items are filed
+# and checked there. An open epic with no ref here puts the spec in
+# _HK_ROADMAP_UNSEEN — its current roadmap cannot be read, so a task linked to
+# it stays.
+_hk_roadmap_open_read() {
+  local f spec id line branch here ref
+  [ "$_HK_ROADMAP_READ" = 1 ] && return 0
+  _HK_ROADMAP_READ=1
+  _HK_ROADMAP_OPEN=""
+  _HK_ROADMAP_UNSEEN=" "
+  here=$(git -C "$JIG_PROJECT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  for f in "$JIG_PROJECT/$JIG_AI_DIR"/specs/*/roadmap.md; do
+    [ -f "$f" ] || continue
+    spec=${f%/roadmap.md}
+    spec=${spec##*/}
+    while IFS= read -r id; do
+      [ -n "$id" ] || continue
+      _HK_ROADMAP_OPEN="${_HK_ROADMAP_OPEN}${spec}"$'\t'"${id}"$'\n'
+    done <<EOF
+$(jig_roadmap_open_ids "$f")
+EOF
+    line=$(jig_spec_epic "$f" 2>/dev/null) || line=""
+    [ -n "$line" ] && [ "${line##* }" = open ] || continue
+    branch=${line% *}
+    [ "$branch" != "$here" ] || continue
+    ref=$(jig_base_ref "$branch")
+    if [ -z "$ref" ]; then
+      _HK_ROADMAP_UNSEEN="$_HK_ROADMAP_UNSEEN$spec "
+      continue
+    fi
+    while IFS= read -r id; do
+      [ -n "$id" ] || continue
+      _HK_ROADMAP_OPEN="${_HK_ROADMAP_OPEN}${spec}"$'\t'"${id}"$'\n'
+    done <<EOF
+$(jig_git_show_path "$ref" "$JIG_AI_DIR/specs/$spec/roadmap.md" 2>/dev/null | jig_roadmap_open_ids -)
+EOF
+  done
+  return 0
+}
+
+# _hk_never_started <task> — exit 0 when a closed task without a recorded
+# branch or fork point shows no sign of ever having been started; otherwise
+# exit 1 with the reason it is kept in _HK_KEEP_NOTE. Kept: a commit message in
+# its workspace (a task closed before its commit, ADR-0030, may not have
+# landed); an unchecked roadmap item that names it — in this checkout, or on
+# the ref of a spec's open epic — or a `Spec:` link to a spec whose current
+# roadmap cannot be read here: none in this checkout, an open epic with no ref,
+# or a task.md linking to more than one spec (`spec plan` reads a closed task as
+# merged until `jig spec done` checks the item); a branch template that names
+# no branch for it; a ref or a pull request at its template branch name; a
+# forge that did not answer; and a triage task whose source is still here —
+# that source's next ship reads the triage workspace to file its findings only
+# once (adr-20261029-a-ship-hands-open-findings-to-one-triage-task).
 _hk_never_started() {
-  local tid="$1" base="$2" tmpl src
-  tmpl=$(_hk_task_branch_name "$tid")
-  if [ -n "$tmpl" ]; then
-    if [ -n "$(_hk_resolve_ref "$tmpl")" ]; then
-      _HK_KEEP_NOTE="never started, but its branch $tmpl exists"
+  local tid="$1" dir tmpl src spec line rc=0
+  task_dir_v dir "$tid"
+  if [ -f "$dir/commit-message.md" ]; then
+    _HK_KEEP_NOTE="never started, but it holds a commit message, so its change may not have landed"
+    return 1
+  fi
+  _hk_roadmap_open_read
+  while IFS=$'\t' read -r spec line; do
+    if [ -n "$spec" ] && [ "$line" = "$tid" ]; then
+      _HK_KEEP_NOTE="never started, but its roadmap item in $spec is not checked"
       return 1
     fi
-    if [ "$_HK_FORGE_TOKEN" = failed ]; then
-      _HK_KEEP_NOTE="never started, but the forge did not answer whether $tmpl had a pull request"
+  done <<EOF
+$_HK_ROADMAP_OPEN
+EOF
+  if [ -f "$dir/task.md" ]; then
+    jig_spec_link_v spec "$dir/task.md" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      _HK_KEEP_NOTE="never started, but its task.md does not link to one readable spec"
       return 1
     fi
-    # Any pull request from it, into whatever base and in whatever state:
-    # _hk_forge_state answers only for the task's own base and staging.
-    case $'\n'"$_HK_FORGE_PRS" in
-      *$'\n'"$tmpl"$'\t'*)
-        _HK_KEEP_NOTE="never started, but a pull request from $tmpl exists"
+    if [ -n "$spec" ] && [ ! -f "$JIG_PROJECT/$JIG_AI_DIR/specs/$spec/roadmap.md" ]; then
+      _HK_KEEP_NOTE="never started, but its spec $spec is not in this checkout"
+      return 1
+    fi
+    case "${spec:+$_HK_ROADMAP_UNSEEN}" in
+      *" $spec "*)
+        _HK_KEEP_NOTE="never started, but the epic of its spec $spec is not here to read its roadmap from"
         return 1
         ;;
     esac
   fi
-  src=$(task_state_get "$tid" triage_of)
+  tmpl=$(_hk_task_branch_name "$tid")
+  if [ -z "$tmpl" ]; then
+    _HK_KEEP_NOTE="never started, but git.branch_template names no branch for it"
+    return 1
+  fi
+  if [ -n "$(_hk_resolve_ref "$tmpl")" ]; then
+    _HK_KEEP_NOTE="never started, but its branch $tmpl exists"
+    return 1
+  fi
+  if [ "$_HK_FORGE_TOKEN" = failed ]; then
+    _HK_KEEP_NOTE="never started, but the forge did not answer whether $tmpl had a pull request"
+    return 1
+  fi
+  # Any pull request from it, into whatever base and in whatever state:
+  # _hk_forge_state answers only for the task's own base and staging.
+  case $'\n'"$_HK_FORGE_PRS" in
+    *$'\n'"$tmpl"$'\t'*)
+      _HK_KEEP_NOTE="never started, but a pull request from $tmpl exists"
+      return 1
+      ;;
+  esac
+  task_state_var src "$tid" triage_of
   if [ -n "$src" ] && _task_valid_id "$src" && [ -f "$(task_dir "$src")/state" ]; then
     _HK_KEEP_NOTE="triage of $src, kept while $src is here"
     return 1

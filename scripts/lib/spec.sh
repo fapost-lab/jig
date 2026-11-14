@@ -2784,24 +2784,6 @@ spec_done_complete_hint() {
   fi
 }
 
-# spec_roadmap_ids <roadmap.md> — task ids named by unchecked items, one per
-# line, each once.
-spec_roadmap_ids() {
-  awk '
-    /^[[:space:]]*[-*][[:space:]]+\[ \]/ {
-      text = $0
-      sub(/^[[:space:]]*[-*][[:space:]]+\[ \][[:space:]]*/, "", text)
-      if (text ~ /^`[A-Za-z0-9._-]+`[[:space:]]+(—|-|--)[[:space:]]/) {
-        id = substr(text, 2)
-        sub(/`.*$/, "", id)
-        # The same grammar as jig_valid_id: no leading dot or dash.
-        if (id ~ /^[.-]/) next
-        if (!(id in seen)) { seen[id] = 1; print id }
-      }
-    }
-  ' "$1"
-}
-
 # spec_remove <id> [--dry-run] [--abandon-unstarted] — take a spec out of the
 # project: unlink its open tasks in this checkout, optionally abandon the ones
 # never started, and move the spec directory to trash.
@@ -2918,7 +2900,7 @@ spec_remove() {
         *) plan="${plan}elsewhere $tid
 " ;;
       esac
-    done < <(spec_roadmap_ids "$dir/roadmap.md")
+    done < <(jig_roadmap_open_ids "$dir/roadmap.md")
   fi
 
   local dest rel_dest action rest
