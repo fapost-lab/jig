@@ -12750,6 +12750,29 @@ test_task_close_of_a_task_already_closed_on_staging_lands_again() {
   assert_eq 0 "$RC" "$OUT"
 }
 
+# Pushed and not landed yet (CI lands it under `git.staging_land: external`):
+# no pull request and nothing on staging, yet its work left the branch, so the
+# close waits; once its branch is in the base, it closes.
+test_task_close_waits_for_a_task_pushed_but_not_landed() {
+  _park_repo
+  printf 'git.staging_land: external\n' >> .ai/config.yaml
+  _scl_ready never
+  git push -q origin task/never
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  local why="task set: never is pushed and not in main yet: once it lands on staging, prepare for prod, then close it once the promotion merged"
+  assert_contains "$OUT" "$(_scl_close never false "$why")"
+  run jig task set never status consolidated
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "$why"
+  git merge -q --no-ff -m "promote never" task/never
+  git push -q origin main
+  _tl_json
+  assert_contains "$OUT" "$(_scl_close never true)"
+  run jig task set never status consolidated
+  assert_eq 0 "$RC" "$OUT"
+}
+
 # A task that never reached the staging branch and opened no pull request has
 # nothing to wait for: it closes as it did.
 test_task_close_is_allowed_for_a_task_that_never_reached_staging() {

@@ -2175,8 +2175,9 @@ _task_close_refusal() {
 # _task_close_staging_refusal <id> <forge|cache> <base-state> — what
 # _task_close_refusal adds on the staging flow: nothing when the task's work is
 # in the base, else why its close waits. It applies to a task of the project's
-# base, with a branch, that has a pull request or whose own work reached the
-# staging branch; any other task (direct flow, an epic's task, one that never
+# base, with a branch, that has a pull request, whose own work reached the
+# staging branch, or whose branch on origin holds work the base lacks; any
+# other task (direct flow, an epic's task, one that never
 # reached staging, a bare triage or no-code task) closes as before.
 # "In the base" is any of, cheapest first: <base-state> is `merged`; the
 # promotion (`promote_url`) is merged; its branch is in the base by git (see
@@ -2185,7 +2186,7 @@ _task_close_refusal() {
 # forge cache for the base state; <cache> never asks it, as the table never does.
 _task_close_staging_refusal() {
   local id="$1" mode="$2" base_state="$3" staging branch base defbase pr promote
-  local pstate="" pwhy="" st="" tip baseref cache line flag msg t=$'\t'
+  local pstate="" pwhy="" st="" tip baseref="" cache line flag msg pushed="" t=$'\t'
   task_state_var branch "$id" branch
   [ -n "$branch" ] || return 0
   jig_task_base_v base "$id"
@@ -2212,7 +2213,16 @@ EOF
     st=${st#*"$t"}
   fi
   case "$st" in on | behind) ;; *) st="" ;; esac
-  [ -n "$pr" ] || [ -n "$st" ] || return 0
+  # Or pushed with work of its own the base lacks, waiting for its landing:
+  # under `git.staging_land: external` CI lands it with no pull request, and
+  # until it has nothing else says it left the branch (decided by the
+  # person, 2026-11-14).
+  if [ -z "$pr" ] && [ -z "$st" ]; then
+    baseref=$(jig_base_ref "$base")
+    [ -n "$baseref" ] || return 0
+    [ -n "$(git -C "$JIG_PROJECT" rev-list -n 1 "$baseref..refs/remotes/origin/$branch" -- 2>/dev/null)" ] || return 0
+    pushed=1
+  fi
   if ! declare -F forgecache_pr >/dev/null; then
     # shellcheck source=lib/forgecache.sh
     . "$JIG_LIB/forgecache.sh"
@@ -2246,7 +2256,7 @@ EOF
   if [ "$mode" = forge ] || [ -z "$st" ]; then
     tip=refs/heads/$branch
     git -C "$JIG_PROJECT" rev-parse --verify --quiet "$tip^{commit}" >/dev/null 2>&1 || tip=refs/remotes/origin/$branch
-    baseref=$(jig_base_ref "$base")
+    [ -n "$baseref" ] || baseref=$(jig_base_ref "$base")
     if [ -n "$baseref" ]; then
       if [ "$mode" = forge ]; then
         ! jig_branch_in_base "$tip" "$baseref" || return 0
@@ -2264,6 +2274,10 @@ EOF
           msg="whether its promotion $promote merged is unknown, the forge could not be asked ($pwhy); run this same command again once the forge answers"
         fi ;;
     esac
+  fi
+  if [ -n "$pushed" ] && [ -z "$promote" ]; then
+    printf 'task set: %s is pushed and not in %s yet: once it lands on %s, prepare for prod, then close it once the promotion merged\n' "$id" "$base" "$staging"
+    return 0
   fi
   printf 'task set: %s is on %s and not in %s yet: %s\n' "$id" "$staging" "$base" "$msg"
   return 0

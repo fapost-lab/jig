@@ -86,10 +86,13 @@ again before it ships, so resuming has to take the task out of `ready` whatever 
 - **It is not closed until its work is in the base** (amended 2026-11-14, fapost-lab/jig#509). On
   the staging flow `pr_url` is the pull request into the staging branch, so its merge says nothing
   about the base. `jig task set <id> status consolidated` and the `close` action
-  (`_task_close_refusal`) refuse, for a task of the base with a `pr_url` or its own work on staging,
+  (`_task_close_refusal`) refuse, for a task of the base with a `pr_url`, its own work on staging, or
+  a branch on origin with work the base lacks (pushed, not landed yet: decided by the person),
   until the fact housekeeping's `needs-consolidation` rests on holds: a pull request from the
   branch into the base merged (the forge cache's, or `promote_url` — asked of the forge by the
-  command, of the cache by the table), or the branch is in the base by ancestry. The reason says
+  command, of the cache by the table), or the branch is in the base by git (`jig_branch_in_base`, a
+  merge, squash or rebase, shared with housekeeping; the table asks ancestry only and reads the
+  `needs-consolidation` flag). The reason says
   so in words: `task set: <id> is on <staging> and not in <base> yet: prepare for prod, then close
   it once the promotion merged`. A task that never reached staging and opened no pull request
   closes as before. `pull_request.state` and `ci` in `task list --json` read the pull request
