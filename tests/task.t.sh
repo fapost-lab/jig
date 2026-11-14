@@ -14547,3 +14547,256 @@ test_task_pause_stash_that_fails_puts_the_request_back() {
   fi
   assert_eq "" "$( (cd .ai/workspace/tasks/fresh && ls -a) | grep '^state\.tmp' || true)" "a failed pause left its new state behind"
 }
+
+# --- gate hooks (adr-20261113-a-project-script-can-refuse-a-completion-gate) --
+
+# gate_hook <path> <exit> [line] — a project hook script at <path> that prints
+# its gate, its line, and exits <exit>.
+gate_hook() {
+  mkdir -p "$(dirname "$1")"
+  {
+    printf '#!/usr/bin/env bash\n'
+    # shellcheck disable=SC2016 # $JIG_GATE is the hook's to expand
+    printf 'printf "%%s says %%s\\n" "$JIG_GATE" "%s"\n' "${3:-hello}"
+    printf 'exit %s\n' "$2"
+  } > "$1"
+  chmod +x "$1"
+}
+
+test_task_gate_hook_nonzero_refuses_ready_with_name_and_output() {
+  task_setup
+  jig task new T-1 >/dev/null
+  task_route_class T-1
+  gate_hook .ai/hooks/check.sh 3 "docs not updated"
+  printf 'hooks.ready: [.ai/hooks/check.sh]\n' >> .ai/config.yaml
+
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "hooks.ready refused T-1"
+  assert_contains "$OUT" "hook .ai/hooks/check.sh exited 3"
+  assert_contains "$OUT" "ready says docs not updated"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: ready"
+}
+
+test_task_gate_hook_zero_with_output_passes_with_a_warning() {
+  task_setup
+  jig task new T-1 >/dev/null
+  task_route_class T-1
+  gate_hook .ai/hooks/check.sh 0 "consider the docs"
+  printf 'hooks.ready: [.ai/hooks/check.sh]\n' >> .ai/config.yaml
+
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warning: task set: hook .ai/hooks/check.sh (hooks.ready) passed with output"
+  assert_contains "$OUT" "ready says consider the docs"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: ready"
+}
+
+test_task_gate_hook_runs_every_hook_and_lists_each_refusal() {
+  task_setup
+  jig task new T-1 >/dev/null
+  task_route_class T-1
+  gate_hook .ai/hooks/a.sh 1 first
+  gate_hook .ai/hooks/b.sh 0 second
+  gate_hook .ai/hooks/c.sh 2 third
+  printf 'hooks.ready: [.ai/hooks/a.sh, .ai/hooks/b.sh, .ai/hooks/c.sh]\n' >> .ai/config.yaml
+
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "hook .ai/hooks/a.sh exited 1"
+  assert_contains "$OUT" "hook .ai/hooks/c.sh exited 2"
+  assert_contains "$OUT" "ready says second"
+}
+
+test_task_gate_hook_missing_path_refuses() {
+  task_setup
+  jig task new T-1 >/dev/null
+  task_route_class T-1
+  printf 'hooks.ready: [.ai/hooks/gone.sh]\n' >> .ai/config.yaml
+
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "hook .ai/hooks/gone.sh does not exist"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: ready"
+}
+
+test_task_gate_hook_absolute_or_escaping_path_refuses() {
+  task_setup
+  jig task new T-1 >/dev/null
+  task_route_class T-1
+  gate_hook "$PWD/abs.sh" 0
+  printf 'hooks.ready: [%s, ../out.sh]\n' "$PWD/abs.sh" >> .ai/config.yaml
+
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "abs.sh is absolute"
+  assert_contains "$OUT" "hook ../out.sh leaves the project"
+}
+
+test_task_gate_hook_gets_its_environment_and_runs_in_the_task_tree() {
+  task_setup
+  jig task new T-1 >/dev/null
+  task_route_class T-1
+  mkdir -p .ai/hooks
+  cat > .ai/hooks/env.sh <<'HOOK'
+#!/usr/bin/env bash
+printf 'id=%s gate=%s base=%s\n' "$JIG_TASK_ID" "$JIG_GATE" "$JIG_BASE"
+printf 'dir=%s\n' "$JIG_TASK_DIR"
+printf 'cwd=%s\n' "$(pwd -P)"
+read -r line && printf 'stdin=%s\n' "$line"
+exit 0
+HOOK
+  chmod +x .ai/hooks/env.sh
+  printf 'hooks.ready: [.ai/hooks/env.sh]\n' >> .ai/config.yaml
+
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "id=T-1 gate=ready base="
+  assert_contains "$OUT" "main"
+  assert_contains "$OUT" "dir=$(pwd -P)/.ai/workspace/tasks/T-1"
+  assert_contains "$OUT" "cwd=$(pwd -P)"
+  assert_not_contains "$OUT" "stdin="
+}
+
+test_task_gate_hook_not_executable_runs_through_bash() {
+  task_setup
+  jig task new T-1 >/dev/null
+  task_route_class T-1
+  gate_hook .ai/hooks/check.sh 4 "no exec bit"
+  chmod -x .ai/hooks/check.sh
+  printf 'hooks.ready: [.ai/hooks/check.sh]\n' >> .ai/config.yaml
+
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "hook .ai/hooks/check.sh exited 4"
+  assert_contains "$OUT" "ready says no exec bit"
+}
+
+test_task_gate_hook_in_config_local_is_ignored() {
+  task_setup
+  jig task new T-1 >/dev/null
+  task_route_class T-1
+  gate_hook .ai/hooks/check.sh 1
+  printf 'hooks.ready: [.ai/hooks/check.sh]\n' >> .ai/config.local.yaml
+
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: ready"
+}
+
+test_task_gate_hook_consolidate_runs_on_the_knowledge_decision() {
+  task_setup
+  jig task new T-1 >/dev/null
+  task_route_done T-1
+  gate_hook .ai/hooks/check.sh 1 "no docs line"
+  printf 'hooks.consolidate: [.ai/hooks/check.sh]\n' >> .ai/config.yaml
+
+  run jig task set T-1 knowledge_consolidated true
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "hooks.consolidate refused T-1"
+  assert_contains "$OUT" "consolidate says no docs line"
+  assert_file_contains .ai/workspace/tasks/T-1/state "knowledge_consolidated: false"
+}
+
+test_task_gate_hook_does_not_run_on_other_writes() {
+  task_setup
+  jig task new T-1 >/dev/null
+  task_route_class T-1
+  gate_hook .ai/hooks/check.sh 1
+  printf 'hooks.ready: [.ai/hooks/check.sh]\nhooks.consolidate: [.ai/hooks/check.sh]\n' >> .ai/config.yaml
+
+  run jig task set T-1 status active
+  assert_eq 0 "$RC"
+  run jig task set T-1 knowledge_consolidated false
+  assert_eq 0 "$RC"
+}
+
+# gate_hook_ship_setup <exit> — ship_setup at agent.git commit, the task ready
+# and consolidated, with a `hooks.ship` script that exits <exit> committed on
+# the task's branch, and a change staged.
+gate_hook_ship_setup() {
+  ship_setup
+  ship_cfg_local agent.git commit
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  gate_hook .ai/hooks/ship.sh "$1" "ship check"
+  printf 'hooks.ship: [.ai/hooks/ship.sh]\n' >> .ai/config.yaml
+  git add .ai/config.yaml .ai/hooks/ship.sh
+  git commit -q -m "fixture: a ship hook"
+  ship_stage_change
+}
+
+test_task_gate_hook_ship_refuses_before_the_commit() {
+  gate_hook_ship_setup 1
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task ship: the project's hooks.ship refused T-1"
+  assert_contains "$OUT" "ship says ship check"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+  assert_contains "$(git status --porcelain -- ship.txt)" "A  ship.txt"
+}
+
+test_task_gate_hook_ship_passes_and_commits() {
+  gate_hook_ship_setup 0
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "hook .ai/hooks/ship.sh (hooks.ship) passed with output"
+  assert_contains "$OUT" "committed "
+}
+
+test_task_gate_hook_ship_runs_at_level_none_too() {
+  gate_hook_ship_setup 1
+  ship_cfg_local agent.git none
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "hooks.ship refused T-1"
+}
+
+test_task_gate_hook_ship_draft_runs_no_hook() {
+  gate_hook_ship_setup 1
+  ship_cfg_local agent.git pr
+  ship_stub_gh ""
+  ship_cfg forge github
+
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_not_contains "$OUT" "hooks.ship refused"
+  assert_not_contains "$OUT" "ship says"
+}
+
+# A hook checks and never writes: an edit it leaves would reach the commit
+# unreviewed, so the gate refuses it (review finding F1 of gate-hooks).
+test_task_gate_hook_ship_that_changes_a_tracked_file_refuses() {
+  gate_hook_ship_setup 0
+  printf '#!/usr/bin/env bash\nprintf "formatted\\n" >> README.md\n' > .ai/hooks/ship.sh
+  printf 'base\n' > README.md
+  git add README.md .ai/hooks/ship.sh
+  git commit -q -m "fixture: a writing hook"
+  ship_stage_change
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "hooks.ship changed files git can see"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+}
+
+test_task_gate_hook_ready_that_leaves_a_new_file_refuses() {
+  task_setup
+  jig task new T-1 >/dev/null
+  task_route_class T-1
+  mkdir -p .ai/hooks
+  printf '#!/usr/bin/env bash\ntouch hook-was-here.txt\n' > .ai/hooks/w.sh
+  chmod +x .ai/hooks/w.sh
+  printf 'hooks.ready: [.ai/hooks/w.sh]\n' >> .ai/config.yaml
+
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "hooks.ready changed files git can see"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: ready"
+}

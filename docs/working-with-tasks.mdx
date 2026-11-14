@@ -249,6 +249,50 @@ for them. A task filed before this check existed is not refused: the same list i
 warning, and the task finishes under the rules it started with.
 </Accordion>
 
+### Your own checks at the finish
+
+Jig's checks know nothing of your project's rules — that a change to the public API updates the
+published docs, say. Name a script of your project at one of the three points where a task is
+finished, and Jig runs it there:
+
+```yaml
+# .ai/config.yaml
+hooks.ready: []
+hooks.consolidate: [.ai/hooks/docs-site-check.sh]
+hooks.ship: []
+```
+
+`hooks.ready` runs when a task is marked ready (`jig task set <id> status ready`),
+`hooks.consolidate` when its knowledge decision is recorded
+(`jig task set <id> knowledge_consolidated true`), and `hooks.ship` when it is shipped
+(`jig task ship`), before anything is committed or sent. Each runs after Jig's own checks — open
+findings, the review, the route — have passed.
+
+- **The exit code decides.** `0` lets the task through, and anything the script printed is shown as
+  a warning. Any other code stops it: Jig names the script and shows what it printed, and nothing is
+  recorded, committed or sent. Every script of a list runs, so one attempt shows every refusal.
+- **It runs in the task's folder** — its worktree, when it has one — on this machine, with nothing
+  on its input, and is told `JIG_TASK_ID`, `JIG_TASK_DIR` (the task's workspace), `JIG_GATE`
+  (`ready`, `consolidate` or `ship`) and `JIG_BASE`, the branch the task lands on as Jig judges it
+  (`refs/remotes/origin/<base>` when origin has it). Which files the task changed is the script's to
+  work out: `git diff --name-only "$(git merge-base "$JIG_BASE" HEAD)"` for what is committed or
+  edited, and `git ls-files --others --exclude-standard` for new files nobody has added yet — at
+  these gates the change is often not committed. Prefer what the diff shows to what a task's notes
+  claim: an agent can write any note.
+- **It only checks.** A hook that changes anything Git can see in the task's folder — a formatter
+  rewriting a file, a log left behind — stops the gate, so that nothing reaches a commit unreviewed.
+- **It is run by its path when it is executable**, so its first line chooses the language, and as
+  `bash <path>` when it is not — a checkout on Windows can lose the executable bit.
+- **A path that is not there stops the task too**, as does an absolute one or one that leads out of
+  the project. `jig status` names it before anyone reaches the gate.
+- **It is the team's rule.** Jig reads these keys from `.ai/config.yaml` only; set in your own
+  `config.local.yaml` they are ignored, and `jig status` says so.
+
+A hook guards the way a task is finished with Jig, not the repository: CI does not run it, and it
+reads the script from the task's own tree, so a change to the script is part of what review reads.
+A script that never ends holds the task: keep hooks quick, and away from the network and from
+anything that asks a question.
+
 ## Several agents at once
 
 One checkout holds one piece of uncommitted work. When an agent is already working and you want to

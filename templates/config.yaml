@@ -48,6 +48,9 @@ forge: auto                           # auto | github | gitlab | none
 # task.issue_pattern: '[A-Z][A-Z0-9]*-[0-9]+'   # the tracker issue a task id starts with
 #   (SRD-2455-fix-login); '[0-9]+' for GitHub or GitLab issues. Unset, no issue is read.
 #   `jig task ship` puts it in the commit's first line and the pull request title.
+# hooks.ready: [.ai/hooks/check.sh]    # the project's scripts at a completion gate; a non-zero exit refuses it
+# hooks.consolidate: []               #   ready: task set status ready; consolidate: task set knowledge_consolidated true
+# hooks.ship: []                      #   ship: task ship. Project-only: never read from config.local.yaml
 
 housekeeping.cadence: 1d              # session hook runs housekeeping if last run is older
 housekeeping.fetch: true              # allow `git fetch` during housekeeping

@@ -1948,6 +1948,14 @@ _task_set_body() {
     else
       _task_route_evidence_gate "$id" consolidate "task set"
     fi
+    # The project's own scripts come last, once every check of Jig's has
+    # passed, and before anything is written. A bare triage close records the
+    # knowledge decision, so it passes consolidation's hooks.
+    if [ "$key:$value" = status:ready ]; then
+      _task_gate_hooks "$id" ready "task set"
+    else
+      _task_gate_hooks "$id" consolidate "task set"
+    fi
   fi
 
   if [ "$key" = class ]; then
@@ -4614,6 +4622,143 @@ _task_route_evidence_gate() {
     jig_die "$(_task_route_evidence_refusal "$id" "$point" "$cmd")"
   fi
   jig_warn "$cmd: $id was filed before route evidence was checked, so this passes without: $missing"
+}
+
+# --- gate hooks (adr-20261113-a-project-script-can-refuse-a-completion-gate) --
+#
+# A project names its own scripts at the three completion gates in its
+# `.ai/config.yaml`: `hooks.ready` (`task set <id> status ready`),
+# `hooks.consolidate` (`task set <id> knowledge_consolidated true`) and
+# `hooks.ship` (`task ship`). The exit code decides: 0 passes, and whatever the
+# script printed is shown as a warning; anything else refuses the gate with the
+# script's name and output. The keys are project keys only — never in
+# JIG_CFG_LOCAL_KEYS — so a clone cannot switch a team's hook off.
+#
+# Only the commands run a hook. The shared refusals (_task_ship_refusal,
+# _task_close_refusal) and every reader — the actions table, `jig status` —
+# never do: a read must not execute project code.
+
+# _task_gate_hook_paths <gate> — the paths `hooks.<gate>` names, one per line.
+# One literal key per gate, so tests/config.t.sh finds each call site.
+_task_gate_hook_paths() {
+  case "$1" in
+    ready) cfg_list_lines hooks.ready ;;
+    consolidate) cfg_list_lines hooks.consolidate ;;
+    ship) cfg_list_lines hooks.ship ;;
+  esac
+}
+
+# _task_gate_hook_problem <root> <path> — why the hook <path> cannot be run
+# from the tree <root>, or nothing: a path is project-relative and stays in
+# the project, and the file is there.
+_task_gate_hook_problem() {
+  case "$2" in
+    /* | [A-Za-z]:*) printf 'is absolute\n'; return 0 ;;
+    .. | ../* | */.. | */../*) printf 'leaves the project\n'; return 0 ;;
+  esac
+  [ -f "$1/$2" ] || printf 'does not exist\n'
+  return 0
+}
+
+# jig_gate_hook_problems — "<key><TAB><path><TAB><problem>" for each hook path
+# the project names that a gate would refuse, judged against this checkout.
+# For `jig status`: it checks paths and never runs a hook.
+jig_gate_hook_problems() {
+  local gate path problem
+  for gate in ready consolidate ship; do
+    while IFS= read -r path; do
+      [ -n "$path" ] || continue
+      problem=$(_task_gate_hook_problem "$JIG_PROJECT" "$path")
+      [ -z "$problem" ] || printf 'hooks.%s\t%s\t%s\n' "$gate" "$path" "$problem"
+    done < <(_task_gate_hook_paths "$gate")
+  done
+  return 0
+}
+
+# _task_gate_hook_tree_v <var> <id> — the tree a hook of <id> runs in, into
+# <var>: this checkout when the task's branch is checked out here (or the task
+# has no branch), else the worktree that has it checked out, else nothing —
+# the task's code is on no disk a hook could read.
+_task_gate_hook_tree_v() {
+  local __gh_branch __gh_wts
+  printf -v "$1" '%s' ""
+  __gh_branch=$(task_state_get "$2" branch)
+  if [ -z "$__gh_branch" ] || [ "$(_task_current_branch)" = "$__gh_branch" ]; then
+    printf -v "$1" '%s' "$JIG_PROJECT"
+    return 0
+  fi
+  __gh_wts=$(_task_worktrees)
+  _task_worktree_for_v "$1" "$__gh_branch" "$__gh_wts"
+}
+
+# _task_gate_hooks <id> <gate> <command> — run every hook `hooks.<gate>`
+# names for task <id>, in the order listed, and die as <command> when any
+# refused: each refusal is listed with its output, so one run shows them all.
+#
+# A hook runs in the task's tree (_task_gate_hook_tree_v), by its path when it
+# is executable and as `bash <path>` when not — the fallback ADR-0037 gives
+# Jig's own scripts, for a checkout that lost the executable bit. It is told
+# JIG_TASK_ID, JIG_TASK_DIR (the task's workspace), JIG_GATE and JIG_BASE (the
+# task's base as jig_base_ref resolves it, origin first; the bare branch name
+# when neither ref exists). Its stdin is empty and both of its outputs are
+# captured together; what Jig shows goes to stderr, since agents read the
+# stdout of `task set --json` and `task ship`. It runs on this machine, never
+# through `run.exec`, as `worktree.setup` does. No time limit: a hung hook
+# holds the gate (the spec's open question).
+_task_gate_hooks() {
+  local id="$1" gate="$2" cmd="$3" paths path tree problem out rc dir base ref refused="" nl=$'\n' before after
+  paths=$(_task_gate_hook_paths "$gate")
+  [ -n "$paths" ] || return 0
+  _task_gate_hook_tree_v tree "$id"
+  [ -n "$tree" ] || jig_die "$cmd: hooks.$gate cannot run: $(task_state_get "$id" branch) is not checked out in any tree of this repository; check it out, or run from its worktree"
+  dir=$(task_dir "$id")
+  base=$(jig_task_base "$id")
+  ref=$(jig_base_ref "$base")
+  [ -z "$ref" ] || base=$ref
+  before=$(_task_gate_hook_tree_print "$tree")
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    problem=$(_task_gate_hook_problem "$tree" "$path")
+    if [ -n "$problem" ]; then
+      refused="$refused$nl- hook $path $problem in $tree"
+      continue
+    fi
+    rc=0
+    # The redirections stay inside the substitution: on a bare assignment
+    # bash reports 0 whatever the substitution exited with.
+    out=$(
+      exec </dev/null 2>&1
+      cd "$tree" || exit 1
+      export JIG_TASK_ID="$id" JIG_TASK_DIR="$dir" JIG_GATE="$gate" JIG_BASE="$base"
+      if [ -x "$path" ]; then
+        exec "./$path"
+      else
+        exec bash "./$path"
+      fi
+    ) || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      refused="$refused$nl- hook $path exited $rc"
+      [ -z "$out" ] || refused="$refused:$nl$out"
+    elif [ -n "$out" ]; then
+      jig_warn "$cmd: hook $path (hooks.$gate) passed with output:$nl$out"
+    fi
+  done <<EOF
+$paths
+EOF
+  [ -z "$refused" ] || jig_die "$cmd: the project's hooks.$gate refused $id:$refused"
+  # A hook checks; it never writes. What it changed that git can see would
+  # reach the commit unreviewed — `task ship` stages tracked edits — so the
+  # gate refuses and names the change for the person to keep or take back.
+  after=$(_task_gate_hook_tree_print "$tree")
+  [ "$before" = "$after" ] \
+    || jig_die "$cmd: the project's hooks.$gate changed files git can see in $tree; a hook only checks: undo its change or keep it as the task's own (and have it reviewed), then retry"
+}
+
+# _task_gate_hook_tree_print <tree> — one hash of what git sees in <tree>:
+# the status lines (untracked files included) and the diff against HEAD.
+_task_gate_hook_tree_print() {
+  { git -C "$1" status --porcelain 2>/dev/null; git -C "$1" diff HEAD --binary 2>/dev/null; } \
+    | git hash-object --stdin
 }
 
 # --- the human gate (adr-20260924-the-status-page-keeps-the-readers-place)
@@ -7410,7 +7555,10 @@ EOF
     # dropping the record would read it as parked again.
     local none_refusal
     none_refusal=$(_task_ship_refusal "$id" "$draft") || exit 1
-    [ -n "$none_refusal" ] || _task_ship_resumed_done "$id" "$dir" "$draft" ""
+    if [ -z "$none_refusal" ]; then
+      [ "$draft" -eq 1 ] || _task_gate_hooks "$id" ship "task ship"
+      _task_ship_resumed_done "$id" "$dir" "$draft" ""
+    fi
     # To stderr and exit 3, not `jig_die` (exit 1): a skill reads 3 as "hand
     # this over to the human", not as a command that failed.
     printf '%s\n' "$refusal" >&2
@@ -7432,6 +7580,11 @@ EOF
   base=$(jig_task_base "$id")
   cur=$(_task_current_branch)
   [ "$cur" = "$branch" ] || jig_die "task ship: current branch is $cur, but $id is on $branch; switch branches first"
+  # The project's ship hooks, after Jig's own gates and the branch, and before
+  # anything is committed or sent (adr-20260925-a-ship-refuses-before-it-sends).
+  # A draft skips them as it skips the gates; the recheck before a merge does
+  # not run them again, since they passed in this same call.
+  [ "$draft" -eq 1 ] || _task_gate_hooks "$id" ship "task ship"
 
   # The project's git flow, asked before anything changes: where the pull
   # request goes is decided here, never after the commit or the push.

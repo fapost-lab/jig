@@ -186,6 +186,14 @@ Telegram message as an autopilot stop. The person connects it in their own setti
 offers the lines (ADR-0024, adr-20261010-a-waiting-session-reaches-telegram). Codex has no
 equivalent.
 
+## Gate Hook
+
+A project's own script named in `.ai/config.yaml` under `hooks.ready`, `hooks.consolidate` or
+`hooks.ship`, run by the completion gate of that name after Jig's own checks. Its exit code decides:
+`0` passes (output shown as a warning), anything else refuses the gate. A project key only; a hook
+checks and never writes (adr-20261113-a-project-script-can-refuse-a-completion-gate). Not a Session
+Hook or Notify Hook, which a Runtime runs.
+
 ## Domain Pack
 
 The three documents a domain may keep under `.ai/knowledge/domains/<domain>/`:
