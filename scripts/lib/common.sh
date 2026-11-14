@@ -2085,15 +2085,15 @@ jig_release_raise() {
   return 0
 }
 
-# jig_release_notes_through <from> — the commit this branch's release notes say
+# jig_release_notes_through <from> [<head>] — the commit this branch's release notes say
 # they describe: the newest `Release-Notes-Through: <sha>` trailer among the
-# commits <from>..HEAD, resolved to a full sha, or as written when it does not
+# commits <from>..<head> (HEAD unless a pull request's head is named), resolved to a full sha, or as written when it does not
 # resolve; nothing when no commit carries one. The newest wins: notes brought up
 # to date after the base moved are a later commit with a later trailer
 # (adr-20261112-release-notes-name-the-commit-they-describe).
 jig_release_notes_through() {
   local v full
-  v=$(git -C "$JIG_PROJECT" log --format=%B "$1..HEAD" 2>/dev/null \
+  v=$(git -C "$JIG_PROJECT" log --format=%B "$1..${2:-HEAD}" 2>/dev/null \
     | awk 'found == "" && /^Release-Notes-Through:[[:space:]]*[0-9a-fA-F]+[[:space:]]*$/ {
         sub(/^Release-Notes-Through:[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); found = $0
       }
@@ -2106,7 +2106,8 @@ jig_release_notes_through() {
   fi
 }
 
-# jig_release_notes_gap <tip> — why the release notes on HEAD do not describe
+# jig_release_notes_gap <tip> [<head>] — why the release notes on <head> (HEAD
+# unless a pull request's head is named) do not describe
 # everything up to <tip> (the base's freshest commit), or nothing when they do.
 # Reads git only, no network: the callers fetch, each its own way (a ship as
 # the clone's account, CI with its checkout's token). The answer is the same
@@ -2115,7 +2116,7 @@ jig_release_notes_through() {
 # changelog check can never disagree about it.
 jig_release_notes_gap() {
   local tip="$1" through n list
-  through=$(jig_release_notes_through "$tip")
+  through=$(jig_release_notes_through "$tip" "${2:-HEAD}")
   if [ -z "$through" ]; then
     printf 'none of its commits names the commit its release notes describe; once the notes cover %s, record that commit in a Release-Notes-Through: trailer (jig task set <task> notes_through <sha> adds it to the next ship)\n' \
       "$(git -C "$JIG_PROJECT" rev-parse --short "$tip" 2>/dev/null || printf '%s' "$tip")"
@@ -2137,7 +2138,7 @@ jig_release_notes_gap() {
     "$n" "$(git -C "$JIG_PROJECT" rev-parse --short "$through")" "$list"
 }
 
-# jig_release_notes_refusal <who> <base> — jig_release_notes_gap against the
+# jig_release_notes_refusal <who> <base> [<head>] — jig_release_notes_gap against the
 # freshest <base>: origin's, fetched now as the clone's account, or the local
 # branch where there is no origin. A fetch that fails is itself the refusal:
 # a release whose notes cannot be checked against the base does not go out.
@@ -2155,7 +2156,7 @@ jig_release_notes_refusal() {
     tip="refs/heads/$base"
   fi
   git -C "$JIG_PROJECT" rev-parse --verify --quiet "$tip" >/dev/null 2>&1 || return 0
-  jig_release_notes_gap "$tip"
+  jig_release_notes_gap "$tip" "${3:-HEAD}"
 }
 
 # jig_fresh_base_ref <name> <who> — the ref to cut from <name>: the fresher of
@@ -3465,6 +3466,15 @@ $out"
 # Set by jig_ship_merge: 1 when it merged, 0 otherwise.
 JIG_SHIP_MERGED=0
 
+# Set by jig_ship_merge beside every `not merged:` line: the failure code a
+# program acts on (schemas/json.md, "Failure codes"), empty when it merged.
+JIG_SHIP_NOT_MERGED_CODE=""
+
+# JIG_SHIP_CI_TIMEOUT — digits, minutes: when set, jig_ship_merge and
+# jig_pr_mergeable use it instead of agent.ci_timeout. A person's command sets
+# it to 0: one look at the checks, never a wait.
+JIG_SHIP_CI_TIMEOUT=""
+
 # The seconds between two looks at a pull request's checks, and how long no
 # check at all may mean "not registered yet" rather than "CI checks nothing".
 _JIG_CI_POLL=15
@@ -3482,6 +3492,7 @@ _jig_ship_last_check() {
   why=$("$JIG_SHIP_LAST_CHECK") || why="the last check before the merge failed"
   [ -n "$why" ] || return 0
   printf 'not merged: %s\n' "$why"
+  JIG_SHIP_NOT_MERGED_CODE="notes-stale"
   return 1
 }
 
@@ -3510,14 +3521,21 @@ jig_ship_merge() {
   local who="$1" url="$2" sha="$3" policy="$4" kind timeout
   _jig_ship_outward "$who"
   JIG_SHIP_MERGED=0
-  timeout=$(jig_ci_timeout) || jig_die "$who: invalid agent.ci_timeout: $timeout (expected whole minutes)"
+  JIG_SHIP_NOT_MERGED_CODE=""
+  if [ -n "$JIG_SHIP_CI_TIMEOUT" ]; then
+    timeout=$JIG_SHIP_CI_TIMEOUT
+  else
+    timeout=$(jig_ci_timeout) || jig_die "$who: invalid agent.ci_timeout: $timeout (expected whole minutes)"
+  fi
   kind=$(jig_forge_kind) || exit 1
   if [ "$kind" = none ]; then
     printf "not merged: no forge available; the merge is the human's\n"
+    JIG_SHIP_NOT_MERGED_CODE="forge-unavailable"
     return 0
   fi
   if [ -z "$url" ]; then
     printf 'not merged: no pull request to merge\n'
+    JIG_SHIP_NOT_MERGED_CODE="no-pull-request"
     return 0
   fi
   case "$kind" in
@@ -3581,6 +3599,15 @@ _jig_ship_ci_reason() {
   esac
 }
 
+# _jig_ship_ci_code <state> — the failure code of a CI state other than green.
+_jig_ship_ci_code() {
+  case "$1" in
+    red) printf 'ci-red\n' ;;
+    none) printf 'ci-none\n' ;;
+    *) printf 'ci-pending\n' ;;
+  esac
+}
+
 # _jig_ship_first_line <text> — the first non-empty line, for a refusal.
 _jig_ship_first_line() {
   printf '%s\n' "$1" | awk '!f && /[^[:space:]]/ { print; f = 1 }'
@@ -3605,6 +3632,7 @@ _jig_ship_merge_github() {
   local url="$1" sha="$2" policy="$3" timeout="$4" view draft="" head="" allowed m="" s="" r="" method state out
   if ! view=$(jig_gh pr view "$url" --json isDraft,headRefOid --jq '"\(.isDraft) \(.headRefOid)"' 2>/dev/null); then
     printf 'not merged: could not read the pull request\n'
+    JIG_SHIP_NOT_MERGED_CODE="forge-unavailable"
     return 0
   fi
   read -r draft head <<EOF
@@ -3612,10 +3640,12 @@ $view
 EOF
   if [ "$draft" != false ]; then
     printf 'not merged: the pull request is a draft\n'
+    JIG_SHIP_NOT_MERGED_CODE="draft"
     return 0
   fi
   if [ "$head" != "$sha" ]; then
     printf 'not merged: the pull request is at %s, not at the shipped %s\n' "${head:-an unknown commit}" "$sha"
+    JIG_SHIP_NOT_MERGED_CODE="forge-refused"
     return 0
   fi
   allowed=$(jig_gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed \
@@ -3634,19 +3664,23 @@ EOF
   if [ -z "$method" ]; then
     if [ "$policy" = merge-commit ] && [ -n "$allowed" ]; then
       printf 'not merged: the repository does not allow merge commits, and this merge keeps its ancestry only with one\n'
+      JIG_SHIP_NOT_MERGED_CODE="forge-refused"
     else
       printf 'not merged: could not tell which merge method the repository allows\n'
+      JIG_SHIP_NOT_MERGED_CODE="forge-refused"
     fi
     return 0
   fi
   state=$(_jig_ship_ci_wait "$timeout" _jig_ship_checks_github "$url")
   if [ "$state" != green ]; then
     printf 'not merged: %s\n' "$(_jig_ship_ci_reason "$state" "$timeout")"
+    JIG_SHIP_NOT_MERGED_CODE=$(_jig_ship_ci_code "$state")
     return 0
   fi
   _jig_ship_last_check || return 0
   if ! out=$(jig_gh pr merge "$url" --match-head-commit "$sha" "--$method" 2>&1); then
     printf 'not merged: the forge refused: %s\n' "$(_jig_ship_first_line "$out")"
+    JIG_SHIP_NOT_MERGED_CODE="forge-refused"
     return 0
   fi
   JIG_SHIP_MERGED=1
@@ -3713,15 +3747,18 @@ _jig_ship_merge_gitlab() {
   iid=$(_jig_ship_glab_mr "$url")
   if [ -z "$iid" ]; then
     printf 'not merged: could not read the merge request from %s\n' "$url"
+    JIG_SHIP_NOT_MERGED_CODE="forge-unavailable"
     return 0
   fi
   if ! json=$(glab mr view "$iid" --output json 2>/dev/null); then
     printf 'not merged: could not read the merge request\n'
+    JIG_SHIP_NOT_MERGED_CODE="forge-unavailable"
     return 0
   fi
   case "$(printf '%s' "$json" | tr -d ' \n')" in
     *'"draft":true'* | *'"work_in_progress":true'*)
       printf 'not merged: the merge request is a draft\n'
+      JIG_SHIP_NOT_MERGED_CODE="draft"
       return 0 ;;
   esac
   project=$(glab api "projects/:id" 2>/dev/null | tr '\n' ' ') || project=""
@@ -3731,16 +3768,19 @@ _jig_ship_merge_gitlab() {
     merge-commit:merge:never | merge-commit:merge:default_off) ;;
     merge-commit:?*:?*)
       printf 'not merged: the project does not merge with a merge commit, and this merge keeps its ancestry only with one\n'
+      JIG_SHIP_NOT_MERGED_CODE="forge-refused"
       return 0 ;;
     any:?*:always | any:?*:default_on) squash="--squash" ;;
     any:?*:?*) ;;
     *)
       printf 'not merged: could not tell which merge method the project allows\n'
+      JIG_SHIP_NOT_MERGED_CODE="forge-refused"
       return 0 ;;
   esac
   state=$(_jig_ship_ci_wait "$timeout" _jig_ship_checks_gitlab "$iid" "$sha")
   if [ "$state" != green ]; then
     printf 'not merged: %s\n' "$(_jig_ship_ci_reason "$state" "$timeout")"
+    JIG_SHIP_NOT_MERGED_CODE=$(_jig_ship_ci_code "$state")
     return 0
   fi
   _jig_ship_last_check || return 0
@@ -3749,6 +3789,7 @@ _jig_ship_merge_gitlab() {
   # shellcheck disable=SC2086 # $squash is one flag or nothing
   if ! out=$(glab mr merge "$iid" --sha "$sha" --yes --auto-merge=false $squash 2>&1); then
     printf 'not merged: the forge refused: %s\n' "$(_jig_ship_first_line "$out")"
+    JIG_SHIP_NOT_MERGED_CODE="forge-refused"
     return 0
   fi
   JIG_SHIP_MERGED=1
@@ -3821,7 +3862,8 @@ _jig_pr_state_ask() {
       return 0
     fi
     out=$(jig_net glab mr view "$iid" --output json 2>"$err") || rc=$?
-    raw=$(printf '%s' "$out" | tr -d ' \n' | sed -n 's/.*"state":"\([^"]*\)".*/\1/p')
+    # The first "state": the merge request's own comes before those of the users nested in it.
+    raw=$(printf '%s' "$out" | tr -d ' \n' | { grep -o '"state":"[^"]*"' || true; } | sed -n '1s/^"state":"\(.*\)"$/\1/p')
     [ "$raw" != opened ] || raw=open
   fi
   if [ "$rc" -ne 0 ]; then
@@ -4054,7 +4096,11 @@ jig_pr_mergeable() {
   local url="$1" kind timeout start limit state
   [ -n "$url" ] || { printf 'unknown\n'; return 0; }
   kind=$(jig_forge_kind) || exit 1
-  timeout=$(jig_ci_timeout) || timeout=0
+  if [ -n "$JIG_SHIP_CI_TIMEOUT" ]; then
+    timeout=$JIG_SHIP_CI_TIMEOUT
+  else
+    timeout=$(jig_ci_timeout) || timeout=0
+  fi
   limit=60
   [ $((timeout * 60)) -ge "$limit" ] || limit=$((timeout * 60))
   start=$SECONDS
@@ -5256,6 +5302,74 @@ jig_revision_bump() {
 jig_record_changed() {
   jig_revision_bump
   jig_status_page_dirty
+}
+
+# --- the shipping record ------------------------------------------------------
+#
+# A `jig task ship` at `merge` waits for CI and then merges. While it does, it
+# keeps `<clone-root>/.ai/runtime/shipping/<id>` (`pid: <n>` and `since: <UTC>`),
+# so a person's merge button, a program reading `jig task list --json` and
+# another ship can tell "the agent is waiting for CI and merges itself" from
+# "the merge is the person's". The clone root, not the checkout the ship runs
+# in, so a ship in a worktree is seen from the main checkout. A record whose
+# process is gone reads as no record; a read never deletes it. Both writes
+# raise the revision (jig_record_changed).
+
+# jig_shipping_file_v <var> <id> — the record's path into <var>; dies for an
+# id that is not one, before a path is built from it.
+jig_shipping_file_v() {
+  local __jsf_root
+  jig_valid_id "$2" || jig_die "invalid task id: $2"
+  jig_config_clone_root_v __jsf_root
+  printf -v "$1" '%s/%s/runtime/shipping/%s' "$__jsf_root" "$JIG_AI_DIR" "$2"
+}
+
+# jig_shipping_begin <id> — write the record for this process, atomically, and
+# remove it when the command ends however it ends.
+_JIG_SHIPPING_ID=""
+jig_shipping_begin() {
+  local id="$1" file tmp
+  jig_shipping_file_v file "$id"
+  mkdir -p "${file%/*}" 2>/dev/null || return 0
+  tmp="$file.tmp.$$"
+  jig_cleanup_add "$tmp"
+  printf 'pid: %s\nsince: %s\n' "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp" 2>/dev/null || return 0
+  mv "$tmp" "$file" 2>/dev/null || return 0
+  jig_record_changed
+  _JIG_SHIPPING_ID=$id
+  jig_on_exit '_jig_shipping_exit'
+}
+
+# _jig_shipping_exit — the exit action: remove the record this process made.
+_jig_shipping_exit() {
+  [ -z "$_JIG_SHIPPING_ID" ] || jig_shipping_end "$_JIG_SHIPPING_ID"
+}
+
+# jig_shipping_end <id> — remove the record when it is this process's.
+jig_shipping_end() {
+  local id="$1" file pid
+  jig_shipping_file_v file "$id"
+  [ -f "$file" ] || { _JIG_SHIPPING_ID=""; return 0; }
+  pid=$(_jig_verify_busy_value "$file" pid || true)
+  [ "$pid" = "$$" ] || return 0
+  rm -f "$file"
+  _JIG_SHIPPING_ID=""
+  jig_record_changed
+}
+
+# jig_shipping_since_v <var> <id> — the record's `since` while its process
+# lives, else empty. Reads only.
+jig_shipping_since_v() {
+  local __jss_var="$1" __jss_file __jss_pid __jss_since=""
+  jig_shipping_file_v __jss_file "$2"
+  if [ -f "$__jss_file" ]; then
+    __jss_pid=$(_jig_verify_busy_value "$__jss_file" pid || true)
+    case "$__jss_pid" in
+      '' | *[!0-9]*) ;;
+      *) if kill -0 "$__jss_pid" 2>/dev/null; then __jss_since=$(_jig_verify_busy_value "$__jss_file" since || true); fi ;;
+    esac
+  fi
+  printf -v "$__jss_var" '%s' "$__jss_since"
 }
 
 # jig_revision_claim <expected> — claim the revision right above <expected>,

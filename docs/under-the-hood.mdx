@@ -154,7 +154,10 @@ repository it created, the only ones that do are `jig task ship`, `jig spec ship
 (`jig spec item`, `jig knowledge accept|reject|reviewed --json`, `jig writes ship`), and on the
 staging flow `jig task land` (a merge into the staging branch, pushed there) and `jig task promote`
 (it pushes the task branch and opens the pull request into the main branch), and only as
-far as `agent.git` in your `.ai/config.local.yaml` allows (`none` by default: they do nothing). On a
+far as `agent.git` in your `.ai/config.local.yaml` allows (`none` by default: they do nothing).
+`jig task land`, `jig task promote`, `jig task request-review` and `jig task merge-pr` with
+`--by human` are your own decision, made in a terminal or by a dashboard, and do not read
+`agent.git`; they still never force, never use an administrator's override and never wait for CI. On a
 CI runner, which has no `agent.git`, `jig task promote` follows the flow alone. They
 commit what is staged, push without `--force`, never skip hooks, and open a pull request with `gh`
 or `glab`. With nothing staged, `jig task ship` stages the changes to tracked files itself and lists
@@ -174,7 +177,10 @@ fetch`. Outside a dry run it lists the open ones' checks too (one more call on G
 what it heard in `.ai/runtime/forge-cache`, which `jig task list --json` and `jig status` read
 instead of asking the forge; `jig upgrade` adds the pull request it has just opened there, so the
 upgrade waiting for its merge shows before housekeeping next runs. `jig upgrade --land` asks the forge itself, once, before it changes
-anything. `forge: none` turns forge lookup off. Installation and self-update also access the
+anything. The commands a person presses a button for ask the forge themselves, once, when run:
+`jig task request-review` (adds reviewers), `jig task merge-pr` and `jig task land --by human` (read the
+pull request's checks and review, then merge it), and `jig task pr-status --json` (reads checks, review,
+mergeability and branch protection, and writes nothing). `forge: none` turns forge lookup off. Installation and self-update also access the
 framework source and releases; the Windows installer can download Git, as described above. Carrying
 state into a worktree touches no network either: a profile's `install` command is printed for you to
 run, never executed, even when there is nothing to carry because the owning checkout is not

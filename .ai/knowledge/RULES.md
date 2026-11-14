@@ -91,7 +91,12 @@
   empty. The path is checked to end in `.ai/runtime/verify` before either runs, and the same
   two deletions take back a record whose holder is gone. Nothing else under that directory is
   touched, and there is no `rm -rf` on it.
-  (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass) A write in Jig's own tree holds
+  (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass) The record of a `jig task
+  ship` waiting for CI is the same shape: `<clone root>/.ai/runtime/shipping/<id>`, the path built
+  by one function from a validated id, removed by `rm -f` of that one file only by the ship that
+  wrote it — the record still names its own pid — when its wait ends or it exits; a record whose
+  process is gone is read as absent and never removed by a reader
+  (adr-20261114-a-persons-pull-request-action-does-not-read-agent-git). A write in Jig's own tree holds
   its lock the same way, under `.ai/runtime/writes/lock/`, or `<git-common-dir>/jig/writes/lock/`
   where that directory is not named `.git`, the path checked to end so before either deletion: it
   gives back only a lock that still names its own pid, and takes back one whose holder is gone

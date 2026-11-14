@@ -99,19 +99,23 @@ forgecache_read() {
   sed '/^#/d;/^$/d' "$file" 2>/dev/null || true
 }
 
-# forgecache_entry <cache> <head> <base> — sets _FORGECACHE_STATE, _FORGECACHE_CI
-# and _FORGECACHE_AT from the first line of <cache> (forgecache_read's output)
+# forgecache_entry <cache> <head> <base> — sets _FORGECACHE_STATE, _FORGECACHE_CI,
+# _FORGECACHE_AT, _FORGECACHE_URL and _FORGECACHE_MERGEABLE from the first line of <cache> (forgecache_read's output)
 # for a pull request from <head> into <base>: the newest, as the forge lists
 # them and as housekeeping's own remote state takes it. Each is empty when the
 # cache does not say. In the caller's shell, without a process per lookup.
 _FORGECACHE_STATE=""
 _FORGECACHE_CI=""
 _FORGECACHE_AT=""
+_FORGECACHE_URL=""
+_FORGECACHE_MERGEABLE=""
 forgecache_entry() {
   local cache="$1" head="$2" base="$3" t nl rest line
   _FORGECACHE_STATE=""
   _FORGECACHE_CI=""
   _FORGECACHE_AT=""
+  _FORGECACHE_URL=""
+  _FORGECACHE_MERGEABLE=""
   [ -n "$cache" ] && [ -n "$head" ] && [ -n "$base" ] || return 0
   t=$'\t'
   nl=$'\n'
@@ -122,14 +126,16 @@ forgecache_entry() {
   esac
   rest=${rest#*"$nl$head$t$base$t"}
   line=${rest%%"$nl"*}
-  IFS="$t" read -r _FORGECACHE_STATE _FORGECACHE_CI _FORGECACHE_AT _ <<EOF
+  IFS="$t" read -r _FORGECACHE_STATE _FORGECACHE_CI _FORGECACHE_AT _ _FORGECACHE_URL _FORGECACHE_MERGEABLE _ <<EOF
 $line
 EOF
   [ "$_FORGECACHE_CI" != "-" ] || _FORGECACHE_CI=""
+  [ "$_FORGECACHE_URL" != "-" ] || _FORGECACHE_URL=""
+  [ "$_FORGECACHE_MERGEABLE" != "-" ] || _FORGECACHE_MERGEABLE=""
   return 0
 }
 
-# forgecache_pr <cache> <url> <head> <into> — the same three variables for the
+# forgecache_pr <cache> <url> <head> <into> — the same variables for the
 # pull request <url> names: the first (newest) line of <cache> whose <url>
 # column is <url>, whatever branch it goes into. A pull request with no line of
 # that url (an old line without the column, or `-`, or an empty <url>) is
@@ -139,15 +145,18 @@ EOF
 # lookup by the task's base never finds. jig_parked_states (common.sh) picks the
 # same line, first by url. In the caller's shell, without a process.
 forgecache_pr() {
-  local cache="$1" url="$2" head="$3" into="$4" t s c a u
+  local cache="$1" url="$2" head="$3" into="$4" t s c a u m
   if [ -n "$cache" ] && [ -n "$url" ] && [ "$url" != "-" ]; then
     t=$'\t'
-    while IFS="$t" read -r _ _ s c a _ u _; do
+    while IFS="$t" read -r _ _ s c a _ u m _; do
       [ "$u" = "$url" ] || continue
       _FORGECACHE_STATE=$s
       _FORGECACHE_CI=$c
       _FORGECACHE_AT=$a
+      _FORGECACHE_URL=$u
+      _FORGECACHE_MERGEABLE=$m
       [ "$_FORGECACHE_CI" != "-" ] || _FORGECACHE_CI=""
+      [ "$_FORGECACHE_MERGEABLE" != "-" ] || _FORGECACHE_MERGEABLE=""
       return 0
     done <<EOF
 $cache

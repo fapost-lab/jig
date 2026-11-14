@@ -44,6 +44,14 @@ cmd_task() {
     ship) task_ship "$@" ;;
     land) task_land "$@" ;;
     promote) task_promote "$@" ;;
+    request-review | merge-pr | pr-status)
+      # shellcheck source=lib/prdo.sh
+      . "$JIG_LIB/prdo.sh"
+      case "$sub" in
+        request-review) prdo_request_review "$@" ;;
+        merge-pr) prdo_merge_pr "$@" ;;
+        *) prdo_pr_status "$@" ;;
+      esac ;;
     autopilot) task_autopilot "$@" ;;
     gate) task_gate "$@" ;;
     route) task_route "$@" ;;
@@ -60,7 +68,7 @@ cmd_task() {
 # one source for both `--help` and the usage errors the subcommands die with.
 _task_usage() {
   case "${1:-}" in
-    '') printf 'usage: jig task new|start|bootstrap|set|abandon|archive|unarchive|merge|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|land|promote|autopilot|gate|route ...\n' ;;
+    '') printf 'usage: jig task new|start|bootstrap|set|abandon|archive|unarchive|merge|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|land|promote|request-review|merge-pr|pr-status|autopilot|gate|route ...\n' ;;
     new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file> | --goal <text>] [--lean] [--json]\n' ;;
     start) printf 'usage: jig task start <id> [--worktree] [--no-bootstrap] [--share <dir>]... [--out-of-order --reason <text>]\n' ;;
     bootstrap) printf 'usage: jig task bootstrap <id> [--share <dir>]...\n' ;;
@@ -99,10 +107,14 @@ _task_usage() {
     ship) printf 'usage: jig task ship <id> --message-file <file> [--title <t>] [--body-file <file>] [--reviewer <login|name>]... [--draft] [--partial]\n' ;;
     land)
       printf 'usage: jig task land <id> [--without-review]\n'
+      printf '       jig task land <id> --by human [--without-review] [--revision <n>] [--json]\n'
       printf '       jig task land <id> --resolved --note-file <file> [--without-review]\n'
       printf '       jig task land <id> --abort\n'
       ;;
-    promote) printf 'usage: jig task promote <id> [--commit <sha>] [--title <t>] [--body-file <file>]\n       jig task promote [--commit <sha>] <id> <id>...\n       jig task promote --commit <sha> --all\n' ;;
+    promote) printf 'usage: jig task promote <id> [--commit <sha>] [--title <t>] [--body-file <file>]\n       jig task promote <id> --by human [--commit <sha>] [--title <t>] [--body-file <file>] [--revision <n>] [--json]\n       jig task promote [--commit <sha>] <id> <id>...\n       jig task promote --commit <sha> --all\n' ;;
+    request-review) printf 'usage: jig task request-review <id> --reviewer <login|name>... [--by human] [--revision <n>] [--json]\n' ;;
+    merge-pr) printf 'usage: jig task merge-pr <id> [--by human] [--revision <n>] [--json]\n' ;;
+    pr-status) printf 'usage: jig task pr-status <id> --json\n' ;;
     autopilot)
       printf 'usage: jig task autopilot <id> start [--phase <spec-id>/<n>]\n'
       printf '       jig task autopilot <id> stage <name>\n'
@@ -2069,7 +2081,7 @@ _task_not_queued_hint() {
 # claim, as `task resume` lands its own. A claim that does not stand writes
 # nothing and refuses with `stale-revision`.
 _task_close_write() {
-  local id="$1" dir="$2" expected="$3" rc=0 tmp tmp2
+  local id="$1" dir="$2" expected="$3" claimed="${4:-}" rc=0 tmp tmp2
   tmp="$dir/state.tmp.$$"
   tmp2="$dir/state.tmp2.$$"
   _task_guard_dir "$dir"
@@ -2080,7 +2092,9 @@ _task_close_write() {
   else
     _task_state_set_into "$dir/state" "$tmp" status consolidated
   fi
-  jig_revision_claim "$expected" || rc=$?
+  # <claimed> says the caller holds the claim already (`task merge-pr`, which
+  # claims before it merges and closes under that one claim).
+  [ -n "$claimed" ] || jig_revision_claim "$expected" || rc=$?
   case "$rc" in
     0) ;;
     1) rm -f "$tmp"; jig_fail stale-revision "task set: the clone changed since revision $expected; read again and retry" ;;
@@ -2129,7 +2143,7 @@ _task_close_write() {
 # and says the pull request may already be merged: "unknown" alone reads as a
 # verdict on the pull request, when it is only the forge that did not answer.
 _task_close_refusal() {
-  local id="$1" pr_state="$2" base_state="${3:-}" pr kc why="" mode=cache
+  local id="$1" pr_state="$2" base_state="${3:-}" pr kc st why="" mode=cache
   task_state_var kc "$id" knowledge_consolidated
   # A bare triage task's close records its knowledge decision too (task_set).
   if [ "$kc" != "true" ] && ! _task_is_bare_triage "$id"; then
@@ -2151,7 +2165,10 @@ _task_close_refusal() {
       return 0
     fi
   fi
-  _task_close_staging_refusal "$id" "$mode" "$base_state"
+  # A task already closed closes again (task_set's idempotence), even one an
+  # older Jig closed before its work reached the base.
+  task_state_var st "$id" status
+  [ "$st" = consolidated ] || _task_close_staging_refusal "$id" "$mode" "$base_state"
   return 0
 }
 
@@ -5643,23 +5660,21 @@ _TASK_LIST_FORGE_CACHE=""
 # "<id><TAB>on|behind" for the tasks whose work reached the staging branch.
 _TASK_LIST_STAGING_ON=""
 _TASK_LIST_STAGING=""
-# The staging branch's name, when _TASK_LIST_STAGING_ON is 1; and
-# _TASK_LIST_STAGING_READ is 1 once a listing asked, whatever the answer, so a
-# per-task reader (_task_pr_into_v) answers from these without a process.
+# The staging branch's name, when _TASK_LIST_STAGING_ON is 1.
 _TASK_LIST_STAGING_BRANCH=""
-_TASK_LIST_STAGING_READ=""
 
 # _task_list_staging_read <ids> — fill the two globals above for the tasks
 # <ids> names, one per line: their branch and base from the listing's snapshot,
 # and the answer from jig_staging_states (common.sh) in one call, so the
 # processes it starts do not grow with the tasks. A project on any other flow
 # reads nothing and its objects keep their shape byte for byte.
+_TASK_LIST_STAGING_READ=""
 _task_list_staging_read() {
   local ids="$1" staging id branch base rows="" t=$'\t'
+  _TASK_LIST_STAGING_READ=1
   _TASK_LIST_STAGING_ON=""
   _TASK_LIST_STAGING=""
   _TASK_LIST_STAGING_BRANCH=""
-  _TASK_LIST_STAGING_READ=1
   staging=$(jig_staging_in_use) || return 0
   _TASK_LIST_STAGING_ON=1
   _TASK_LIST_STAGING_BRANCH=$staging
@@ -6054,6 +6069,15 @@ EOF
     o="$o,\"pull_request\":null"
   fi
 
+  # A `jig task ship` of this task waiting for CI right now (jig_shipping_*,
+  # common.sh): since when, or null.
+  jig_shipping_since_v v "$id"
+  if [ -n "$v" ]; then
+    json_quote "$v"; o="$o,\"shipping\":{\"since\":$_JSON}"
+  else
+    o="$o,\"shipping\":null"
+  fi
+
   while IFS="$t" read -r line flag; do
     [ "$line" = "$id" ] || continue
     json_quote "$flag"
@@ -6065,21 +6089,26 @@ EOF
 
   # What a person may do next (_task_actions): every row of the table, with
   # the pull request's state as the forge cache holds it, never the forge's.
-  local action offered command reason actions="" pr_state=""
+  local action offered command reason actions="" pr_state="" pr_ci="" pr_mergeable=""
   # What the cache says of a pull request from the branch into the task's base
   # (on the staging flow, its promotion): `close` reads it for every task with
-  # a branch; `ship` and `land` read it only for a task with a pull request.
+  # a branch; the other rows read it, its checks and its mergeable word only
+  # for a task with a pull request.
   if [ -n "$branch" ]; then
     forgecache_entry "$_TASK_LIST_FORGE_CACHE" "$branch" "$base"
     base_state=$_FORGECACHE_STATE
+    if [ -n "$pr_url" ]; then
+      pr_state=$_FORGECACHE_STATE
+      pr_ci=$_FORGECACHE_CI
+      pr_mergeable=$_FORGECACHE_MERGEABLE
+    fi
   fi
-  [ -z "$pr_url" ] || pr_state=$base_state
   # Housekeeping found the work in the base (needs-consolidation, its own
   # forge and git tiers): the close reads that as a merge into the base.
   case ",$flags," in
     *',"needs-consolidation",'*) base_state=merged ;;
   esac
-  _task_actions_v atext "$id" "$pr_state" "$pr_url_state" "$base_state"
+  _task_actions_v atext "$id" "$pr_state" "$pr_ci" "$pr_mergeable" "$pr_url_state" "$base_state"
   while IFS="$t" read -r action offered command reason; do
     [ -n "$action" ] || continue
     json_quote "$action"; line="{\"id\":$_JSON"
@@ -6107,22 +6136,25 @@ EOF
 #
 # The rows, in their order; the ids are a contract. The pause request rows ask
 # the guards `jig queue request|cancel` asks (common.sh), which read the queue.
-_TASK_ACTIONS="start pause resume request-pause cancel-pause-request approve-gate answer-stop handover set-class ship land close abandon archive unarchive reopen"
+_TASK_ACTIONS="start pause resume request-pause cancel-pause-request approve-gate answer-stop handover set-class ship land request-review merge promote pr-status close abandon archive unarchive reopen"
 
-# _task_actions <id> <pr-state> — one line per row of the table:
+# _task_actions <id> <pr-state> [<ci> [<mergeable> [<pr-url-state>
+# [<base-state>]]]] — one line per row of the table:
 # `<action><TAB><true|false><TAB><command><TAB><reason>`, the reason empty
 # when the action is offered. <pr-state> is what the reader knows of the
 # task's pull request without asking the forge (the forge cache's state, or
-# empty); `close` and `ship` read it. <pr-url-state> and <base-state> are
-# _task_actions_v's. Local reads only.
+# empty); `close` and `ship` read it. The cache's checks and mergeable words
+# (<ci>, <mergeable>, optional) are what `merge` is withheld on; <pr-url-state>
+# and <base-state> are what `close` reads (_task_actions_v). Local reads only.
 _task_actions() {
   local out
   _task_actions_v out "$@"
   printf '%s' "$out"
 }
 
-# _task_actions_v <var> <id> <pr-state> [<pr-url-state> [<base-state>]] — the
-# same lines into <var>, in the caller's shell. <pr-url-state> is the state of
+# _task_actions_v <var> <id> <pr-state> [<ci> [<mergeable> [<pr-url-state>
+# [<base-state>]]]] — the same lines into <var>, in the caller's shell. <ci>
+# and <mergeable> are _task_actions'. <pr-url-state> is the state of
 # the pull request `pr_url` names (on the staging flow, the one into the
 # staging branch), <base-state> that of a pull request from the task's branch
 # into its base (its promotion); each defaults to <pr-state>, which `ship` and
@@ -6130,7 +6162,7 @@ _task_actions() {
 # fails withholds its row rather than ending the listing; it reads the task's
 # state from the snapshot it inherits.
 _task_actions_v() {
-  local __ta_out="" id="$2" pr_state="$3" pr_url_state="${4-$3}" base_state="${5-$3}" status action command reason by="" mode spec gate parked ahead
+  local __ta_out="" id="$2" pr_state="$3" pr_ci="${4:-}" pr_mergeable="${5:-}" pr_url_state="${6-$3}" base_state="${7-$3}" status action command reason by="" mode spec gate parked ahead
   task_state_var status "$id" status
   for action in $_TASK_ACTIONS; do
     reason=""
@@ -6153,7 +6185,11 @@ _task_actions_v() {
       handover) command="jig task autopilot $id handover --by human --answer <text>" ;;
       set-class) command="jig task set $id class <Tn>" ;;
       ship) command="jig task ship $id --message-file <file>" ;;
-      land) command="jig task land $id" ;;
+      land) command="jig task land $id --by human" ;;
+      request-review) command="jig task request-review $id --reviewer <login> --by human" ;;
+      merge) command="jig task merge-pr $id --by human" ;;
+      promote) command="jig task promote $id --by human" ;;
+      pr-status) command="jig task pr-status $id --json" ;;
       close) command="jig task set $id status consolidated" ;;
       abandon)
         # A spec-linked task is refused without a reason; the placeholder
@@ -6216,7 +6252,22 @@ _task_actions_v() {
           [ -n "$reason" ] || _task_actions_guard_v reason "$id" "$action" _task_ship_refusal "$id" 0
           [ -n "$reason" ] || _task_actions_ask_v reason "$id" "$action" _task_ship_branch_refusal "$id"
         fi ;;
-      *:land) _task_actions_ask_v reason "$id" "$action" _task_land_refusal "$id" "$pr_state" ;;
+      *:land) _task_actions_ask_v reason "$id" "$action" _task_land_refusal "$id" "$pr_state" human ;;
+      *:request-review) _task_actions_ask_v reason "$id" "$action" _task_request_review_refusal "$id" "$pr_state" ;;
+      *:merge)
+        _task_actions_ask_v reason "$id" "$action" _task_merge_pr_refusal "$id" "$pr_state"
+        # What only the table withholds: the forge cache's word on the checks
+        # and on conflicts. The command looks at the forge itself, now.
+        if [ -z "$reason" ]; then
+          case "$pr_ci" in
+            red | pending) reason="task merge-pr: the forge cache says the checks of $id's pull request are $pr_ci; the table withholds the merge until they are green (the command itself looks at the forge now)" ;;
+          esac
+        fi
+        if [ -z "$reason" ] && [ "$pr_mergeable" = conflicting ]; then
+          reason="task merge-pr: the forge cache says $id's pull request conflicts with its base; the table withholds the merge (the command itself looks at the forge now)"
+        fi ;;
+      *:promote) _task_actions_ask_v reason "$id" "$action" _task_promote_refusal "$id" ;;
+      *:pr-status) _task_actions_ask_v reason "$id" "$action" _task_pr_status_refusal "$id" ;;
       *:close) _task_actions_ask_v reason "$id" "$action" _task_close_refusal "$id" "${pr_url_state:-unknown}" "$base_state" ;;
     esac
     if [ -n "$reason" ]; then
@@ -7255,12 +7306,48 @@ In the staging flow its pull request goes into $staging. Close that pull request
 # `--commit` (every task branch the tested commit holds and the base does not),
 # promote each task on its own against one tested commit (_promote_many): the
 # exit is 1 when any was refused, else 3 when any needs a person, else 0.
+#
+# `--by human [--revision <n>] [--json]` is a person's promotion
+# (adr-20261114-a-persons-pull-request-action-does-not-read-agent-git): the git
+# level is not read, and `git.promote_merge: auto` may switch auto-merge on.
+# `--json` (anywhere) runs it as the producer of json_run: one task, a person's
+# need (exit 3) a coded refusal, and the lines a person reads go to stderr.
 task_promote() {
+  local arg
+  for arg in "$@"; do
+    if [ "$arg" = --json ]; then
+      # shellcheck source=lib/json.sh
+      . "$JIG_LIB/json.sh"
+      json_run _task_promote_body 1 "$@"
+      return
+    fi
+  done
+  _task_promote_body 0 "$@"
+}
+
+# _task_promote_body <as_json> [options] <id>... — the body of `task promote`.
+_task_promote_body() {
+  local as_json="$1" arg args=()
+  shift
+  for arg in "$@"; do
+    [ "$arg" = --json ] || args+=("$arg")
+  done
+  set -- ${args[@]+"${args[@]}"}
   jig_require_init
-  local commit="" title="" body_file="" all=0 rc=0
+  local commit="" title="" body_file="" all=0 rc=0 by="" rev="" rev_given=0
   local -a ids=()
   while [ $# -gt 0 ]; do
     case "$1" in
+      --by)
+        [ $# -ge 2 ] || jig_fail usage "task promote: --by requires a value"
+        [ "$2" = human ] || jig_fail usage "task promote: --by takes human, not $2"
+        by=human
+        shift 2 ;;
+      --revision)
+        [ $# -ge 2 ] || jig_fail usage "task promote: --revision requires a value"
+        rev="$2"
+        rev_given=1
+        shift 2 ;;
       --commit)
         [ $# -ge 2 ] || jig_fail usage "task promote: --commit requires a value"
         commit="$2"
@@ -7306,10 +7393,46 @@ task_promote() {
     fi
   fi
   [ -z "$body_file" ] || [ -f "$body_file" ] || jig_fail usage "task promote: --body-file: no such file: $body_file"
+  if [ "$rev_given" -eq 1 ]; then
+    [ -n "$rev" ] || jig_fail usage "task promote: --revision is empty"
+    jig_revision_valid "$rev" || jig_fail usage "task promote: --revision is not a revision: $rev"
+  fi
+  if [ "$as_json" -eq 1 ] || [ "$by" = human ]; then
+    if [ "$all" = 1 ] || [ ${#ids[@]} -ne 1 ]; then
+      jig_fail usage "task promote: a person's promotion and --json take exactly one task id"
+    fi
+  fi
+  if [ "$by" != human ] && [ "$as_json" -eq 0 ] && [ "$rev_given" -eq 1 ]; then
+    jig_fail usage "task promote: --revision is for a person's promotion: add --by human"
+  fi
+  # A person's promotion asks the actions table's own guard (_task_promote_refusal)
+  # first: the button is offered only where the flow, the base, the autopilot and
+  # the park say so, and the command refuses what the table withholds.
+  if [ "$by" = human ] && _task_valid_id "${ids[0]}" && [ -f "$(task_dir "${ids[0]}")/state" ]; then
+    local refusal
+    _task_parked_read "${ids[0]}"
+    refusal=$(_task_promote_refusal "${ids[0]}") || exit 1
+    case "$refusal" in
+      '') ;;
+      *"is not on the staging flow"* | *"is cut from "*) jig_fail wrong-flow "$refusal" ;;
+      *"runs on autopilot"*) jig_fail autopilot-running "$refusal" ;;
+      *) jig_die "$refusal" ;;
+    esac
+  fi
   # shellcheck source=lib/promote.sh
   . "$JIG_LIB/promote.sh"
+  if [ "$by" = human ]; then _PROMOTE_BY_HUMAN=1; fi
+  if [ "$as_json" -eq 1 ]; then
+    _PROMOTE_JSON=1
+    if [ "$rev_given" -eq 1 ]; then _PROMOTE_EXPECTED=$rev; else _PROMOTE_EXPECTED=$(jig_revision_read); fi
+  elif [ "$rev_given" -eq 1 ]; then
+    _PROMOTE_EXPECTED=$rev
+  fi
   if [ "$all" = 1 ] || [ ${#ids[@]} -gt 1 ]; then
     _promote_many "$commit" "$all" "${ids[@]+"${ids[@]}"}" || rc=$?
+  elif [ "$as_json" -eq 1 ]; then
+    # The lines a person reads go to stderr: stdout carries the envelope's value.
+    _promote_one "${ids[0]}" "$commit" "$title" "$body_file" >&2 || rc=$?
   else
     _promote_one "${ids[0]}" "$commit" "$title" "$body_file" || rc=$?
   fi
@@ -7317,7 +7440,32 @@ task_promote() {
     jig_status_page_flush
     exit "$rc"
   fi
+  [ "$as_json" -eq 1 ] || return 0
+  _task_promote_json "${ids[0]}"
 }
+
+# _task_promote_json <id> — the `data` of `task promote --json` from what
+# _promote_one left: the task as `task list --json` lists it (null when the
+# project has no workspace for it, a CI runner's case) and the promotion.
+_task_promote_json() {
+  local id="$1" task=null pr in_base=false open=false pushed=false line merge=null
+  if [ -f "$(task_dir "$id")/state" ]; then
+    task=$(_task_json_one "$id")
+  fi
+  json_str_or_null "$_PROMOTE_URL"; pr=$_JSON
+  [ "$_PROMOTE_IN_BASE" != 1 ] || in_base=true
+  [ "$_PROMOTE_ALREADY_OPEN" != 1 ] || open=true
+  [ "$_PROMOTE_PUSHED" != 1 ] || pushed=true
+  if [ -n "$_PROMOTE_MERGE_OUTCOME" ]; then
+    json_quote "$_PROMOTE_MERGE_OUTCOME"; merge="{\"outcome\":$_JSON"
+    json_str_or_null "$_PROMOTE_MERGE_REASON"; merge="$merge,\"reason\":$_JSON}"
+  fi
+  json_str_or_null "$_PROMOTE_TESTED"; line="{\"pull_request\":$pr,\"already_open\":$open,\"pushed\":$pushed,\"tested_commit\":$_JSON"
+  line="$line,\"in_base\":$in_base,\"merge\":$merge}"
+  printf '{"task":%s,"promote":%s}\n' "$task" "$line"
+}
+
+
 
 # _task_triage_id <id> — the id of the triage task that takes <id>'s open
 # P2/P3: `<id>-findings`. Derived, so a repeated ship finds the one it filed.
@@ -7410,25 +7558,98 @@ _task_triage_md() {
 # level `merge`, as merging into a shared branch does; below it the person
 # lands it (exit 3). Exit 5: a conflict waits for the agent in the temporary
 # tree, and `--resolved` continues. `--abort` sends nothing at any level.
+#
+# `--by human [--without-review] [--revision <n>] [--json]` is a person's
+# landing (adr-20261114-a-persons-pull-request-action-does-not-read-agent-git):
+# the git level is not read, nobody-answers does not apply, CI is looked at
+# once and not waited for, a conflict is refused (the agent lands that), and
+# every refusal is coded. `--json` anywhere runs it as the producer of json_run.
 task_land() {
+  local arg
+  for arg in "$@"; do
+    if [ "$arg" = --json ]; then
+      # shellcheck source=lib/json.sh
+      . "$JIG_LIB/json.sh"
+      json_run _task_land_body 1 "$@"
+      return
+    fi
+  done
+  _task_land_body 0 "$@"
+}
+
+# _task_land_refusal_code <text> — the failure code of a refusal text
+# _task_land_refusal printed, for a person's landing.
+_task_land_refusal_code() {
+  case "$1" in
+    *"is not on the staging flow"* | *"is cut from "* | *"git.staging_land is external"*) printf 'wrong-flow\n' ;;
+    *"has no pull request"*) printf 'no-pull-request\n' ;;
+    *" is closed; "*) printf 'pull-request-closed\n' ;;
+    *"runs on autopilot"*) printf 'autopilot-running\n' ;;
+    *"jig task ship of "*) printf 'ship-running\n' ;;
+    *) printf 'not-ready\n' ;;
+  esac
+}
+
+# _task_land_body <as_json> <id> [options] — the body of `task land`; with
+# <as_json> 1 it runs inside json_run and prints the landing as data.
+_task_land_body() {
+  local as_json="$1" arg args=()
+  shift
+  for arg in "$@"; do
+    [ "$arg" = --json ] || args+=("$arg")
+  done
+  set -- ${args[@]+"${args[@]}"}
   jig_require_init
-  [ $# -ge 1 ] || jig_die "$(_task_usage land)"
+  [ $# -ge 1 ] || jig_fail usage "$(_task_usage land)"
   local id="$1"
   shift
-  local without=0 resolved=0 abort=0 note=""
+  local without=0 resolved=0 abort=0 note="" by="" rev="" rev_given=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --without-review) without=1; shift ;;
       --resolved) resolved=1; shift ;;
       --abort) abort=1; shift ;;
       --note-file)
-        [ $# -ge 2 ] || jig_die "task land: --note-file requires a value"
+        [ $# -ge 2 ] || jig_fail usage "task land: --note-file requires a value"
         note="$2"
         shift 2 ;;
-      *) jig_die "task land: unknown argument: $1" ;;
+      --by)
+        [ $# -ge 2 ] || jig_fail usage "task land: --by requires a value"
+        [ "$2" = human ] || jig_fail usage "task land: --by takes human, not $2"
+        by=human
+        shift 2 ;;
+      --revision)
+        [ $# -ge 2 ] || jig_fail usage "task land: --revision requires a value"
+        rev="$2"
+        rev_given=1
+        shift 2 ;;
+      *) jig_fail usage "task land: unknown argument: $1" ;;
     esac
   done
-  [ -f "$(task_dir "$id")/state" ] || jig_die "task land: unknown task: $id"
+  if [ "$rev_given" -eq 1 ]; then
+    [ -n "$rev" ] || jig_fail usage "task land: --revision is empty"
+    jig_revision_valid "$rev" || jig_fail usage "task land: --revision is not a revision: $rev"
+  fi
+  if [ "$by" = human ]; then
+    { [ "$resolved" -eq 0 ] && [ -z "$note" ]; } \
+      || jig_fail usage "task land: --by human does not resolve a conflict: --resolved and --note-file are the agent's"
+    [ "$abort" -eq 0 ] || [ "$as_json" -eq 0 ] || jig_fail usage "task land: --abort has no JSON form"
+  else
+    { [ "$as_json" -eq 0 ] && [ "$rev_given" -eq 0 ]; } \
+      || jig_fail usage "task land: --json and --revision are for a person's landing: add --by human"
+  fi
+  # The revision this landing is checked against: the caller's, or the one read
+  # here before the task is. A text landing without --revision does not check.
+  local expected=""
+  if [ "$by" = human ]; then
+    if [ "$rev_given" -eq 1 ]; then
+      expected=$rev
+    elif [ "$as_json" -eq 1 ]; then
+      expected=$(jig_revision_read)
+    fi
+  fi
+  _task_valid_id "$id" || jig_fail usage "invalid task id: $id"
+  [ -f "$(task_dir "$id")/state" ] || jig_fail not-found "task land: unknown task: $id"
   _task_guard_write "$id" "task land"
   if [ "$abort" -eq 1 ]; then
     [ "$resolved" -eq 0 ] && [ "$without" -eq 0 ] && [ -z "$note" ] \
@@ -7445,6 +7666,12 @@ task_land() {
   # What the actions table asks, in its order and words (_task_land_refusal);
   # below `merge` it is the person's to land, exit 3 as for a ship at `none`.
   local refusal pr
+  if [ "$by" = human ]; then
+    refusal=$(_task_land_refusal "$id" "" human) || exit 1
+    [ -z "$refusal" ] || jig_fail "$(_task_land_refusal_code "$refusal")" "$refusal"
+    _task_land_human "$as_json" "$id" "$without" "$expected"
+    return 0
+  fi
   refusal=$(_task_land_refusal "$id" "") || exit 1
   case "$refusal" in
     '') ;;
@@ -7462,13 +7689,103 @@ task_land() {
   fi
 }
 
-# _task_land_refusal <id> <pr-state> — why `jig task land <id>` refuses this
-# task by its state, or nothing: the `land` row of the actions table. Local
+# _task_land_human <as_json> <id> <without-review> <expected-revision> — a
+# person's landing, after the table's guard passed: land_task as the person's
+# (_LAND_BY_HUMAN), CI looked at once, its lines kept to be said as the
+# landing's own words, and anything but a landing a coded refusal.
+_task_land_human() {
+  local as_json="$1" id="$2" without="$3" expected="$4" out line why pr staging wr task
+  _LAND_BY_HUMAN=1
+  _LAND_EXPECTED=$expected
+  # shellcheck disable=SC2034 # read by jig_ship_merge and jig_pr_mergeable (common.sh)
+  JIG_SHIP_CI_TIMEOUT=0
+  out=$(mktemp "${TMPDIR:-/tmp}/jig-land-out.XXXXXX")
+  jig_cleanup_add "$out"
+  land_task "task land" "$id" "$without" 0 "" > "$out"
+  if [ -z "$_LAND_OUTCOME" ]; then
+    why=""
+    while IFS= read -r line; do
+      case "$line" in "not landed: "*) why=${line#not landed: }; break ;; esac
+    done < "$out"
+    [ -n "$why" ] || why=$(sed -n '1p' "$out")
+    [ -n "$_LAND_CODE" ] || jig_die "task land: $id was not landed: ${why:-no reason given}"
+    jig_fail "$_LAND_CODE" "task land: ${why:-$id was not landed}"
+  fi
+  # The landing happened: its own lines, and the revision the write raised.
+  if [ "$as_json" -eq 1 ]; then cat "$out" >&2; else cat "$out"; fi
+  jig_record_changed
+  [ "$as_json" -eq 1 ] || return 0
+  pr=$(task_state_get "$id" pr_url)
+  staging=$(jig_staging_in_use) || staging=""
+  case "$_LAND_WITHOUT" in
+    '') wr=null ;;
+    "at the person's word") wr='"person"' ;;
+    *) json_quote "$_LAND_WITHOUT"; wr=$_JSON ;;
+  esac
+  task=$(_task_json_one "$id")
+  json_quote "$_LAND_OUTCOME"; line="{\"outcome\":$_JSON"
+  json_str_or_null "$pr"; line="$line,\"pull_request\":$_JSON"
+  json_str_or_null "$staging"; line="$line,\"staging\":$_JSON,\"without_review\":$wr}"
+  printf '{"task":%s,"land":%s}\n' "$task" "$line"
+}
+
+# _task_staging_sound_v <var> — the staging branch's name into <var> when the
+# project is on a sound staging flow, else status 1. In a listing the answer is
+# the one the listing already read (_task_list_staging_read), so a guard asked
+# of every task starts no process per task.
+_task_staging_sound_v() {
+  if [ "$_TASK_LIST_STAGING_READ" = 1 ]; then
+    [ "$_TASK_LIST_STAGING_ON" = 1 ] || return 1
+    cfg_v "$1" git.staging_branch ""
+    return 0
+  fi
+  local __tss
+  __tss=$(jig_staging_in_use) || return 1
+  printf -v "$1" '%s' "$__tss"
+}
+
+# _task_promote_refusal <id> — why the `promote` row of the actions table is
+# withheld, or nothing: the project is on a sound staging flow, the task is cut
+# from its base, it waits at the staging branch for the test (parked `signal`)
+# and no autopilot run is on. Local reads only. The command refuses more than
+# the parked reason on its own (a runner promotes a branch with no workspace),
+# so a row offered is always accepted, never the reverse.
+_task_promote_refusal() {
+  local id="$1" flow base base_branch parked run staging
+  cfg_v base_branch git.base_branch main
+  cfg_v flow git.flow direct
+  if [ "$flow" != staging ] || ! _task_staging_sound_v staging; then
+    printf 'task promote: %s is not on the staging flow; a task in this project reaches %s with jig task ship\n' "$id" "$base_branch"
+    return 0
+  fi
+  jig_task_base_v base "$id"
+  if [ "$base" != "$base_branch" ]; then
+    printf 'task promote: %s is cut from %s, not %s; the staging flow does not apply to it\n' "$id" "$base" "$base_branch"
+    return 0
+  fi
+  task_state_var run "$id" autopilot
+  if [ "$run" = on ]; then
+    printf 'task promote: %s runs on autopilot, which never promotes; stop it first\n' "$id"
+    return 0
+  fi
+  _task_parked_lookup_v parked "$id"
+  if [ "${parked%%$'\t'*}" != signal ]; then
+    printf 'task promote: %s is not waiting at the staging branch for a test signal\n' "$id"
+    return 0
+  fi
+  return 0
+}
+
+# _task_land_refusal <id> <pr-state> [human] — why `jig task land <id>` refuses
+# this task by its state, or nothing: the `land` row of the actions table. Local
 # reads only — the flow, the base, the git level, the pull request as the
 # reader knows it (<pr-state>, the forge cache's), and the ship gates; what
 # the forge, the network and the clean-branch walk answer is the command's.
+# With <human> (`--by human`) the git level is not read, and a run of the
+# task's autopilot, or a `jig task ship` waiting for CI, refuses: the agent is
+# on it.
 _task_land_refusal() {
-  local id="$1" pr_state="$2" flow staging base base_branch line level key rc=0 pr refusal
+  local id="$1" pr_state="$2" by="${3:-}" flow staging base base_branch line level key rc=0 pr refusal run since land
   # The flow and the level first, read without a process: the table asks this
   # of every task of a listing (task list --json starts none per task).
   cfg_v flow git.flow direct
@@ -7477,28 +7794,31 @@ _task_land_refusal() {
     return 0
   fi
   cfg_v staging git.staging_branch ""
-  _task_ship_git_v line "$id" || rc=$?
-  level=${line%%$'\t'*}
-  key=${line#*$'\t'}
-  if [ "$rc" -ne 0 ]; then
-    printf 'task land: invalid %s: %s (expected none|commit|push|pr|merge)\n' "$key" "$level"
-    return 0
+  if [ "$by" != human ]; then
+    _task_ship_git_v line "$id" || rc=$?
+    level=${line%%$'\t'*}
+    key=${line#*$'\t'}
+    if [ "$rc" -ne 0 ]; then
+      printf 'task land: invalid %s: %s (expected none|commit|push|pr|merge)\n' "$key" "$level"
+      return 0
+    fi
+    if [ "$level" != merge ]; then
+      printf 'task land: landing %s on %s needs agent.git: merge (git level %s (%s))\n' "$id" "${staging:-the staging branch}" "$level" "$key"
+      return 0
+    fi
   fi
-  if [ "$level" != merge ]; then
-    printf 'task land: landing %s on %s needs agent.git: merge (git level %s (%s))\n' "$id" "${staging:-the staging branch}" "$level" "$key"
-    return 0
-  fi
-  if ! staging=$(jig_staging_in_use); then
+  if ! _task_staging_sound_v staging; then
     printf 'task land: %s is not on the staging flow; a task in this project lands with jig task ship\n' "$id"
     return 0
   fi
-  base=$(jig_task_base "$id")
-  base_branch=$(cfg git.base_branch main)
+  jig_task_base_v base "$id"
+  cfg_v base_branch git.base_branch main
   if [ "$base" != "$base_branch" ]; then
     printf 'task land: %s is cut from %s, not %s; the staging flow does not apply to it\n' "$id" "$base" "$base_branch"
     return 0
   fi
-  if [ "$(jig_staging_land || true)" = external ]; then
+  cfg_v land git.staging_land pr
+  if [ "$land" = external ]; then
     printf 'task land: git.staging_land is external, so CI lands %s on %s; Jig merges nothing there\n' "$id" "$staging"
     return 0
   fi
@@ -7511,9 +7831,137 @@ _task_land_refusal() {
     merged) printf 'task land: %s is already on %s (%s merged)\n' "$id" "$staging" "$pr"; return 0 ;;
     closed) printf 'task land: %s is closed; ship %s again to open a new pull request into %s\n' "$pr" "$id" "$staging"; return 0 ;;
   esac
+  if [ "$by" = human ]; then
+    _task_pr_busy_refusal_v refusal "task land" "$id" "lands"
+    if [ -n "$refusal" ]; then
+      printf '%s\n' "$refusal"
+      return 0
+    fi
+  fi
   refusal=$(_task_ship_refusal "$id" 0) || return 1
   [ -z "$refusal" ] || printf 'task land: %s\n' "${refusal#task ship: }"
   return 0
+}
+
+# _task_pr_busy_refusal <who> <id> <what> — why the agent being on <id> refuses
+# a person's action on its pull request, or nothing: its autopilot run is on,
+# or (<what> `merges`) a `jig task ship` is waiting for CI and merges it itself.
+# Local reads only.
+_task_pr_busy_refusal() {
+  local out
+  _task_pr_busy_refusal_v out "$@"
+  [ -z "$out" ] || printf '%s\n' "$out"
+  return 0
+}
+
+# _task_pr_busy_refusal_v <var> <who> <id> <what> — the same answer into
+# <var>, in the caller's shell: no process per task in a listing.
+_task_pr_busy_refusal_v() {
+  local __tpb_var="$1" who="$2" id="$3" what="$4" run since
+  printf -v "$__tpb_var" '%s' ""
+  task_state_var run "$id" autopilot
+  if [ "$run" = on ]; then
+    printf -v "$__tpb_var" '%s: %s runs on autopilot; the agent is on it, wait for it to stop' "$who" "$id"
+    return 0
+  fi
+  [ -n "$what" ] || return 0
+  jig_shipping_since_v since "$id"
+  if [ -n "$since" ]; then
+    printf -v "$__tpb_var" '%s: a jig task ship of %s has been waiting for CI since %s and %s the pull request itself' "$who" "$id" "$since" "$what"
+  fi
+  return 0
+}
+
+# _task_pr_state_refusal_v <var> <who> <id> <pr> <pr-state> — into <var>: why a
+# pull request the forge cache calls merged or closed takes no action, or nothing.
+_task_pr_state_refusal_v() {
+  local __tpsr=""
+  case "$5" in
+    merged) __tpsr="$2: the pull request of $3 is merged ($4)" ;;
+    closed) __tpsr="$2: the pull request of $3 is closed ($4); ship $3 again to open a new one" ;;
+  esac
+  printf -v "$1" '%s' "$__tpsr"
+}
+
+# _task_request_review_refusal <id> <pr-state> — why `jig task request-review
+# <id>` refuses this task by its state, or nothing: the `request-review` row of
+# the actions table. The task has a pull request the forge cache does not call
+# merged or closed, and no autopilot run is on. Local reads only; the live state
+# of the pull request, who the names are and what the forge allows are the
+# command's.
+_task_request_review_refusal() {
+  local id="$1" pr_state="$2" pr why
+  task_state_var pr "$id" pr_url
+  if [ -z "$pr" ]; then
+    printf 'task request-review: %s has no pull request; run jig task ship %s first\n' "$id" "$id"
+    return 0
+  fi
+  _task_pr_state_refusal_v why "task request-review" "$id" "$pr" "$pr_state"
+  if [ -n "$why" ]; then
+    printf '%s\n' "$why"
+    return 0
+  fi
+  _task_pr_busy_refusal "task request-review" "$id" ""
+  return 0
+}
+
+# _task_merge_pr_refusal <id> <pr-state> — why `jig task merge-pr <id>` refuses
+# this task by its state, or nothing: the `merge` row of the actions table. The
+# task is alive, its pull request goes into its own base (never the staging
+# branch: that one is landed), exists, is not merged or closed as the reader
+# knows it (<pr-state>, the forge cache's), no autopilot run is on and no
+# `jig task ship` waits for CI. Local reads only.
+_task_merge_pr_refusal() {
+  local id="$1" pr_state="$2" flow staging base base_branch pr status why
+  task_state_var status "$id" status
+  case "$status" in
+    abandoned | archived)
+      printf 'task merge-pr: task %s is %s\n' "$id" "$status"
+      return 0 ;;
+  esac
+  cfg_v flow git.flow direct
+  if [ "$flow" = staging ] && _task_staging_sound_v staging; then
+    jig_task_base_v base "$id"
+    cfg_v base_branch git.base_branch main
+    if [ "$base" = "$base_branch" ]; then
+      printf 'task merge-pr: the pull request of %s goes into %s, which is landed, not merged; land it: jig task land %s --by human\n' "$id" "$staging" "$id"
+      return 0
+    fi
+  fi
+  task_state_var pr "$id" pr_url
+  if [ -z "$pr" ]; then
+    printf 'task merge-pr: %s has no pull request; run jig task ship %s first\n' "$id" "$id"
+    return 0
+  fi
+  _task_pr_state_refusal_v why "task merge-pr" "$id" "$pr" "$pr_state"
+  if [ -n "$why" ]; then
+    printf '%s\n' "$why"
+    return 0
+  fi
+  _task_pr_busy_refusal "task merge-pr" "$id" merges
+  return 0
+}
+
+# _task_pr_status_refusal <id> — why `jig task pr-status <id>` has nothing to
+# read, or nothing: the task has a pull request.
+_task_pr_status_refusal() {
+  local pr
+  task_state_var pr "$1" pr_url
+  [ -n "$pr" ] || printf 'task pr-status: %s has no pull request; run jig task ship %s first\n' "$1" "$1"
+  return 0
+}
+
+# _task_prdo_refusal_code <text> — the failure code of a refusal text one of the
+# guards above printed, for a person's `request-review` or `merge-pr`.
+_task_prdo_refusal_code() {
+  case "$1" in
+    *"has no pull request"*) printf 'no-pull-request\n' ;;
+    *"pull request of "*" is closed ("* | *"pull request of "*" is merged ("*) printf 'pull-request-closed\n' ;;
+    *"runs on autopilot"*) printf 'autopilot-running\n' ;;
+    *"jig task ship of "*) printf 'ship-running\n' ;;
+    *"goes into "*) printf 'wrong-flow\n' ;;
+    *) printf 'failed\n' ;;
+  esac
 }
 
 # The body file task_ship writes for a major release's draft; script-global
@@ -7524,9 +7972,13 @@ _TASK_SHIP_BODY_TMP=""
 # _task_ship_notes_last_check — JIG_SHIP_LAST_CHECK for a release: whether its
 # notes still reach the tip of the base it merges into (_TASK_SHIP_NOTES_BASE).
 _TASK_SHIP_NOTES_BASE=""
+# The head the notes are read at: empty for the checkout's HEAD (a ship), a pull
+# request's head for `task merge-pr`, which runs wherever the person is.
+_TASK_SHIP_NOTES_HEAD=""
 _task_ship_notes_last_check() {
-  jig_release_notes_refusal "task ship" "$_TASK_SHIP_NOTES_BASE"
+  jig_release_notes_refusal "${_TASK_SHIP_NOTES_WHO:-task ship}" "$_TASK_SHIP_NOTES_BASE" "${_TASK_SHIP_NOTES_HEAD:-HEAD}"
 }
+_TASK_SHIP_NOTES_WHO=""
 
 # _task_ship_reviewers_unused <why> — say that the reviewers named were asked
 # for nothing: no pull request is opened by this ship.
@@ -7913,7 +8365,9 @@ EOF
     if [ "$level" = merge ] && [ "$draft" -eq 1 ]; then
       printf 'not merged: a draft pull request is never merged\n'
     elif [ "$level" = merge ] && [ -n "$JIG_SHIP_URL" ]; then
+      jig_shipping_begin "$id"
       land_task "task ship" "$id" 0 0 ""
+      jig_shipping_end "$id"
       if [ "$_LAND_RC" -ne 0 ]; then
         jig_status_page_flush
         exit "$_LAND_RC"
@@ -7964,7 +8418,9 @@ EOF
   fi
   local sha
   sha=$(git -C "$JIG_PROJECT" rev-parse HEAD)
+  jig_shipping_begin "$id"
   jig_ship_merge "task ship" "$JIG_SHIP_URL" "$sha" any
+  jig_shipping_end "$id"
   # Merged here, so this checkout goes back to the base and the branch goes;
   # from the task's own worktree it stays for housekeeping
   # (adr-20261007-a-merged-branch-leaves-with-its-work).

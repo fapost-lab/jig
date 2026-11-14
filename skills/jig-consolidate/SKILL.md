@@ -195,7 +195,7 @@ person's decision — no approval yet (ask: land without review, `jig task land 
 every listed path in the temporary worktree it names, any file, run the tests that cover them
 there, `git add`, write how each conflict was resolved to a file outside the repository, and run
 `jig task land <id> --resolved --note-file <file>`; name the resolution in your report. The task
-stays `ready` and is not closed: it waits on staging for "prepare for prod". The step it stopped at is the human's; never finish
+stays `ready` and is not closed: it waits on staging for "prepare for prod". `--by human` is a person's form of land, promote, merge-pr and request-review, for the person or their UI; the agent never passes it. The step it stopped at is the human's; never finish
 it by hand with git. The first line of the message is the pull request's title, the rest its
 body: the task's goal and what verified it. When the task edited a file a stub links, the body carries
 the block `jig knowledge changed --task <id> --to-review` prints, as it is (an autopilot run's

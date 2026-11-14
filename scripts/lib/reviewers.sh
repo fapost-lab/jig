@@ -191,15 +191,16 @@ jig_reviewers_candidates() {
 # login itself (`@` allowed in front), or a part of a login or a person's name
 # that fits exactly one person the repository may ask (any case, as far as the
 # local awk folds it). Dies naming the matches when several fit, and when none
-# does or <value> names a team.
+# does or <value> names a team (code `reviewer-unknown`; `forge-unavailable`
+# when the forge could not be asked).
 jig_reviewers_resolve() {
   local __rr_who="$1" __rr_q="${3#@}" __rr_all __rr_hits __rr_login __rr_n
   case "$__rr_q" in
-    '') jig_die "$__rr_who: --reviewer needs a login or a name" ;;
-    */*) jig_die "$__rr_who: --reviewer $__rr_q: a team is not asked for a review, only people: name each of them" ;;
+    '') jig_fail reviewer-unknown "$__rr_who: --reviewer needs a login or a name" ;;
+    */*) jig_fail reviewer-unknown "$__rr_who: --reviewer $__rr_q: a team is not asked for a review, only people: name each of them" ;;
   esac
   jig_reviewers_assignable __rr_all \
-    || jig_die "$__rr_who: --reviewer $__rr_q: the forge could not be asked who it may be: $_RV_WHY"
+    || jig_fail forge-unavailable "$__rr_who: --reviewer $__rr_q: the forge could not be asked who it may be: $_RV_WHY"
   # An exact login first (`=` lines), else every login or name holding it
   # (`~` lines); awk reads to the end and takes the value from the environment.
   __rr_hits=$(RV_Q="$__rr_q" RV_ALL="$__rr_all" awk '
@@ -217,18 +218,18 @@ jig_reviewers_resolve() {
     }')
   case "$__rr_hits" in
     =*) __rr_login=${__rr_hits#=} ;;
-    '') jig_die "$__rr_who: --reviewer $__rr_q: nobody this repository may ask for a review matches it; give the login" ;;
+    '') jig_fail reviewer-unknown "$__rr_who: --reviewer $__rr_q: nobody this repository may ask for a review matches it; give the login" ;;
     *)
       __rr_n=$(printf '%s\n' "$__rr_hits" | grep -c '^~' || true)
       if [ "$__rr_n" -gt 1 ]; then
-        jig_die "$__rr_who: --reviewer $__rr_q matches several people: $(printf '%s\n' "$__rr_hits" \
+        jig_fail reviewer-unknown "$__rr_who: --reviewer $__rr_q matches several people: $(printf '%s\n' "$__rr_hits" \
           | awk -F '\t' '/^~/ { l = substr($1, 2); printf "%s%s%s", (n++ ? ", " : ""), l, ($2 != "" ? " (" $2 ")" : "") }'); name one of them by login"
       fi
       __rr_login=${__rr_hits#\~}
       __rr_login=${__rr_login%%$'\t'*} ;;
   esac
   case "$__rr_login" in
-    *[!A-Za-z0-9._-]*) jig_die "$__rr_who: --reviewer $__rr_q: the forge answered '$__rr_login', which is no login" ;;
+    *[!A-Za-z0-9._-]*) jig_fail forge-unavailable "$__rr_who: --reviewer $__rr_q: the forge answered '$__rr_login', which is no login" ;;
   esac
   printf -v "$2" '%s' "$__rr_login"
 }

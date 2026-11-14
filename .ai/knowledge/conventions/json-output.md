@@ -20,6 +20,7 @@ paths:
   - scripts/lib/writes.sh
   - scripts/lib/pr.sh
   - scripts/lib/reviewers.sh
+  - scripts/lib/prdo.sh
 summary: "What a command offering --json may, must and must not do: one envelope through json_run, values from existing producers, no network, schema raised only on an incompatible change."
 reviewed_at: 2026-11-13
 ---
@@ -55,9 +56,9 @@ MUST:     hand JSON only bytes that are valid UTF-8 where the text comes from a 
           knowledge.sh drops them (iconv -c, else every non-ASCII byte becomes ?, one per
           byte) and the object they were dropped from says so with its `lossy` field — a
           record whose file name lost a byte too, since that name may be another file's
-MUST NOT: touch the network on the read path (no gh, no fetch, no ls-remote) — the one
-          exception is `jig pr reviewers`, a read of the forge itself, refused as
-          forge-unavailable when it cannot be asked; print
+MUST NOT: touch the network on the read path (no gh, no fetch, no ls-remote) — the two
+          exceptions are `jig pr reviewers` and `jig task pr-status --json`, reads of the forge
+          itself, refused as forge-unavailable when it cannot be asked; print
           to stdout outside the producer; rename or remove a field, or change its type,
           without raising schema; write anything but what the dispatcher already records;
           change jig_die to print JSON; read the revision itself — json_run takes it,
