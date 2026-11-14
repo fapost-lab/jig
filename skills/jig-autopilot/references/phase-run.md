@@ -102,7 +102,10 @@ record the stop — the run has no journal, and this is what reaches the person'
 
 Every end of the loop that waits for the person is such a stop: questions, a `problem` row, the
 forge unreachable, and — unattended — a draft ending the run.
-After an answer, resume an attended task with `jig task autopilot <id> resume --answer "<the person's answer>"`.
+A stopped task holds no slot: the wave's next task may take it. An answer the person gave
+elsewhere is already recorded (`jig task autopilot <id> answer`); `jig queue next` names it under
+`resume first:`, and it resumes, with `jig task autopilot <id> resume`, before the wave starts
+anything new. After an answer in your session, resume an attended task with `jig task autopilot <id> resume --answer "<the person's answer>"`.
 For an already stopped unattended task with repairs still available, quote the actual answer and add
 `--by human`; a repair-limit stop remains a draft and cannot resume. When the person takes a stopped
 task on instead, at the repair limit too, quote their words with

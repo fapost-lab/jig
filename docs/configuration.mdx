@@ -204,8 +204,9 @@ Some settings are a matter of personal taste rather than project policy. Put the
   local only, like `agent.git`.
 - `autopilot.unattended` — `true` lets an autopilot run go on without asking you anything; local
   only. See [Autopilot: without stops](/autopilot#without-stops).
-- `autopilot.parallel` — how many tasks of a roadmap phase agents may build at the same time
-  (default 2, at most 16); local only. See
+- `autopilot.parallel` — how many tasks autopilot builds at the same time: a roadmap phase's wave,
+  or a run over a set of tasks (default 2, at most 16); a run stopped for a person holds no slot;
+  local only. See
   [Autopilot: running a whole phase](/autopilot#running-a-whole-phase).
 - `route.depth` — how much process your tasks get: `full` (the default) runs each class's whole
   route; `lean` trims what does not change the risk assessment — a short analysis for T1, the plan

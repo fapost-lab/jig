@@ -122,7 +122,9 @@ _task_usage() {
       printf '       jig task autopilot <id> stop --reason <text>\n'
       printf '       jig task autopilot <id> approve --reason <text>\n'
       printf '       jig task autopilot <id> decide --reason <text>\n'
+      printf '       jig task autopilot <id> answer --answer <the human'"'"'s answer> [--by human]\n'
       printf '       jig task autopilot <id> resume --answer <the human'"'"'s answer>\n'
+      printf '       jig task autopilot <id> resume   (after an answer was recorded)\n'
       printf '       jig task autopilot <id> handover --by human --answer <the person'"'"'s words>\n'
       printf '       jig task autopilot <id> end [--reason <how it ended>]\n'
       printf '       jig task autopilot <id> report\n'
@@ -1964,7 +1966,7 @@ _task_set_body() {
       fi
       ;;
     task_id | issue | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash | paused_stash_applied \
-      | autopilot | autopilot_repairs | autopilot_mode | autopilot_phase | autopilot_handover | gate | gate_design | gate_by | pr_url | pr_into | promote_url | park_resumed_at \
+      | autopilot | autopilot_repairs | autopilot_mode | autopilot_phase | autopilot_handover | autopilot_answered | gate | gate_design | gate_by | pr_url | pr_into | promote_url | park_resumed_at \
       | archived_at | archived_reason | archived_from \
       | abandoned_at | abandoned_reason | moved_to | triage_task | triage_of \
       | absorbed_into | absorbs | partly_in | absorbs_partly \
@@ -2707,7 +2709,7 @@ task_merge() {
 #
 # `.ai/workspace/tasks/<id>/autopilot` — gitignored workspace file, TSV, one
 # line per event: `<UTC ISO time>\t<event>\t<text>` where event is one of
-# start, stage, repair, stop, resume, approve, decide, handover, end and text is a
+# start, stage, repair, stop, answer, resume, approve, decide, handover, end and text is a
 # single line with no tab (validated the same way as a findings-ledger field,
 # _task_finding_valid_field).
 #
@@ -2717,7 +2719,10 @@ task_merge() {
 # from `autopilot.unattended` once, by `start`, so changing the key halfway
 # changes nothing about a run), `autopilot_handover: <UTC ISO time>` (a person
 # took a stopped run over: `handover`, never cleared, and no `start` after
-# it — adr-20261108-a-person-takes-over-a-stopped-run). All are script-owned, alongside `paused`
+# it — adr-20261108-a-person-takes-over-a-stopped-run), `autopilot_answered:
+# <UTC ISO time>` (a person answered the stop but nothing resumed the run yet:
+# `answer` writes it, `resume` and `handover` clear it —
+# adr-20261114-a-waiting-run-holds-no-slot). All are script-owned, alongside `paused`
 # and the other keys `task set` refuses to write by hand (schemas/state.md).
 #
 # An unattended run asks nothing
@@ -2791,14 +2796,20 @@ _task_autopilot_log() {
 }
 
 # _task_autopilot_note <id> — "autopilot=on" or "autopilot=stopped" for
-# `jig status`'s task line, "autopilot=handed-over" for a run a person took
+# `jig status`'s task line, "autopilot=answered" for a stopped run a person
+# already answered (it waits for a free slot, not for the person), "autopilot=handed-over" for a run a person took
 # over (a fact, not a wait: nothing in `jig status` reads it as attention);
 # empty for any other `done` or no run at all (same shape as
 # _task_worktree_note — the caller prepends its own separating space).
 _task_autopilot_note() {
   case "$(task_state_get "$1" autopilot)" in
     on) printf 'autopilot=on\n' ;;
-    stopped) printf 'autopilot=stopped\n' ;;
+    stopped)
+      if [ -n "$(task_state_get "$1" autopilot_answered)" ]; then
+        printf 'autopilot=answered\n'
+      else
+        printf 'autopilot=stopped\n'
+      fi ;;
     done) [ -z "$(task_state_get "$1" autopilot_handover)" ] || printf 'autopilot=handed-over\n' ;;
   esac
 }
@@ -2806,7 +2817,7 @@ _task_autopilot_note() {
 # _task_autopilot_facts <id> — the run as data, for `report` and the status
 # page (ARCHITECTURE.md, Scripts layout: a report consumes an unformatted
 # producer rather than parsing a formatted one). One line,
-# `<state>\t<repairs>\t<stage>\t<stage-at>\t<stop-reason>\t<stop-at>\t<phase>\t<handover-at>`,
+# `<state>\t<repairs>\t<stage>\t<stage-at>\t<stop-reason>\t<stop-at>\t<phase>\t<handover-at>\t<answered-at>`,
 # every empty field written `-` so a tab-split read cannot collapse it;
 # nothing at all for a task that never started a run. The stage is the last
 # one the current run reached — since its last `start` or `resume` — and the
@@ -2814,6 +2825,9 @@ _task_autopilot_note() {
 # <phase> is `autopilot_phase` when a coordinator started this run as one task
 # of a roadmap phase (adr-20260922-a-phase-run-is-coordinated). <handover-at>
 # is `autopilot_handover`: when a person took the stopped run over.
+# <answered-at> is `autopilot_answered`: when a person answered the stop and
+# nothing has resumed the run since (the ninth field; readers take fields by
+# position, so it was appended).
 _task_autopilot_facts() {
   local facts
   _task_autopilot_facts_v facts "$1"
@@ -2826,7 +2840,7 @@ _task_autopilot_facts() {
 # event, and the text up to the next tab.
 _task_autopilot_facts_v() {
   local __taf_state __taf_file __taf_line __taf_at __taf_event __taf_text __taf_t=$'\t'
-  local __taf_stage="" __taf_stage_at="" __taf_stop="" __taf_stop_at="" __taf_repairs __taf_phase __taf_handover
+  local __taf_stage="" __taf_stage_at="" __taf_stop="" __taf_stop_at="" __taf_repairs __taf_phase __taf_handover __taf_answered
   printf -v "$1" '%s' ""
   task_state_var __taf_state "$2" autopilot
   [ -n "$__taf_state" ] || return 0
@@ -2856,12 +2870,13 @@ _task_autopilot_facts_v() {
   _task_autopilot_repairs_v __taf_repairs "$2"
   task_state_var __taf_phase "$2" autopilot_phase
   task_state_var __taf_handover "$2" autopilot_handover
-  printf -v "$1" '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' "$__taf_state" "$__taf_repairs" \
+  task_state_var __taf_answered "$2" autopilot_answered
+  printf -v "$1" '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' "$__taf_state" "$__taf_repairs" \
     "${__taf_stage:--}" "${__taf_stage_at:--}" "${__taf_stop:--}" "${__taf_stop_at:--}" "${__taf_phase:--}" \
-    "${__taf_handover:--}"
+    "${__taf_handover:--}" "${__taf_answered:--}"
 }
 
-# jig task autopilot <id> start|stage|repair|stop|resume|handover|end|report —
+# jig task autopilot <id> start|stage|repair|stop|answer|resume|handover|end|report —
 # dispatches to the functions below. The task id comes before the action
 # (same order as `task set <id> <key> <value>`), so every action function
 # below takes <id> as its first argument.
@@ -2879,6 +2894,7 @@ task_autopilot() {
     stop) _task_autopilot_stop "$id" "$@" ;;
     approve) _task_autopilot_unattended_event "$id" approve "$@" ;;
     decide) _task_autopilot_unattended_event "$id" decide "$@" ;;
+    answer) _task_autopilot_answer "$id" "$@" ;;
     resume) _task_autopilot_resume "$id" "$@" ;;
     handover) _task_autopilot_handover "$id" "$@" ;;
     end) _task_autopilot_end "$id" "$@" ;;
@@ -3315,12 +3331,85 @@ _task_autopilot_unattended_event() {
   printf '%s: %s\n' "$event" "$reason"
 }
 
-# resume --answer <text> [--by human]: after the human answers a stop.
+# answer --answer <text> [--by human]: a person answers a stop without
+# resuming the run, so a stopped run holds no slot until something resumes it
+# (adr-20261114-a-waiting-run-holds-no-slot). The run stays `stopped` and its
+# repairs untouched; the answer goes to the journal (`human: ` prefixed for an
+# unattended run, as `resume` quotes it) and `autopilot_answered` records when.
+# Answering again is allowed: a new line, a new time. The same refusals as
+# `resume --answer`. The script cannot authenticate the answer.
+_task_autopilot_answer() {
+  local id="$1"
+  shift
+  local answer="" has_answer=0 by="" mode refusal
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --answer)
+        [ $# -ge 2 ] || jig_die "task autopilot answer: --answer requires a value"
+        answer="$2"; has_answer=1; shift 2 ;;
+      --by)
+        [ $# -ge 2 ] || jig_die "task autopilot answer: --by requires human"
+        [ "$2" = human ] || jig_die "task autopilot answer: --by accepts human only"
+        by=human; shift 2 ;;
+      *) jig_die "task autopilot answer: unknown argument: $1" ;;
+    esac
+  done
+  local dir
+  dir=$(task_dir "$id")
+  _task_guard_write "$id" "task autopilot answer"
+  [ "$(task_state_get "$id" autopilot)" = "stopped" ] \
+    || jig_die "task autopilot answer: not stopped: $id"
+  [ "$has_answer" -eq 1 ] \
+    || jig_die "task autopilot answer: --answer is required: the human's answer to the stop, in their words: jig task autopilot $id answer --answer <text>"
+  [ -n "$answer" ] || jig_die "task autopilot answer: --answer must not be empty"
+  _task_finding_valid_field "$answer" \
+    || jig_die "task autopilot answer: --answer must be a single line with no tab"
+  refusal=$(_task_autopilot_resume_refusal "$id" "$by" answer) || exit 1
+  [ -z "$refusal" ] || jig_die "$refusal"
+
+  mode=$(_task_autopilot_mode "$id")
+  if [ "$mode" = unattended ]; then
+    _task_autopilot_log "$id" answer "human: $answer"
+  else
+    _task_autopilot_log "$id" answer "$answer"
+  fi
+  _task_rewrite_state "$dir" autopilot_answered "$(_task_autopilot_now)"
+  printf 'autopilot: answered; a session with a free slot resumes it with jig task autopilot %s resume (jig queue next lists it under resume first)\n' "$id"
+}
+
+# _task_autopilot_last_answer_v <var> <id> — the text of the journal's last
+# `answer` line (already `human: ` prefixed for an unattended run), empty when
+# there is none.
+_task_autopilot_last_answer_v() {
+  local __tala_file __tala_line __tala_rest __tala_text="" __tala_t=$'\t'
+  task_dir_v __tala_file "$2"
+  __tala_file="$__tala_file/autopilot"
+  if [ -f "$__tala_file" ]; then
+    while IFS= read -r __tala_line || [ -n "$__tala_line" ]; do
+      case "$__tala_line" in
+        *"$__tala_t"*)
+          __tala_rest=${__tala_line#*"$__tala_t"}
+          [ "${__tala_rest%%"$__tala_t"*}" = answer ] || continue
+          case "$__tala_rest" in
+            *"$__tala_t"*)
+              __tala_rest=${__tala_rest#*"$__tala_t"}
+              __tala_text=${__tala_rest%%"$__tala_t"*} ;;
+          esac ;;
+      esac
+    done < "$__tala_file"
+  fi
+  printf -v "$1" '%s' "$__tala_text"
+}
+
+# resume [--answer <text>] [--by human]: after the human answers a stop.
+# Without --answer it takes the answer `answer` recorded (autopilot_answered),
+# and an unattended run then needs no --by human: the person's form wrote it.
 # An attended run resets its repair count. A stopped unattended run can resume
 # only on an explicit human answer while it has fewer than two repairs; its
 # count is preserved, so neither a manual stop nor the repair-limit stop can
 # buy another repair attempt. The script cannot authenticate the answer. The
-# journal quotes the claim where the person can check it.
+# journal quotes the claim where the person can check it. Every resume clears
+# autopilot_answered.
 _task_autopilot_resume() {
   local id="$1"
   shift
@@ -3337,52 +3426,70 @@ _task_autopilot_resume() {
       *) jig_die "task autopilot resume: unknown argument: $1" ;;
     esac
   done
-  local dir
+  local dir recorded=0
   dir=$(task_dir "$id")
   _task_guard_write "$id" "task autopilot resume"
   [ "$(task_state_get "$id" autopilot)" = "stopped" ] \
     || jig_die "task autopilot resume: not stopped: $id"
-  [ "$has_answer" -eq 1 ] \
-    || jig_die "task autopilot resume: --answer is required: the human's answer to the stop, in their words: jig task autopilot $id resume --answer <text>"
-  [ -n "$answer" ] || jig_die "task autopilot resume: --answer must not be empty"
-  _task_finding_valid_field "$answer" \
-    || jig_die "task autopilot resume: --answer must be a single line with no tab"
-  refusal=$(_task_autopilot_resume_refusal "$id" "$by") || exit 1
-  [ -z "$refusal" ] || jig_die "$refusal"
+  if [ "$has_answer" -eq 0 ] && [ -n "$(task_state_get "$id" autopilot_answered)" ]; then
+    recorded=1
+    _task_autopilot_last_answer_v answer "$id"
+    # The answer is already recorded: the person's form wrote it, so --by human
+    # is not asked again; only the repair limit still applies. An attended run
+    # keeps its own refusal of --by human.
+    local eff_by=human
+    [ "$(_task_autopilot_mode "$id")" = unattended ] || eff_by=$by
+    refusal=$(_task_autopilot_resume_refusal "$id" "$eff_by") || exit 1
+    [ -z "$refusal" ] || jig_die "$refusal"
+  else
+    [ "$has_answer" -eq 1 ] \
+      || jig_die "task autopilot resume: --answer is required: the human's answer to the stop, in their words: jig task autopilot $id resume --answer <text>"
+    [ -n "$answer" ] || jig_die "task autopilot resume: --answer must not be empty"
+    _task_finding_valid_field "$answer" \
+      || jig_die "task autopilot resume: --answer must be a single line with no tab"
+    refusal=$(_task_autopilot_resume_refusal "$id" "$by") || exit 1
+    [ -z "$refusal" ] || jig_die "$refusal"
+  fi
 
   mode=$(_task_autopilot_mode "$id")
   if [ "$mode" = unattended ]; then
     _task_rewrite_state "$dir" autopilot on
-    _task_autopilot_log "$id" resume "human: $answer"
+    if [ "$recorded" -eq 1 ]; then
+      _task_autopilot_log "$id" resume "$answer"
+    else
+      _task_autopilot_log "$id" resume "human: $answer"
+    fi
   else
     _task_rewrite_state "$dir" autopilot on
     _task_rewrite_state "$dir" autopilot_repairs 0
     _task_autopilot_log "$id" resume "$answer"
   fi
+  _task_state_drop_key "$dir" autopilot_answered
   printf 'autopilot: on\n'
 }
 
-# _task_autopilot_resume_refusal <id> <by> — why `jig task autopilot <id>
-# resume --answer <text>` (with `--by human` when <by> is `human`) refuses this
-# task by its state, or nothing when it would resume the run. The command asks
-# it after checking the answer itself; the actions table (_task_actions) asks
-# it with the `--by` the run's mode needs.
+# _task_autopilot_resume_refusal <id> <by> [<verb>] — why `jig task autopilot
+# <id> resume --answer <text>` (or `answer`, when <verb> says so; `resume` by
+# default), with `--by human` when <by> is `human`, refuses this task by its
+# state, or nothing when it would go through. The command asks it after
+# checking the answer itself; the actions table (_task_actions) asks it with
+# the `--by` the run's mode needs.
 _task_autopilot_resume_refusal() {
-  local id="$1" by="$2" run mode
+  local id="$1" by="$2" verb="${3:-resume}" run mode
   task_state_var run "$id" autopilot
   if [ "$run" != "stopped" ]; then
-    printf 'task autopilot resume: not stopped: %s\n' "$id"
+    printf 'task autopilot %s: not stopped: %s\n' "$verb" "$id"
     return 0
   fi
   _task_autopilot_mode_v mode "$id"
   if [ "$mode" = unattended ]; then
     if [ "$by" != human ]; then
-      printf 'task autopilot resume: an unattended run needs an actual human answer and --by human; otherwise ship a draft\n'
+      printf 'task autopilot %s: an unattended run needs an actual human answer and --by human; otherwise ship a draft\n' "$verb"
     elif _task_autopilot_at_limit "$id"; then
-      printf 'task autopilot resume: %s exhausted its unattended repair limit; %s\n' "$id" "$(_task_autopilot_limit_roads "$id")"
+      printf 'task autopilot %s: %s exhausted its unattended repair limit; %s\n' "$verb" "$id" "$(_task_autopilot_limit_roads "$id")"
     fi
   elif [ -n "$by" ]; then
-    printf 'task autopilot resume: --by human is only for an unattended run\n'
+    printf 'task autopilot %s: --by human is only for an unattended run\n' "$verb"
   fi
   return 0
 }
@@ -3446,6 +3553,7 @@ _task_autopilot_handover() {
   now=$(_task_autopilot_now)
   _task_rewrite_state "$dir" autopilot "done"
   _task_rewrite_state "$dir" autopilot_handover "$now"
+  _task_state_drop_key "$dir" autopilot_answered
   _task_autopilot_log "$id" handover "human: $answer"
   _task_autopilot_notify "$id" handover "taken over by a person: $answer"
   printf 'autopilot: handed over; the task goes on without autopilot\n'
@@ -6160,7 +6268,7 @@ EOF
 
   _task_autopilot_facts_v facts "$id"
   if [ -n "$facts" ]; then
-    IFS="$t" read -r state repairs stage stage_at stop stop_at phase handover_at <<EOF
+    IFS="$t" read -r state repairs stage stage_at stop stop_at phase handover_at answered_at <<EOF
 $facts
 EOF
     [ "$stage" != "-" ] || stage=""
@@ -6169,6 +6277,7 @@ EOF
     [ "$stop_at" != "-" ] || stop_at=""
     [ "$phase" != "-" ] || phase=""
     [ "$handover_at" != "-" ] || handover_at=""
+    [ "$answered_at" != "-" ] || answered_at=""
     json_quote "$state"; o="$o,\"autopilot\":{\"state\":$_JSON"
     # The mode the gates read: anything but `unattended` is attended.
     _task_autopilot_mode_v mode "$id"
@@ -6179,7 +6288,8 @@ EOF
     json_str_or_null "$stop"; o="$o,\"stop_reason\":$_JSON"
     json_str_or_null "$stop_at"; o="$o,\"stop_at\":$_JSON"
     json_str_or_null "$phase"; o="$o,\"phase\":$_JSON"
-    json_str_or_null "$handover_at"; o="$o,\"handover_at\":$_JSON}"
+    json_str_or_null "$handover_at"; o="$o,\"handover_at\":$_JSON"
+    json_str_or_null "$answered_at"; o="$o,\"answered_at\":$_JSON}"
   else
     o="$o,\"autopilot\":null"
   fi
@@ -6369,9 +6479,9 @@ _task_actions_v() {
       cancel-pause-request) command="jig queue cancel task:$id pause" ;;
       approve-gate) command="jig task gate $id approved" ;;
       answer-stop)
-        # The `--by human` an unattended run's resume needs, in the command
+        # The `--by human` an unattended run's answer needs, in the command
         # and in the guard alike.
-        command="jig task autopilot $id resume --answer <text>"
+        command="jig task autopilot $id answer --answer <text>"
         _task_autopilot_mode_v mode "$id"
         if [ "$mode" = unattended ]; then
           by=human
@@ -6436,7 +6546,7 @@ _task_actions_v() {
           _task_gate_state_v gate "$id"
           [ "$gate" != approved ] || reason="task gate: $id's design is approved; nothing waits at its gate"
         fi ;;
-      *:answer-stop) _task_actions_ask_v reason "$id" "$action" _task_autopilot_resume_refusal "$id" "$by" ;;
+      *:answer-stop) _task_actions_ask_v reason "$id" "$action" _task_autopilot_resume_refusal "$id" "$by" answer ;;
       *:handover) _task_actions_ask_v reason "$id" "$action" _task_autopilot_handover_refusal "$id" ;;
       *:ship)
         if [ "$pr_state" = merged ]; then

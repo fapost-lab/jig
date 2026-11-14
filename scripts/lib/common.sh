@@ -5689,6 +5689,24 @@ _jig_task_state_value() {
   [ "$_JIG_TS_FOUND" = 0 ] || printf '%s\n' "$value"
 }
 
+# jig_autopilot_building <id> — exit 0 when an agent is still building task
+# <id>: its autopilot run is `on` and its knowledge is not consolidated yet.
+# That is what holds an `autopilot.parallel` slot; a run stopped for a person,
+# answered or not, and one consolidated and waiting for its turn to ship hold
+# none (adr-20261114-a-waiting-run-holds-no-slot,
+# adr-20260922-a-phase-run-is-coordinated). A task with no state is not building,
+# and neither is one abandoned, archived or closed: `abandon` and `archive`
+# leave `autopilot` as it was, and such a run must not hold a slot forever.
+jig_autopilot_building() {
+  local __jab_ap __jab_kc __jab_st
+  jig_task_state_var __jab_st "$1" status
+  case "$__jab_st" in active | ready) ;; *) return 1 ;; esac
+  jig_task_state_var __jab_ap "$1" autopilot
+  [ "$__jab_ap" = on ] || return 1
+  jig_task_state_var __jab_kc "$1" knowledge_consolidated
+  [ "$__jab_kc" != true ]
+}
+
 # jig_pause_request_refusal <id> — why `jig queue request task:<id> pause`
 # refuses this task, or nothing when it would write the request. The task's
 # state is asked first (jig_pause_request_state_refusal): a paused or closed

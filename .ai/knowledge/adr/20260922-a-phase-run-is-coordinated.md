@@ -146,3 +146,8 @@ local-only key.
   parallelism.
 - Rolling this back is removing a config key, a state key, a plan row, one refusal, a page section
   and a skill reference. Nothing migrates and no history is rewritten.
+
+> **Amendment (2026-11-14).** The slot predicate — run `on`, knowledge not consolidated — is one
+> function (`jig_autopilot_building`) that `spec plan` and `jig queue next`'s `slots:` share. A stopped
+> task already held no slot of its wave; an answered one resumes before the wave starts anything new
+> (adr-20261114-a-waiting-run-holds-no-slot).

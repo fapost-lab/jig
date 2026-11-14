@@ -340,8 +340,10 @@ list. An empty `attention` means nothing needs you.
       "tasks": ["booking-message"],
       "title": "Autopilot stopped and is waiting for you",
       "detail": "stopped 5 min ago: Which payment provider should the refund use?",
-      "todo": "Answer the agent in this task's session; it resumes the run.",
-      "url": null
+      "todo": "Answer from any session: jig task autopilot booking-message answer --answer <text>; the run resumes when a session with a free slot runs jig task autopilot booking-message resume (jig queue next lists it under resume first).",
+      "url": null,
+      "question": "Which payment provider should the refund use?",
+      "stopped_at": "2026-10-15T08:55:00Z"
     }
   ],
   "housekeeping": {"ran_at": "2026-10-15T09:00:00Z", "forge": "github", "stale": false},
@@ -351,7 +353,8 @@ list. An empty `attention` means nothing needs you.
 
 A program acts on `kind` and `subject`; `title`, `detail` and `todo` are the words the page shows a
 person, and may be reworded. The kinds cover a stopped autopilot run (`autopilot-stopped`, or
-`phase-stopped` for a phase run, whose `tasks` lists every stopped task), a design at its gate
+`phase-stopped` for a phase run, whose `tasks` lists every stopped task; a run a person has already
+answered is no item, and `autopilot-stopped` carries the run's `question` and `stopped_at`), a design at its gate
 (`gate-waiting`, `gate-changed`), a finished task waiting for your git step (`git-step`), pull
 requests to review, merge or close (`pull-request-waiting`, `pull-request-was-open`,
 `pull-request-of-abandoned-task`), on the staging flow the staging branch drifting from the base
@@ -465,7 +468,7 @@ reads the queue, the tasks' state and the last `jig housekeeping` run, never the
 changes nothing:
 
 ```json
-{"schema":1,"revision":1794604700,"generated_at":"2026-11-13T21:17:53Z","data":{"next":{"ref":"task:booking-form","kind":"task","id":"booking-form","level":null,"position":100,"priority":1,"started":false},"reason":null,"waiting":[{"ref":"task:booking-message","on":"task:booking-form","state":"unknown","reason":"The message quotes the form"}],"taken":[],"in_progress":[{"ref":"task:booking-export","id":"booking-export","priority":2}],"not_queued":1}}
+{"schema":1,"revision":1794604700,"generated_at":"2026-11-13T21:17:53Z","data":{"next":{"ref":"task:booking-form","kind":"task","id":"booking-form","level":null,"position":100,"priority":1,"started":false},"reason":null,"waiting":[{"ref":"task:booking-message","on":"task:booking-form","state":"unknown","reason":"The message quotes the form"}],"taken":[],"in_progress":[{"ref":"task:booking-export","id":"booking-export","priority":2}],"not_queued":1,"resume":[],"slots":{"limit":2,"building":1,"free":1}}}
 ```
 
 `next` is the task to take, or `null` with a `reason` (`waiting`, `taken`, `in_progress`, `paused` or `empty`)
@@ -475,7 +478,10 @@ words of the Jig command it last ran; such a task is never advised. Each of `che
 `command` is `null` when the note of that session does not hold it. `waiting` lists each dependency
 that holds a candidate back, in `state` `open`, `broken`
 (it never ends; drop it with `jig queue undepend`) or `unknown`. `in_progress` lists the queued tasks already started, which are never advised (`next.started` is
-always `false`). `not_queued` counts the active tasks outside the queue. The fields are in [the schema](https://github.com/fapost-lab/jig/blob/main/schemas/json.md).
+always `false`). `not_queued` counts the active tasks outside the queue. `resume` lists the answered autopilot runs
+to resume before anything new (`ref`, `id`, `priority`, `stopped_at`, `answered_at`), which are not in
+`in_progress`; `slots` is `{"limit", "building", "free"}`; a dependency on a task whose run is stopped
+reads `state` `waiting`. The fields are in [the schema](https://github.com/fapost-lab/jig/blob/main/schemas/json.md).
 
 ## Who may review a pull request
 

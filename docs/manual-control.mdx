@@ -262,8 +262,16 @@ already knows, over the network never, and changes nothing:
 next: task:booking-form — 1 of 3 on the top level, priority 1, not started
   task:booking-message waits for task:booking-form: unknown — jig housekeeping
 in progress: task:booking-export (P2)
+resume first: task:booking-import (P1, answered 5 min ago)
 not queued: 1 task — jig queue set <id> --priority <p>
+slots: 1 of 2 free (1 building)
 ```
+
+`resume first:` names the autopilot runs that stopped for a person and were answered
+(`jig task autopilot <id> answer`): they resume on the next free slot before any new task starts,
+most urgent first, then the one that stopped first. A stopped run holds no slot; `slots:` counts
+`autopilot.parallel` against the runs that are on and not consolidated in the clone. A task that
+depends on one whose run is stopped waits with `its autopilot run is stopped, waiting for an answer or a free slot — jig status`.
 
 Only a task that is `active`, not paused and not started yet is advised: what is started is listed on the `in progress:` line, since the advice is what to start. One waits while anything it depends
 on, or the epic it is built on depends on, is not finished. A task is finished when it is closed
