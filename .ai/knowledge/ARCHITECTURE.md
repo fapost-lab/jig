@@ -69,7 +69,8 @@ own: `jig_checkout_occupants` ("who occupies this checkout's HEAD"), the one rul
 `lib/owntree.sh` holds the steps of a write made in Jig's own tree, which never moves a checkout
 (adr-20261104-a-write-goes-in-jigs-own-tree): `spec` and `knowledge` write through it, `writes` is
 its command (`jig writes`, what waits and carrying it further), and `housekeeping` and `status` read
-it; it sources nothing and calls the `jig_ship_*` steps every ship takes.
+it; `task` reads it for the actions table's `drop-item` row, which asks `ot_spec_drop_refusal`, the
+one guard of `jig spec drop --json`, of local refs; it sources nothing and calls the `jig_ship_*` steps every ship takes.
 A helper that two commands must never disagree about lives in `lib/common.sh` instead —
 `jig_git_touched_files` ("what did this task touch"), `jig_staging_in_use` and `jig_staging_states`
 ("is this project on a sound staging flow, and which tasks' work is on its staging branch" —

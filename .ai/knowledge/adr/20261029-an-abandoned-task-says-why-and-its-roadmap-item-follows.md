@@ -12,6 +12,7 @@ paths:
   - schemas/spec.md
   - schemas/state.md
 summary: Why jig task abandon takes --reason and --moved-to, how jig spec drop closes the roadmap item that names an abandoned task, how it counts, and why a phase run leaves it to the coordinator.
+reviewed_at: 2026-11-14
 ---
 # ADR: An abandoned or moved task says why, and the roadmap item that names it is closed with the reason
 
@@ -133,3 +134,14 @@ the task with the reason in its text.**
   from the suffix later without changing the grammar.
 - Rolling this back removes `spec drop`, two flags and three keys; closed items stay ordinary `[x]`
   lines with text. Nothing migrates.
+
+## Amendment (2026-11-14): a person's button does not move a checkout
+
+`jig task abandon --json` — the call a person's button makes — never moves a checkout
+(adr-20261104-a-write-goes-in-jigs-own-tree), and the text form's `spec drop` does: it switches to
+`spec/<sid>` and commits there. So the JSON form does not run `spec drop`. It records the reason, the
+day and the move in `state` as one write, and answers with the spec the task is linked to; the roadmap
+item waits, unchecked and visible, as it does wherever `spec drop` cannot edit here. `jig spec drop
+<id> --json` closes it, in Jig's own tree on `spec/<sid>`, and the actions table offers it as
+`drop-item`, asking the command's own guard. The text form is unchanged: `task abandon` of a linked task
+still runs `spec drop` at the checkout, and the decision above stands for it.

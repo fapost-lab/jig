@@ -10,7 +10,7 @@ paths:
   - scripts/lib/task.sh
   - schemas/json.md
 summary: Why what a person may do next with a task is one table in task.sh whose rows ask the commands' own guards, why it is one-way (offered implies accepted), why close reads the forge cache, and where contract-queue's pause requests join.
-reviewed_at: 2026-11-08
+reviewed_at: 2026-11-14
 ---
 # What a person may do next with a task is one table in task.sh whose rows ask the commands' own guards
 
@@ -101,3 +101,5 @@ merged, and a `--json` read never touches the network (adr-20261015-a-read-is-on
 > **Amendment (2026-11-08).** A row `handover` follows `answer-stop`: `jig task autopilot <id> handover --by human --answer <text>`, offered on a `stopped` run and asking `_task_autopilot_handover_refusal` (adr-20261108-a-person-takes-over-a-stopped-run).
 
 > **Amendment (2026-11-14).** Rows `request-review`, `merge` (`jig task merge-pr <id> --by human`), `promote` and `pr-status` follow `land`, whose command is now `jig task land <id> --by human`: a person's row carries `--by human` so that it is accepted at every `agent.git` (adr-20261114-a-persons-pull-request-action-does-not-read-agent-git). `jig task list --json` adds `shipping`.
+
+> **Amendment (2026-11-14).** A row `drop-item` follows `reopen`: `jig spec drop <id> --json`, which closes in Jig's own tree the roadmap item an abandoned task left open (adr-20261029, as amended). It asks the command's own guard, `ot_spec_drop_refusal` (owntree.sh), of local refs only: the task's state, its spec link and the level as the command asks them, and the roadmap, the spec's branch and the write's record as this clone has them. What only origin can say is the command's, asked when it runs, so the row may withhold what the command takes, never offer what it refuses. The rows `approve-gate`, `abandon`, `archive` and `unarchive` keep their commands; each command now also takes `--revision <n> --json`.

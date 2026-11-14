@@ -22,7 +22,7 @@ paths:
   - scripts/lib/reviewers.sh
   - scripts/lib/prdo.sh
 summary: "What a command offering --json may, must and must not do: one envelope through json_run, values from existing producers, no network, schema raised only on an incompatible change."
-reviewed_at: 2026-11-13
+reviewed_at: 2026-11-14
 ---
 # A command's `--json` output
 
@@ -82,7 +82,8 @@ MUST:     call jig_record_changed right after the mv that lands the write, or ca
 MUST NOT: raise the revision before the write lands — except a write checked against the
           caller's revision, which claims the next one first (jig_revision_claim), moves its
           file into place right after, and then calls jig_record_changed (`jig queue`,
-          `task resume`, `task pause`, `task set <id> status consolidated`;
+          `task resume`, `task pause`, `task set <id> status consolidated`, `task gate`,
+          `task abandon`, `task archive`, `task unarchive`;
           adr-20261019-the-queue-is-one-file-written-against-a-revision) — or once at the command's end
           instead of after each write — except a batch whose many writes are one
           change and that runs only as its own command, never inside $(...):

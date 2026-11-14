@@ -12389,7 +12389,7 @@ test_task_list_json_pins_a_task_with_every_fact() {
   _tl_json
   assert_eq 0 "$RC" "$ERR"
   _tl_cut_actions
-  assert_eq '[{"id":"start","command":"jig task start SRD-9-full","offered":true,"reason":null},{"id":"pause","command":"jig task pause SRD-9-full","offered":false,"reason":"task pause: already paused: SRD-9-full"},{"id":"resume","command":"jig task resume SRD-9-full","offered":true,"reason":null},{"id":"request-pause","command":"jig queue request task:SRD-9-full pause","offered":false,"reason":"queue request: task SRD-9-full is already paused"},{"id":"cancel-pause-request","command":"jig queue cancel task:SRD-9-full pause","offered":false,"reason":"queue cancel: no pause of task:SRD-9-full is requested"},{"id":"approve-gate","command":"jig task gate SRD-9-full approved","offered":false,"reason":"task gate: SRD-9-full is stopped; if a human answered, run: jig task autopilot SRD-9-full resume --answer <text> --by human; then approve with --by agent; or, if a person takes the task on: jig task autopilot SRD-9-full handover --by human --answer <text>"},{"id":"answer-stop","command":"jig task autopilot SRD-9-full resume --answer <text> --by human","offered":true,"reason":null},{"id":"handover","command":"jig task autopilot SRD-9-full handover --by human --answer <text>","offered":true,"reason":null},{"id":"set-class","command":"jig task set SRD-9-full class <Tn>","offered":true,"reason":null},{"id":"ship","command":"jig task ship SRD-9-full --message-file <file>","offered":false,"reason":"task ship: agent.git is none in this clone; the human commits"},{"id":"land","command":"jig task land SRD-9-full --by human","offered":false,"reason":"task land: SRD-9-full is not on the staging flow; a task in this project lands with jig task ship"},{"id":"request-review","command":"jig task request-review SRD-9-full --reviewer <login> --by human","offered":true,"reason":null},{"id":"merge","command":"jig task merge-pr SRD-9-full --by human","offered":false,"reason":"task merge-pr: the forge cache says the checks of SRD-9-full'"'"'s pull request are red; the table withholds the merge until they are green (the command itself looks at the forge now)"},{"id":"promote","command":"jig task promote SRD-9-full --by human","offered":false,"reason":"task promote: SRD-9-full is not on the staging flow; a task in this project reaches main with jig task ship"},{"id":"pr-status","command":"jig task pr-status SRD-9-full --json","offered":true,"reason":null},{"id":"close","command":"jig task set SRD-9-full status consolidated","offered":false,"reason":"task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set SRD-9-full knowledge_consolidated true"},{"id":"abandon","command":"jig task abandon SRD-9-full","offered":true,"reason":null},{"id":"archive","command":"jig task archive SRD-9-full","offered":true,"reason":null},{"id":"unarchive","command":"jig task unarchive SRD-9-full","offered":false,"reason":"task unarchive: task SRD-9-full is not archived"},{"id":"reopen","command":"jig task set SRD-9-full status active","offered":false,"reason":"task SRD-9-full is active, not abandoned"}]' "$ACTIONS"
+  assert_eq '[{"id":"start","command":"jig task start SRD-9-full","offered":true,"reason":null},{"id":"pause","command":"jig task pause SRD-9-full","offered":false,"reason":"task pause: already paused: SRD-9-full"},{"id":"resume","command":"jig task resume SRD-9-full","offered":true,"reason":null},{"id":"request-pause","command":"jig queue request task:SRD-9-full pause","offered":false,"reason":"queue request: task SRD-9-full is already paused"},{"id":"cancel-pause-request","command":"jig queue cancel task:SRD-9-full pause","offered":false,"reason":"queue cancel: no pause of task:SRD-9-full is requested"},{"id":"approve-gate","command":"jig task gate SRD-9-full approved","offered":false,"reason":"task gate: SRD-9-full is stopped; if a human answered, run: jig task autopilot SRD-9-full resume --answer <text> --by human; then approve with --by agent; or, if a person takes the task on: jig task autopilot SRD-9-full handover --by human --answer <text>"},{"id":"answer-stop","command":"jig task autopilot SRD-9-full resume --answer <text> --by human","offered":true,"reason":null},{"id":"handover","command":"jig task autopilot SRD-9-full handover --by human --answer <text>","offered":true,"reason":null},{"id":"set-class","command":"jig task set SRD-9-full class <Tn>","offered":true,"reason":null},{"id":"ship","command":"jig task ship SRD-9-full --message-file <file>","offered":false,"reason":"task ship: agent.git is none in this clone; the human commits"},{"id":"land","command":"jig task land SRD-9-full --by human","offered":false,"reason":"task land: SRD-9-full is not on the staging flow; a task in this project lands with jig task ship"},{"id":"request-review","command":"jig task request-review SRD-9-full --reviewer <login> --by human","offered":true,"reason":null},{"id":"merge","command":"jig task merge-pr SRD-9-full --by human","offered":false,"reason":"task merge-pr: the forge cache says the checks of SRD-9-full'"'"'s pull request are red; the table withholds the merge until they are green (the command itself looks at the forge now)"},{"id":"promote","command":"jig task promote SRD-9-full --by human","offered":false,"reason":"task promote: SRD-9-full is not on the staging flow; a task in this project reaches main with jig task ship"},{"id":"pr-status","command":"jig task pr-status SRD-9-full --json","offered":true,"reason":null},{"id":"close","command":"jig task set SRD-9-full status consolidated","offered":false,"reason":"task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set SRD-9-full knowledge_consolidated true"},{"id":"abandon","command":"jig task abandon SRD-9-full","offered":true,"reason":null},{"id":"archive","command":"jig task archive SRD-9-full","offered":true,"reason":null},{"id":"unarchive","command":"jig task unarchive SRD-9-full","offered":false,"reason":"task unarchive: task SRD-9-full is not archived"},{"id":"reopen","command":"jig task set SRD-9-full status active","offered":false,"reason":"task SRD-9-full is active, not abandoned"},{"id":"drop-item","command":"jig spec drop SRD-9-full --json","offered":false,"reason":"spec drop: SRD-9-full is active; abandon it first: jig task abandon SRD-9-full --reason <text>"}]' "$ACTIONS"
   assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"pause_request\":null,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"archived_at\":null,\"archived_reason\":null,\"archived_from\":null,\"absorbed_into\":null,\"absorbs\":[],\"absorbs_partly\":[],\"partly_in\":[],\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\",\"handover_at\":null},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\",\"state\":\"open\",\"ci\":\"red\",\"fetched_at\":\"2026-10-02T12:00:00Z\",\"base\":\"main\",\"mergeable\":null,\"review\":null},\"shipping\":null,\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"archived\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
 }
 
@@ -12399,7 +12399,7 @@ test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
   _tl_json
   assert_eq 0 "$RC" "$ERR"
   _tl_cut_actions
-  assert_eq 20 "$(printf '%s\n' "$ACTIONS" | grep -o '{"id":' | wc -l | tr -d ' ')"
+  assert_eq 21 "$(printf '%s\n' "$ACTIONS" | grep -o '{"id":' | wc -l | tr -d ' ')"
   assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"tasks":[{"id":"bare","class":null,"status":"active","issue":null,"goal":null,"knowledge_consolidated":false,"paused":false,"pause_request":null,"created_at":"2026-10-01","updated_at":"2026-10-01","archived_at":null,"archived_reason":null,"archived_from":null,"absorbed_into":null,"absorbs":[],"absorbs_partly":[],"partly_in":[],"branch":null,"base_branch":"main","worktree":null,"gate":null,"autopilot":null,"pull_request":null,"shipping":null,"housekeeping_flags":[]}],"hidden":0,"archived":0,"housekeeping":null}}' "$OUT"
 }
 
@@ -13103,7 +13103,7 @@ _tl_agree() {
   _tl_json --all
   assert_eq 0 "$RC" "$ERR"
   rows=$(_tl_action_rows)
-  assert_eq 20 "$(printf '%s\n' "$rows" | grep -c .)" "$OUT"
+  assert_eq 21 "$(printf '%s\n' "$rows" | grep -c .)" "$OUT"
   saved=$(mktemp -d "${TMPDIR:-/tmp}/jig-tl-agree.XXXXXX")
   # The queue too: a pause request written by one command must not change
   # what the next is judged on.
@@ -15679,4 +15679,682 @@ test_task_ship_git_for_a_legacy_pull_request_is_the_lower_level() {
   run jig task ship T-1 --message-file msg.txt
   assert_eq 1 "$RC" "$OUT"
   assert_contains "$OUT" "invalid agent.git_staging: yolo"
+}
+
+# --- gate, abandon, archive and unarchive with --json and --revision ----------------
+#
+# One write each, built whole and claimed against the revision the caller read
+# (conventions/json-output.md): the shape of the answer, the code of every
+# refusal, and that a stale revision writes nothing. The text forms keep their
+# own tests above.
+
+# _tw_json <subcommand> <args...> — `jig task <subcommand> <args> --json`; stdout
+# in OUT, stderr in ERR, status in RC.
+_tw_json() {
+  run_split jig task "$@" --json
+}
+
+# _tw_task — the task object a one-task `jig task list --all --json` prints.
+_tw_task() {
+  jig task list --all --json | sed -e 's/.*"data":{"tasks":\[//' -e 's/\],"hidden".*//'
+}
+
+# _tw_t3 — a started T3 task T-1 with a design to approve.
+_tw_t3() {
+  route_task --class T3
+  route_design
+}
+
+# _tw_no_tmp <id> — no temporary state file is left in the task's workspace.
+_tw_no_tmp() {
+  assert_eq "" "$( (cd ".ai/workspace/tasks/$1" && ls -a) | grep '^state\.tmp' || true)" "a state file was left behind"
+}
+
+# _tw_one_line — OUT is one line, the envelope: nothing else on stdout.
+_tw_one_line() {
+  assert_eq 1 "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" "stdout is more than the envelope: $OUT"
+}
+
+test_task_gate_json_answers_with_the_task_and_the_approval() {
+  _tw_t3
+  _tw_json gate T-1 approved
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "" "$ERR"
+  _tw_one_line
+  local design
+  design=$(sed -n 's/^gate_design:[[:space:]]*//p' .ai/workspace/tasks/T-1/state)
+  [ -n "$design" ] || fail "gate_design was not recorded"
+  assert_eq "{\"task\":$(_tw_task),\"gate\":{\"state\":\"approved\",\"by\":\"human\",\"design\":\"$design\"}}" "$(_tr_data)"
+  assert_file_contains .ai/workspace/tasks/T-1/state "gate: approved"
+  assert_file_contains .ai/workspace/tasks/T-1/state "gate_by: human"
+  _tw_no_tmp T-1
+  # The table agrees: nothing waits at the gate now.
+  assert_contains "$OUT" '"id":"approve-gate","command":"jig task gate T-1 approved","offered":false'
+}
+
+test_task_gate_json_lands_as_one_write_and_the_text_form_is_unchanged() {
+  _tw_t3
+  _tr_rev
+  local before=$REV
+  _tw_json gate T-1 approved
+  assert_eq 0 "$RC" "$ERR"
+  _tr_rev
+  assert_eq "$((before + 2))" "$REV" "an approval must raise the revision by exactly two"
+  # The same approval in text, with the revision it read.
+  jig task new T-2 --class T3 --goal "The goal." >/dev/null
+  printf '# design\n' > .ai/workspace/tasks/T-2/design.md
+  _tr_rev
+  run jig task gate T-2 approved --revision "$REV"
+  assert_eq 0 "$RC"
+  assert_eq "gate: approved" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-2/state "gate_by: human"
+  # --json and --revision in either order.
+  jig task new T-3 --class T3 --goal "The goal." >/dev/null
+  printf '# design\n' > .ai/workspace/tasks/T-3/design.md
+  _tr_rev
+  run_split jig task gate --json T-3 approved --revision "$REV"
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"gate":{"state":"approved","by":"human"'
+}
+
+test_task_gate_json_by_agent_in_an_unattended_run_says_who() {
+  _tw_t3
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  _tw_json gate T-1 approved --by agent
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"gate":{"state":"approved","by":"agent","design":"'
+  assert_file_contains .ai/workspace/tasks/T-1/state "gate_by: agent"
+}
+
+test_task_gate_json_refusals_carry_their_codes_and_write_nothing() {
+  _tw_t3
+  local state
+  state=$(cat .ai/workspace/tasks/T-1/state)
+  _tw_json gate T-1 rejected
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json gate T-1 approved --by robot
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json gate T-1 approved --by
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json gate T-1 approved --revision 08
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json gate T-1 approved --revision
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json gate T-1 approved --revision ""
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json gate T-1 approved --bogus
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json gate T-1 approved extra
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json gate T-1
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json gate "bad!id" approved
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json gate NOPE approved
+  assert_eq not-found "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "unknown task: NOPE"
+  # The self-approval of a run, outside one, is nobody's to act on.
+  _tw_json gate T-1 approved --by agent
+  assert_eq failed "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "the gate is the human's"
+  assert_eq "$state" "$(cat .ai/workspace/tasks/T-1/state)" "a refused approval changed the state"
+  _tw_no_tmp T-1
+}
+
+test_task_gate_json_without_a_gate_is_no_gate() {
+  route_task --class T2
+  route_design
+  _tw_json gate T-1 approved
+  assert_eq no-gate "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "T-1 is T2; only T3 and T4 tasks have a human gate"
+  jig task new T-2 --class T3 --goal "The goal." >/dev/null
+  _tw_json gate T-2 approved
+  assert_eq no-gate "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "T-2 has no design.md to approve"
+  jig task new T-3 >/dev/null
+  _tw_json gate T-3 approved
+  assert_eq no-gate "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "T-3 is unclassified"
+}
+
+test_task_gate_json_inside_an_unattended_run_is_running_or_stopped() {
+  _tw_t3
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  _tw_json gate T-1 approved
+  assert_eq autopilot-running "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "this approval is the agent's: jig task gate T-1 approved --by agent"
+  jig task autopilot T-1 stop --reason "which name?" >/dev/null || true
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: stopped"
+  _tw_json gate T-1 approved
+  assert_eq autopilot-stopped "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "T-1 is stopped"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "gate: approved"
+}
+
+test_task_gate_json_at_the_repair_limit_is_stopped() {
+  route_task --class T3
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 repair --reason r1 >/dev/null
+  jig task autopilot T-1 repair --reason r2 >/dev/null
+  jig task autopilot T-1 repair --reason r3 >/dev/null || true
+  route_design
+  _tw_json gate T-1 approved
+  assert_eq autopilot-stopped "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "exhausted its unattended repair limit"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "gate: approved"
+}
+
+test_task_gate_json_with_a_stale_revision_writes_nothing() {
+  _tw_t3
+  _tr_rev
+  local old=$((REV + 7)) state now
+  state=$(cat .ai/workspace/tasks/T-1/state)
+  now=$REV
+  _tw_json gate T-1 approved --revision "$old"
+  assert_eq 1 "$RC"
+  assert_eq stale-revision "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "the clone changed since revision $old"
+  assert_eq "$state" "$(cat .ai/workspace/tasks/T-1/state)" "a refused approval changed the state"
+  _tr_rev
+  assert_eq "$now" "$REV" "a refused approval moved the revision"
+  _tw_no_tmp T-1
+  # A design rewritten after the read: the revision the person saw is stale.
+  local seen=$REV
+  printf '# design\n\nrewritten\n' > d.md
+  jig task artifact write T-1 design --from d.md >/dev/null
+  _tw_json gate T-1 approved --revision "$seen"
+  assert_eq stale-revision "$(_tr_code)" "$OUT"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "gate: approved"
+  # The text form refuses the same way.
+  run jig task gate T-1 approved --revision "$seen"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "the clone changed since revision $seen"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "gate: approved"
+}
+
+# --- abandon --json ---------------------------------------------------------------
+
+test_task_abandon_json_answers_with_the_task_and_what_was_recorded() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task new T-2 >/dev/null
+  # The note is the line the text form prints, word for word.
+  run jig task abandon T-2 --reason "lives in monitoring" --moved-to "../monitoring#sentry-errors"
+  local note
+  note=$(printf '%s\n' "$OUT" | sed -n 's/^\(moved: .*\)$/\1/p')
+  [ -n "$note" ] || fail "the text form printed no moved line: $OUT"
+  _tw_json abandon T-1 --reason "lives in monitoring" --moved-to "../monitoring#sentry-errors"
+  assert_eq 0 "$RC" "$ERR"
+  _tw_one_line
+  # The state is what the text form writes, key for key.
+  assert_eq "$(sed 's/^task_id: T-2/task_id: T-1/' .ai/workspace/tasks/T-2/state)" "$(cat .ai/workspace/tasks/T-1/state)"
+  rm -rf .ai/workspace/tasks/T-2
+  assert_eq "{\"task\":$(_tw_task),\"abandon\":{\"reason\":\"lives in monitoring\",\"moved_to\":\"../monitoring#sentry-errors\",\"note\":\"$note\",\"spec\":null}}" "$(_tr_data)" "the task was listed with T-2 gone"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: abandoned"
+  assert_file_contains .ai/workspace/tasks/T-1/state "abandoned_at: $(date +%Y-%m-%d)"
+  _tw_no_tmp T-1
+}
+
+test_task_abandon_json_with_no_reason_or_move_and_a_second_abandon() {
+  task_setup
+  jig task new T-1 >/dev/null
+  _tr_rev
+  local before=$REV
+  _tw_json abandon T-1
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"abandon":{"reason":null,"moved_to":null,"note":null,"spec":null}}'
+  _tr_rev
+  assert_eq "$((before + 2))" "$REV" "an abandon must raise the revision by two"
+  # A second abandon refines the record; a move not repeated is a move no more.
+  jig task new T-2 >/dev/null
+  _tw_json abandon T-2 --reason one --moved-to "pkg/mon#t-9"
+  assert_eq 0 "$RC" "$ERR"
+  _tw_json abandon T-2 --reason two
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"abandon":{"reason":"two","moved_to":null,'
+  assert_file_contains .ai/workspace/tasks/T-2/state "abandoned_reason: two"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-2/state)" "moved_to:"
+}
+
+# A task linked to a spec is given up without touching the roadmap or the
+# checkout: the item waits, and `spec` names where.
+# shellcheck disable=SC2016 # the roadmap's backticks are literal
+test_task_abandon_json_of_a_linked_task_leaves_the_roadmap_and_the_checkout_alone() {
+  task_setup_clean
+  jig task new T-1 >/dev/null
+  mkdir -p .ai/specs/alpha
+  printf '%s\n' '- [ ] `T-1` — the thing' > .ai/specs/alpha/roadmap.md
+  printf 'Spec: .ai/specs/alpha/ — Phase 1\n' >> .ai/workspace/tasks/T-1/task.md
+  git add -A
+  git commit -q -m "a spec"
+  local before_head before_status
+  before_head=$(git rev-parse HEAD)
+  before_status=$(git status --porcelain)
+  _tw_json abandon T-1
+  assert_eq 1 "$RC"
+  assert_eq usage "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "T-1 is linked to spec alpha; say why"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: active"
+  _tw_json abandon T-1 --reason "superseded"
+  assert_eq 0 "$RC" "$ERR"
+  _tw_one_line
+  assert_contains "$OUT" '"abandon":{"reason":"superseded","moved_to":null,"note":null,"spec":"alpha"}}'
+  assert_not_contains "$ERR" "spec drop"
+  assert_eq '- [ ] `T-1` — the thing' "$(cat .ai/specs/alpha/roadmap.md)" "the roadmap was edited"
+  assert_eq main "$(git symbolic-ref --short HEAD)"
+  assert_eq "$before_head" "$(git rev-parse HEAD)"
+  assert_eq "$before_status" "$(git status --porcelain)"
+  assert_eq "" "$(git branch --list 'spec/*')" "a spec branch was cut"
+  # What waits is the action's: `jig spec drop T-1 --json`, at a level that commits.
+  ship_cfg_local agent.git commit
+  run jig task list --all --json
+  assert_contains "$OUT" '"id":"drop-item","command":"jig spec drop T-1 --json","offered":true,"reason":null}'
+}
+
+test_task_abandon_json_takes_the_task_out_of_the_queue_on_stderr() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig queue set T-1 --priority 1 >/dev/null
+  _tw_json abandon T-1
+  assert_eq 0 "$RC" "$ERR"
+  _tw_one_line
+  assert_contains "$ERR" "task set: task:T-1 left the queue"
+}
+
+test_task_abandon_json_refusals_carry_their_codes_and_write_nothing() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task new T-3 >/dev/null
+  local state
+  state=$(cat .ai/workspace/tasks/T-1/state)
+  _tw_json abandon T-1 --reason ""
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json abandon T-1 --reason "$(printf 'two\nlines')"
+  assert_eq usage "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "--reason must be a single line"
+  _tw_json abandon T-1 --moved-to "/abs/repo#x"
+  assert_eq usage "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "the repository path must be relative"
+  _tw_json abandon T-1 --moved-to "repo-without-hash"
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json abandon T-1 --bogus
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json abandon T-1 --reason
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json abandon T-1 --revision 08
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json abandon
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json abandon "bad!id"
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json abandon NOPE
+  assert_eq not-found "$(_tr_code)" "$OUT"
+  assert_eq "$state" "$(cat .ai/workspace/tasks/T-1/state)" "a refused abandon changed the state"
+  _tw_no_tmp T-1
+  # An archived task changes status only by unarchive.
+  jig task archive T-3 >/dev/null
+  _tw_json abandon T-3
+  assert_eq wrong-status "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "task T-3 is archived; run jig task unarchive T-3 first"
+  assert_file_contains .ai/workspace/tasks/T-3/state "status: archived"
+  # The text forms say it as `task set` always did.
+  run jig task abandon T-3
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is archived; run jig task unarchive T-3 first"
+  run jig task set T-3 status abandoned
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task set: task T-3 is archived; run jig task unarchive T-3 first"
+}
+
+test_task_abandon_json_with_a_stale_revision_writes_nothing() {
+  task_setup
+  jig task new T-1 >/dev/null
+  _tr_rev
+  local old=$((REV + 7)) state now
+  state=$(cat .ai/workspace/tasks/T-1/state)
+  now=$REV
+  _tw_json abandon T-1 --reason why --revision "$old"
+  assert_eq 1 "$RC"
+  assert_eq stale-revision "$(_tr_code)" "$OUT"
+  assert_eq "$state" "$(cat .ai/workspace/tasks/T-1/state)" "a refused abandon changed the state"
+  _tr_rev
+  assert_eq "$now" "$REV" "a refused abandon moved the revision"
+  _tw_no_tmp T-1
+  run jig task abandon T-1 --reason why --revision "$old"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "the clone changed since revision $old"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: active"
+  _tr_rev
+  run jig task abandon T-1 --reason why --revision "$REV"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task abandon: T-1 abandoned"
+}
+
+# --- archive and unarchive --json ---------------------------------------------------
+
+test_task_archive_json_and_unarchive_json_answer_with_the_task() {
+  task_setup
+  jig task new T-1 >/dev/null
+  _tr_rev
+  local before=$REV
+  _tw_json archive T-1
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "" "$ERR"
+  _tw_one_line
+  assert_eq "{\"task\":$(_tw_task)}" "$(_tr_data)"
+  assert_contains "$OUT" '"status":"archived"'
+  assert_file_contains .ai/workspace/tasks/T-1/state "archived_from: active"
+  assert_file_contains .ai/workspace/tasks/T-1/state "archived_reason: manual"
+  assert_file_contains .ai/workspace/tasks/T-1/state "archived_at: $(date +%Y-%m-%d)"
+  _tw_no_tmp T-1
+  _tr_rev
+  assert_eq "$((before + 2))" "$REV" "an archive must raise the revision by two"
+  before=$REV
+  _tw_json unarchive T-1
+  assert_eq 0 "$RC" "$ERR"
+  _tw_one_line
+  assert_eq "{\"task\":$(_tw_task)}" "$(_tr_data)"
+  assert_contains "$OUT" '"status":"active"'
+  assert_contains "$ERR" "not queued: T-1"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "archived_"
+  _tw_no_tmp T-1
+  _tr_rev
+  assert_eq "$((before + 2))" "$REV" "an unarchive must raise the revision by two"
+}
+
+test_task_archive_json_of_a_queued_task_leaves_the_queue_on_stderr() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig queue set T-1 --priority 1 >/dev/null
+  _tw_json archive T-1
+  assert_eq 0 "$RC"
+  _tw_one_line
+  assert_contains "$ERR" "task archive: task:T-1 left the queue"
+  assert_contains "$OUT" '"status":"archived"'
+}
+
+test_task_unarchive_json_returns_an_abandoned_task_to_abandoned() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task abandon T-1 >/dev/null
+  _tw_json archive T-1
+  assert_eq 0 "$RC" "$ERR"
+  assert_file_contains .ai/workspace/tasks/T-1/state "archived_from: abandoned"
+  _tw_json unarchive T-1
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"status":"abandoned"'
+  assert_not_contains "$ERR" "not queued"
+}
+
+test_task_archive_and_unarchive_json_refusals_carry_their_codes() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task new T-2 >/dev/null
+  fixture_task T-9 task/T-9 consolidated
+  _tw_json archive T-9
+  assert_eq wrong-status "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "task T-9 is consolidated; only an unfinished task is archived"
+  assert_file_contains .ai/workspace/tasks/T-9/state "status: consolidated"
+  _tw_json unarchive T-1
+  assert_eq not-archived "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "task T-1 is not archived"
+  jig task archive T-2 >/dev/null
+  _tw_json archive T-2
+  assert_eq already-archived "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "task T-2 is already archived"
+  _tw_json archive NOPE
+  assert_eq not-found "$(_tr_code)" "$OUT"
+  _tw_json unarchive NOPE
+  assert_eq not-found "$(_tr_code)" "$OUT"
+  _tw_json archive
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json archive T-1 extra
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json unarchive T-2 --revision 08
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json unarchive T-2 --revision
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json archive "bad!id"
+  assert_eq usage "$(_tr_code)" "$OUT"
+  _tw_json archive T-1 --bogus
+  assert_eq usage "$(_tr_code)" "$OUT"
+  # The text forms say it as they always did.
+  run jig task archive T-9
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task archive: task T-9 is consolidated; only an unfinished task is archived"
+  run jig task unarchive T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task unarchive: task T-1 is not archived"
+  run jig task archive T-2
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task archive: task T-2 is already archived"
+}
+
+test_task_archive_and_unarchive_with_a_stale_revision_write_nothing() {
+  task_setup
+  jig task new T-1 >/dev/null
+  _tr_rev
+  local old=$((REV + 7)) state now
+  state=$(cat .ai/workspace/tasks/T-1/state)
+  now=$REV
+  _tw_json archive T-1 --revision "$old"
+  assert_eq 1 "$RC"
+  assert_eq stale-revision "$(_tr_code)" "$OUT"
+  assert_eq "$state" "$(cat .ai/workspace/tasks/T-1/state)" "a refused archive changed the state"
+  _tw_no_tmp T-1
+  run jig task archive T-1 --revision "$old"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "the clone changed since revision $old"
+  _tr_rev
+  assert_eq "$now" "$REV" "a refused archive moved the revision"
+  jig task archive T-1 >/dev/null
+  state=$(cat .ai/workspace/tasks/T-1/state)
+  _tr_rev
+  old=$((REV + 7))
+  _tw_json unarchive T-1 --revision "$old"
+  assert_eq stale-revision "$(_tr_code)" "$OUT"
+  assert_eq "$state" "$(cat .ai/workspace/tasks/T-1/state)" "a refused unarchive changed the state"
+  _tw_no_tmp T-1
+  run jig task unarchive T-1 --revision "$old"
+  assert_eq 1 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: archived"
+  _tr_rev
+  run jig task unarchive T-1 --revision "$REV"
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: active"
+}
+
+test_task_unarchive_takes_the_absorbed_into_record_away() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task new T-2 >/dev/null
+  printf 'absorbed_into: T-2\n' >> .ai/workspace/tasks/T-1/state
+  jig task archive T-1 >/dev/null
+  _tw_json unarchive T-1
+  assert_eq 0 "$RC" "$ERR"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "absorbed_into"
+}
+
+# --- the drop-item action ------------------------------------------------------------
+#
+# The row asks the command's own guard (ot_spec_drop_refusal), so a withheld row
+# says what `jig spec drop --json` says; the agreement tests run the command.
+
+# _tw_dropable [<roadmap-line>] — agent.git commit, and T-1 abandoned and linked to
+# spec alpha, whose roadmap on main holds the line (an open item naming T-1 by
+# default), committed. The abandon is the JSON one: the text form would close the
+# item itself.
+# shellcheck disable=SC2016 # the roadmap's backticks are literal
+_tw_dropable() {
+  task_setup_clean
+  ship_cfg_local agent.git commit
+  jig task new T-1 >/dev/null
+  mkdir -p .ai/specs/alpha
+  printf '%s\n' "${1:-- [ ] \`T-1\` — the thing}" > .ai/specs/alpha/roadmap.md
+  printf 'Spec: .ai/specs/alpha/ — Phase 1\n' >> .ai/workspace/tasks/T-1/task.md
+  git add -A
+  git commit -q -m "a spec"
+  jig task abandon T-1 --reason "superseded" --json >/dev/null 2>&1
+}
+
+# _tw_drop_item — the drop-item row, as `jig task list --all --json` prints it.
+_tw_drop_item() {
+  jig task list --all --json | sed -n 's/.*\({"id":"drop-item"[^}]*}\).*/\1/p'
+}
+
+test_task_drop_item_is_offered_for_an_abandoned_task_with_an_open_item() {
+  _tw_dropable
+  assert_eq '{"id":"drop-item","command":"jig spec drop T-1 --json","offered":true,"reason":null}' "$(_tw_drop_item)"
+}
+
+# An archived task that was abandoned keeps its item closable: housekeeping archives
+# abandoned tasks, and the command takes them.
+test_task_drop_item_is_offered_for_a_task_archived_from_abandoned() {
+  _tw_dropable
+  jig task archive T-1 >/dev/null 2>&1
+  assert_eq '{"id":"drop-item","command":"jig spec drop T-1 --json","offered":true,"reason":null}' "$(_tw_drop_item)"
+  jig task unarchive T-1 >/dev/null 2>&1
+  jig task set T-1 status active >/dev/null 2>&1
+  jig task archive T-1 >/dev/null 2>&1
+  assert_contains "$(_tw_drop_item)" '"offered":false,"reason":"spec drop: T-1 is archived; abandon it first'
+}
+
+test_task_drop_item_withholds_in_the_commands_words() {
+  # A live task.
+  task_setup_clean
+  ship_cfg_local agent.git commit
+  jig task new T-1 >/dev/null
+  assert_eq '{"id":"drop-item","command":"jig spec drop T-1 --json","offered":false,"reason":"spec drop: T-1 is active; abandon it first: jig task abandon T-1 --reason <text>"}' "$(_tw_drop_item)"
+  # Abandoned, linked to no spec.
+  jig task abandon T-1 >/dev/null
+  assert_eq '{"id":"drop-item","command":"jig spec drop T-1 --json","offered":false,"reason":"spec drop: T-1 is not linked to a spec"}' "$(_tw_drop_item)"
+}
+
+# agent.git none is the default: the command refuses before it opens a tree.
+# shellcheck disable=SC2016 # the message's backticks are literal
+test_task_drop_item_is_withheld_at_agent_git_none() {
+  _tw_dropable
+  ship_cfg_local agent.git none
+  assert_contains "$(_tw_drop_item)" '"offered":false,"reason":"spec drop: agent.git is none in this clone, so Jig commits nothing; set it with `jig config set --local agent.git commit` (or higher), or make the change in an agent session"}'
+}
+
+# shellcheck disable=SC2016 # the roadmap's backticks are literal
+test_task_drop_item_is_withheld_when_the_item_is_closed_or_not_there() {
+  _tw_dropable '- [x] `T-1` — the thing'
+  assert_contains "$(_tw_drop_item)" '"offered":false,"reason":"spec drop: every item in the roadmap of alpha on main that names T-1 is closed already"'
+  _tw_dropable '- [ ] `T-7` — another'
+  assert_contains "$(_tw_drop_item)" '"offered":false,"reason":"spec drop: no item in the roadmap of alpha on main names T-1; read it again"'
+}
+
+test_task_drop_item_is_withheld_for_a_spec_the_base_does_not_have_or_two_specs() {
+  task_setup_clean
+  ship_cfg_local agent.git commit
+  jig task new T-1 >/dev/null
+  printf 'Spec: .ai/specs/alpha/\n' >> .ai/workspace/tasks/T-1/task.md
+  jig task abandon T-1 --reason why --json >/dev/null 2>&1
+  assert_contains "$(_tw_drop_item)" '"offered":false,"reason":"spec drop: no roadmap of alpha on main;'
+  printf 'Spec: .ai/specs/beta/\n' >> .ai/workspace/tasks/T-1/task.md
+  assert_contains "$(_tw_drop_item)" '"offered":false,"reason":"spec drop: T-1 links to more than one spec in its task.md"'
+}
+
+# The write uses the spec's own branch whenever this clone has it, record or not: the
+# item must be open there too, and the branch must be one a write may use.
+# shellcheck disable=SC2016 # the roadmap's backticks are literal
+test_task_drop_item_asks_the_spec_branch_whenever_it_exists() {
+  _tw_dropable
+  git branch spec/alpha main
+  assert_eq '{"id":"drop-item","command":"jig spec drop T-1 --json","offered":true,"reason":null}' "$(_tw_drop_item)"
+  git switch -q spec/alpha
+  printf '%s\n' '- [x] `T-1` — the thing — dropped (2026-11-01)' > .ai/specs/alpha/roadmap.md
+  git commit -q -am "closed on the branch"
+  git switch -q main
+  # Closed there by a text `spec drop`, whose local commit no write of Jig's made:
+  # the write would refuse the branch before it read the item, and so does the row.
+  assert_contains "$(_tw_drop_item)" '"offered":false,"reason":"spec drop: spec/alpha has commits that no write of Jig'"'"'s made and origin does not have'
+  # A person's commit on it that origin and the base do not hold: no write may use it.
+  git branch -f spec/alpha main
+  git switch -q spec/alpha
+  printf 'x\n' > mine.txt
+  git add mine.txt
+  git commit -q -m "mine"
+  git switch -q main
+  assert_contains "$(_tw_drop_item)" '"offered":false,"reason":"spec drop: spec/alpha has commits that no write of Jig'"'"'s made and origin does not have'
+  # Checked out in a worktree: Jig never moves a checkout.
+  git branch -f spec/alpha main
+  git worktree add -q ../wt-alpha spec/alpha
+  assert_contains "$(_tw_drop_item)" '"offered":false,"reason":"spec drop: spec/alpha is checked out in '
+  git worktree remove --force ../wt-alpha
+}
+
+# A roadmap write that still waits to go into main, after the spec opened an epic:
+# the command refuses to stack on it (write-still-waits), and so does the row, in
+# the command's words. Local refs only: the epic is cut here, origin has none.
+# shellcheck disable=SC2016 # the roadmap's backticks are literal
+test_task_drop_item_withholds_while_a_write_waits_for_another_base() {
+  _tw_dropable "$(printf '## Phase 1\n\n- [ ] `T-1` — the thing')"
+  jig spec item add alpha --phase 1 --text "another" --json >/dev/null 2>&1 \
+    || fail "spec item add failed"
+  printf 'Epic: epic/alpha\n\n## Phase 1\n\n%s\n' '- [ ] `T-1` — the thing' > .ai/specs/alpha/roadmap.md
+  git commit -q -am "an epic"
+  git branch epic/alpha
+  local row
+  row=$(_tw_drop_item)
+  assert_contains "$row" '"offered":false,"reason":"spec drop: spec/alpha still waits to go into main, and this edit goes into epic/alpha; merge or close what waits first'
+  run_split jig spec drop T-1 --json
+  assert_contains "$OUT" '"code":"write-still-waits"'
+  local reason
+  reason=$(printf '%s' "$row" | sed -n 's/.*"reason":"\(.*\)"}$/\1/p')
+  assert_contains "$OUT" "$reason"
+}
+
+# An open epic is where the write goes: its copy of the roadmap is the one asked.
+# shellcheck disable=SC2016 # the roadmap's backticks are literal
+test_task_drop_item_reads_the_epic_a_roadmap_declares_open() {
+  _tw_dropable
+  printf 'Epic: epic/alpha\n\n%s\n' '- [ ] `T-1` — the thing' > .ai/specs/alpha/roadmap.md
+  git add -A
+  git commit -q -m "an epic"
+  # The epic is not here: withheld, and nothing is fetched.
+  assert_contains "$(_tw_drop_item)" '"offered":false,"reason":"spec item: alpha is built on epic/alpha, which is neither here nor on origin'
+  git branch epic/alpha
+  assert_eq '{"id":"drop-item","command":"jig spec drop T-1 --json","offered":true,"reason":null}' "$(_tw_drop_item)"
+  # On the epic the item is checked: that is where the write goes.
+  git switch -q epic/alpha
+  printf 'Epic: epic/alpha\n\n%s\n' '- [x] `T-1` — the thing' > .ai/specs/alpha/roadmap.md
+  git commit -q -am "checked on the epic"
+  git switch -q main
+  assert_contains "$(_tw_drop_item)" '"offered":false,"reason":"spec drop: every item in the roadmap of alpha on epic/alpha that names T-1 is closed already"'
+}
+
+# The agreement tests: the row offered means the command succeeds, and a row
+# withheld means it refuses with the row's words.
+test_task_actions_of_an_abandoned_task_with_an_open_item_agree_with_their_commands() {
+  _tw_dropable
+  _tl_agree T-1 "archive reopen drop-item"
+}
+
+test_task_actions_of_an_archived_abandoned_task_agree_with_their_commands() {
+  _tw_dropable
+  jig task archive T-1 >/dev/null 2>&1
+  _tl_agree T-1 "unarchive drop-item"
+}
+
+test_task_actions_withholding_drop_item_at_agent_git_none_agree_with_the_command() {
+  _tw_dropable
+  ship_cfg_local agent.git none
+  _tl_agree T-1 "archive reopen"
+}
+
+# shellcheck disable=SC2016 # the roadmap's backticks are literal
+test_task_actions_withholding_drop_item_for_a_closed_spec_branch_agree_with_the_command() {
+  _tw_dropable
+  git branch spec/alpha main
+  git switch -q spec/alpha
+  printf '%s\n' '- [x] `T-1` — the thing — dropped (2026-11-01)' > .ai/specs/alpha/roadmap.md
+  git commit -q -am "closed on the branch"
+  git switch -q main
+  _tl_agree T-1 "archive reopen"
 }
