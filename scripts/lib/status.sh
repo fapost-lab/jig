@@ -345,6 +345,7 @@ $rel"
   [ "$waiting" -eq 0 ] || printf 'writes: %s waiting (jig writes)\n' "$waiting"
 
   local found=0 rec line default_base blocking bcount autopilot_note qlines qon qreason qago
+  local waivers nwaived wgate wpath wreason
   [ -n "$_STATUS_LIVE_READY" ] || _status_live_collect
   default_base=$_STATUS_DEFAULT_BASE
   # The project's git flow and where its tasks stand on the staging branch:
@@ -402,6 +403,24 @@ EOF
     # never quieter than the gate it may have skipped
     # (adr-20261004-a-route-stage-is-proven-by-its-record).
     [ -z "$_ST_LOWERED" ] || line="$line lowered=$_ST_LOWERED"
+    # A hook's refusal a person set aside for this task is never quieter than
+    # the gate it set aside (adr-20261114-a-person-waives-a-gate-hooks-refusal-for-one-task):
+    # a count in the head, where _status_task_needs reads it — a token at the
+    # end would hide the `blocking=`, `review=stale` and `autopilot=` words it
+    # peels from there — and a line each below. Read through task.sh's reader,
+    # one file per task.
+    _task_waivers_v waivers "$_ST_ID"
+    if [ -n "$waivers" ]; then
+      nwaived=0
+      while IFS=$'\t' read -r wgate wpath _ wreason; do
+        [ -n "$wgate" ] || continue
+        nwaived=$((nwaived + 1))
+        qlines="$qlines  hook waived: hooks.$wgate $wpath: $wreason"$'\n'
+      done <<EOF
+$waivers
+EOF
+      [ "$nwaived" -eq 0 ] || line="$line waived=$nwaived"
+    fi
     [ -z "$_ST_WT" ] || line="$line $_ST_WT_NOTE"
     # Only a failure is shown: a worktree the project's own command could not
     # finish stays named until a `jig task bootstrap` finishes it.
@@ -669,7 +688,7 @@ _status_need() {
 
 # _status_task_needs <task line> — exit 0 when a `task ...` line asks for the
 # reader: paused, blocking findings, a stale review, a stopped run, a lowered
-# class (adr-20261004-a-route-stage-is-proven-by-its-record). Only the fields
+# class (adr-20261004-a-route-stage-is-proven-by-its-record), a waived gate hook. Only the fields
 # the line builder writes are looked at, never the text a person wrote — a
 # worktree path or a pause reason may hold any of those words.
 _status_task_needs() {
@@ -678,7 +697,7 @@ _status_task_needs() {
   head=${t%% worktree=*}
   head=${head%% base=*}
   head=${head%% paused*}
-  case "$head" in *" lowered="*) return 0 ;; esac
+  case "$head" in *" lowered="* | *" waived="*) return 0 ;; esac
   # The words after the pause reason, peeled off from the end.
   while :; do
     last=${t##* }
@@ -725,7 +744,12 @@ _status_terminal() {
           continue
         fi
         case "$tline" in
-          need) _status_need_detail queue "${l#  }"; continue ;;
+          need)
+            case "$l" in
+              "  hook waived: "*) _status_need_detail waived "${l#  hook waived: }" ;;
+              *) _status_need_detail queue "${l#  }" ;;
+            esac
+            continue ;;
           task)
             _STT_TASKS[${#_STT_TASKS[@]} - 1]="${_STT_TASKS[${#_STT_TASKS[@]} - 1]}"$'\t'"${l#  }"
             continue ;;
@@ -2968,11 +2992,13 @@ _status_html_task_table() {
 # _status_html_task_row — the row of the task _status_rec last read, on one
 # line.
 _status_html_task_row() {
-  local blocking bline receipt cls
+  local blocking bline receipt cls waivers
   printf '<tr><td class="id"><code>%s</code></td><td>%s' \
     "$(_status_h "$_ST_ID")" "$(_status_h "${_ST_CLASS:--}")"
   [ "$_ST_DEPTH" != lean ] || printf ' <span class="badge">lean</span>'
   [ -z "$_ST_LOWERED" ] || printf ' <span class="badge warn">lowered from %s</span>' "$(_status_h "$_ST_LOWERED")"
+  _task_waivers_v waivers "$_ST_ID"
+  [ -z "$waivers" ] || printf ' <span class="badge warn">hook waived</span>'
   printf '</td><td>%s' "$(_status_h "$_ST_STATUS")"
   if [ "$_ST_PAUSED" = "true" ]; then
     printf ' <span class="badge warn">paused</span>'

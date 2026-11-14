@@ -46,6 +46,7 @@ cmd_task() {
     promote) task_promote "$@" ;;
     autopilot) task_autopilot "$@" ;;
     gate) task_gate "$@" ;;
+    waive) task_waive "$@" ;;
     route) task_route "$@" ;;
     *) jig_die "$(_task_usage)" ;;
   esac
@@ -60,7 +61,7 @@ cmd_task() {
 # one source for both `--help` and the usage errors the subcommands die with.
 _task_usage() {
   case "${1:-}" in
-    '') printf 'usage: jig task new|start|bootstrap|set|abandon|archive|unarchive|merge|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|land|promote|autopilot|gate|route ...\n' ;;
+    '') printf 'usage: jig task new|start|bootstrap|set|abandon|archive|unarchive|merge|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|land|promote|autopilot|gate|waive|route ...\n' ;;
     new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file> | --goal <text>] [--lean] [--json]\n' ;;
     start) printf 'usage: jig task start <id> [--worktree] [--no-bootstrap] [--share <dir>]...\n' ;;
     bootstrap) printf 'usage: jig task bootstrap <id> [--share <dir>]...\n' ;;
@@ -116,6 +117,10 @@ _task_usage() {
       printf '       jig task autopilot <id> report\n'
       ;;
     gate) printf 'usage: jig task gate <id> approved [--by human|agent]\n' ;;
+    waive)
+      printf 'usage: jig task waive <id> ready|consolidate|ship <path> --reason <text>\n'
+      printf '       jig task waive <id> ready|consolidate|ship <path> --withdraw\n'
+      ;;
     route) printf 'usage: jig task route <id>\n' ;;
     *) return 1 ;;
   esac
@@ -4706,7 +4711,7 @@ _task_gate_hook_tree_v() {
 # through `run.exec`, as `worktree.setup` does. No time limit: a hung hook
 # holds the gate (the spec's open question).
 _task_gate_hooks() {
-  local id="$1" gate="$2" cmd="$3" paths path tree problem out rc dir base ref refused="" nl=$'\n' before after
+  local id="$1" gate="$2" cmd="$3" paths path tree problem out rc dir base ref refused="" nl=$'\n' before after reason
   paths=$(_task_gate_hook_paths "$gate")
   [ -n "$paths" ] || return 0
   _task_gate_hook_tree_v tree "$id"
@@ -4720,7 +4725,15 @@ _task_gate_hooks() {
     [ -n "$path" ] || continue
     problem=$(_task_gate_hook_problem "$tree" "$path")
     if [ -n "$problem" ]; then
-      refused="$refused$nl- hook $path $problem in $tree"
+      # A path that cannot run is a refusal like a failing exit, and is
+      # waived the same way: the broken-path hook is the case a waiver is for
+      # (adr-20261114-a-person-waives-a-gate-hooks-refusal-for-one-task).
+      reason=$(_task_waiver_reason "$id" "$gate" "$path")
+      if [ -n "$reason" ]; then
+        jig_warn "$cmd: hook $path $problem in $tree, waived for $id: $reason"
+      else
+        refused="$refused$nl- hook $path $problem in $tree"
+      fi
       continue
     fi
     rc=0
@@ -4737,16 +4750,25 @@ _task_gate_hooks() {
       fi
     ) || rc=$?
     if [ "$rc" -ne 0 ]; then
-      refused="$refused$nl- hook $path exited $rc"
-      [ -z "$out" ] || refused="$refused:$nl$out"
+      # A waived hook has still run, so its output stays in the trace and
+      # shows whether it still refuses; only its verdict is set aside.
+      reason=$(_task_waiver_reason "$id" "$gate" "$path")
+      if [ -n "$reason" ]; then
+        jig_warn "$cmd: hook $path (hooks.$gate) exited $rc, waived for $id: $reason${out:+:$nl$out}"
+      else
+        refused="$refused$nl- hook $path exited $rc"
+        [ -z "$out" ] || refused="$refused:$nl$out"
+      fi
     elif [ -n "$out" ]; then
       jig_warn "$cmd: hook $path (hooks.$gate) passed with output:$nl$out"
     fi
   done <<EOF
 $paths
 EOF
-  [ -z "$refused" ] || jig_die "$cmd: the project's hooks.$gate refused $id:$refused"
-  # A hook checks; it never writes. What it changed that git can see would
+  [ -z "$refused" ] || jig_die "$cmd: the project's hooks.$gate refused $id:$refused
+a person can waive one for this task, with a reason: jig task waive $id $gate <path> --reason <text>"
+  # A hook checks; it never writes. A waiver never covers this check: it
+  # guards what the review read, not the script's verdict. What it changed that git can see would
   # reach the commit unreviewed — `task ship` stages tracked edits — so the
   # gate refuses and names the change for the person to keep or take back.
   after=$(_task_gate_hook_tree_print "$tree")
@@ -4759,6 +4781,129 @@ EOF
 _task_gate_hook_tree_print() {
   { git -C "$1" status --porcelain 2>/dev/null; git -C "$1" diff HEAD --binary 2>/dev/null; } \
     | git hash-object --stdin
+}
+
+# --- hook waivers (adr-20261114-a-person-waives-a-gate-hooks-refusal-for-one-task)
+#
+# `.ai/workspace/tasks/<id>/waivers` — TSV, one line per (gate, hook path):
+# `<gate><TAB><path><TAB><date><TAB><reason>`. A waiver sets aside one hook's
+# refusal at one gate for this task, and nothing else: not the same hook at
+# another gate, not another hook of the gate, not the check that a hook wrote
+# no file. Written only by `jig task waive`; read by _task_gate_hooks and by
+# the status page through the two readers below, never by a copy of the format.
+
+# _task_waivers <id> — the waivers file's lines as they are, nothing when the
+# task has none.
+_task_waivers() {
+  local text
+  _task_waivers_v text "$1"
+  printf '%s' "$text"
+}
+
+# _task_waivers_v <var> <id> — the same text into <var>, in the caller's
+# shell and without a process, for the readers that ask once per task of a
+# listing (the status page, `task list --json`).
+_task_waivers_v() {
+  local __tw_file __tw_text=""
+  task_dir_v __tw_file "$2"
+  __tw_file="$__tw_file/waivers"
+  if [ -f "$__tw_file" ]; then IFS= read -r -d '' __tw_text < "$__tw_file" || true; fi
+  printf -v "$1" '%s' "$__tw_text"
+}
+
+# _task_waiver_reason <id> <gate> <path> — the reason of the waiver of the
+# hook <path> at <gate>, or nothing; exits 0 either way, so a caller can ask
+# inside $(...) under `set -e`. Values reach awk through the environment (see
+# task_finding_set).
+_task_waiver_reason() {
+  local file
+  task_dir_v file "$1"
+  file="$file/waivers"
+  [ -f "$file" ] || return 0
+  JIG_W_GATE="$2" JIG_W_PATH="$3" awk -F '\t' '
+    $1 == ENVIRON["JIG_W_GATE"] && $2 == ENVIRON["JIG_W_PATH"] { print $4; exit }
+  ' "$file"
+  return 0
+}
+
+# task_waive <id> <ready|consolidate|ship> <path> --reason <text>
+# task_waive <id> <ready|consolidate|ship> <path> --withdraw
+# — set aside the refusal of one hook of the project's `hooks.<gate>` for this
+# task, or take that back. Waiving the same pair again replaces its date and
+# reason. Refused while the task's autopilot run is `on`: a hook's refusal is
+# a stop of the run, and a person waives it once the run is stopped (a script
+# cannot tell a person from an agent, ADR-0020, so it refuses where the move
+# is certainly not the agent's).
+task_waive() {
+  jig_require_init
+  [ $# -ge 3 ] || jig_die "$(_task_usage waive)"
+  local id="$1" gate="$2" path="$3" reason="" has_reason=0 withdraw=0 dir file tmp today src
+  shift 3
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason)
+        [ $# -ge 2 ] || jig_die "task waive: --reason requires a value"
+        reason="$2"; has_reason=1; shift 2 ;;
+      --withdraw) withdraw=1; shift ;;
+      *) jig_die "task waive: unknown argument: $1" ;;
+    esac
+  done
+  case "$gate" in
+    ready | consolidate | ship) ;;
+    *) jig_die "task waive: invalid gate: $gate (expected ready|consolidate|ship)" ;;
+  esac
+  [ -n "$path" ] || jig_die "task waive: the hook path must not be empty"
+  _task_finding_valid_field "$path" || jig_die "task waive: the hook path must be a single line with no tab"
+  if [ "$withdraw" -eq 1 ]; then
+    [ "$has_reason" -eq 0 ] || jig_die "task waive: --reason and --withdraw exclude each other"
+  else
+    [ "$has_reason" -eq 1 ] || jig_die "task waive: --reason is required"
+    [ -n "$reason" ] || jig_die "task waive: --reason must not be empty"
+    _task_finding_valid_field "$reason" || jig_die "task waive: --reason must be a single line with no tab"
+  fi
+  dir=$(task_dir "$id")
+  _task_guard_write "$id" "task waive"
+  if [ "$(task_state_get "$id" autopilot)" = on ]; then
+    jig_die "task waive: $id has an autopilot run on; a hook refusal is a stop of the run: stop it (jig task autopilot $id stop --reason <text>) and a person waives it"
+  fi
+  file="$dir/waivers"
+  if [ "$withdraw" -eq 0 ]; then
+    # Only a path the gate names: a typo must not leave a record that waives
+    # nothing. A withdrawal skips this, since the hook may have left the config.
+    printf '%s\n' "$(_task_gate_hook_paths "$gate")" | grep -Fxq -- "$path" \
+      || jig_die "task waive: $path is not named by hooks.$gate in this checkout (it names: $(_task_gate_hook_paths "$gate" | paste -sd ' ' -))"
+  else
+    [ -n "$(_task_waiver_reason "$id" "$gate" "$path")" ] \
+      || jig_die "task waive: $id has no waiver of $path at hooks.$gate"
+  fi
+  tmp="$file.tmp.$$"
+  jig_cleanup_add "$tmp"
+  today=$(jig_today)
+  src=$file
+  [ -f "$file" ] || src=/dev/null
+  # Values reach awk through the environment, not `-v` (task_finding_set).
+  JIG_W_GATE="$gate" JIG_W_PATH="$path" JIG_W_DATE="$today" JIG_W_REASON="$reason" JIG_W_WITHDRAW="$withdraw" \
+    awk -F '\t' -v OFS='\t' '
+      $1 == ENVIRON["JIG_W_GATE"] && $2 == ENVIRON["JIG_W_PATH"] {
+        if (ENVIRON["JIG_W_WITHDRAW"] != "1" && !done) {
+          print ENVIRON["JIG_W_GATE"], ENVIRON["JIG_W_PATH"], ENVIRON["JIG_W_DATE"], ENVIRON["JIG_W_REASON"]
+          done = 1
+        }
+        next
+      }
+      { print }
+      END {
+        if (ENVIRON["JIG_W_WITHDRAW"] != "1" && !done)
+          print ENVIRON["JIG_W_GATE"], ENVIRON["JIG_W_PATH"], ENVIRON["JIG_W_DATE"], ENVIRON["JIG_W_REASON"]
+      }
+    ' "$src" > "$tmp"
+  mv "$tmp" "$file"
+  jig_record_changed
+  if [ "$withdraw" -eq 1 ]; then
+    printf 'withdrawn: hooks.%s %s for %s\n' "$gate" "$path" "$id"
+  else
+    printf 'waived: hooks.%s %s for %s\n' "$gate" "$path" "$id"
+  fi
 }
 
 # --- the human gate (adr-20260924-the-status-page-keeps-the-readers-place)
@@ -5999,6 +6144,22 @@ EOF
 $flagged
 EOF
   o="$o,\"housekeeping_flags\":[$flags]"
+
+  # The hooks a person waived for this task (`task waive`), as the file holds
+  # them; `[]` when there are none.
+  local w_gate w_path w_date w_reason waivers="" wline wtext
+  _task_waivers_v wtext "$id"
+  while IFS="$t" read -r w_gate w_path w_date w_reason; do
+    [ -n "$w_gate" ] || continue
+    json_quote "$w_gate"; wline="{\"gate\":$_JSON"
+    json_quote "$w_path"; wline="$wline,\"path\":$_JSON"
+    json_quote "$w_date"; wline="$wline,\"date\":$_JSON"
+    json_quote "$w_reason"; wline="$wline,\"reason\":$_JSON}"
+    waivers="${waivers:+$waivers,}$wline"
+  done <<EOF
+$wtext
+EOF
+  o="$o,\"waivers\":[$waivers]"
 
   # What a person may do next (_task_actions): every row of the table, with
   # the pull request's state as the forge cache holds it, never the forge's.
@@ -7656,6 +7817,40 @@ Nothing was committed. Fetch it (or create it on origin) and run again."
       body_file="$body_tmp"
     fi
     printf 'task ship: absorbed issues named: %s\n' "$absorbed_refs"
+  fi
+
+  # The hooks a person waived for this task, named in the commit and in the
+  # pull request's body, so a reviewer reads a set-aside refusal where the
+  # change is read and not only on the status page
+  # (adr-20261114-a-person-waives-a-gate-hooks-refusal-for-one-task). Where no
+  # --body-file is given the body is the message's tail, so it gets the block
+  # from the message.
+  local waivers waiver_block="" w_gate w_path w_date w_reason w_count=0
+  waivers=$(_task_waivers "$id")
+  if [ -n "$waivers" ]; then
+    while IFS=$'\t' read -r w_gate w_path w_date w_reason; do
+      [ -n "$w_gate" ] || continue
+      waiver_block="$waiver_block- hooks.$w_gate $w_path: $w_reason"$'\n'
+      w_count=$((w_count + 1))
+    done <<EOF
+$waivers
+EOF
+  fi
+  if [ "$w_count" -gt 0 ]; then
+    if ! grep -q '^Hook waivers:' "$message_file"; then
+      msg_tmp=$(mktemp "${TMPDIR:-/tmp}/jig-ship-msg.XXXXXX")
+      jig_cleanup_add "$msg_tmp"
+      { cat "$message_file"; printf '\nHook waivers:\n%s' "$waiver_block"; } > "$msg_tmp"
+      message_file="$msg_tmp"
+    fi
+    if [ -n "$body_file" ] && ! grep -q '^Hook waivers:' "$body_file"; then
+      local waiver_body_tmp
+      waiver_body_tmp=$(mktemp "${TMPDIR:-/tmp}/jig-ship-body.XXXXXX")
+      jig_cleanup_add "$waiver_body_tmp"
+      { cat "$body_file"; printf '\nHook waivers:\n%s' "$waiver_block"; } > "$waiver_body_tmp"
+      body_file="$waiver_body_tmp"
+    fi
+    printf 'task ship: hook waivers named: %s\n' "$w_count"
   fi
 
   # The commit a release's notes were checked up to, recorded by the notes

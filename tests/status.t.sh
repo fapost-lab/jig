@@ -4683,3 +4683,69 @@ test_status_names_a_gate_hook_path_that_does_not_exist() {
   assert_not_contains "$OUT" "names .ai/hooks/ok.sh"
   [ ! -e ran.txt ] || fail "jig status ran a hook"
 }
+
+# --- hook waivers (adr-20261114-a-person-waives-a-gate-hooks-refusal-for-one-task)
+
+# _status_waived_fixture — a task with one waived hook, and a blocking finding.
+_status_waived_fixture() {
+  fixture_jig_repo
+  fixture_task t-w task/t-w active "class:T2"
+  printf 'ready\t.ai/hooks/check.sh\t2026-11-14\tdocs land next\n' > .ai/workspace/tasks/t-w/waivers
+}
+
+test_status_names_a_waived_hook_in_the_head_and_under_the_task() {
+  _status_waived_fixture
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task t-w class=T2 status=active waived=1"
+  assert_contains "$OUT" "  hook waived: hooks.ready .ai/hooks/check.sh: docs land next"
+}
+
+test_status_a_waived_token_does_not_hide_the_words_at_the_end_of_the_line() {
+  _status_waived_fixture
+  printf 'F1\tP1\topen\ta.sh:1\tsomething wrong\t2026-09-08\t\n' > .ai/workspace/tasks/t-w/findings
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task t-w class=T2 status=active waived=1"
+  assert_contains "$OUT" "blocking=1"
+  local f
+  f=$(
+    # shellcheck source=/dev/null
+    . "$JIG_HOME/scripts/lib/status.sh"
+    for l in \
+      'task a class=T2 status=active waived=1' \
+      'task a class=T2 status=active lowered=T3 waived=2 worktree=/x uncommitted=0' \
+      'task a class=T2 status=active waived=1 blocking=2' \
+      'task a class=T2 status=active worktree=/x/waived=1/ uncommitted=0' \
+      'task a class=T2 status=active paused (waived=1)'; do
+      if _status_task_needs "$l"; then printf 'need\n'; else printf 'fine\n'; fi
+    done
+  )
+  assert_eq "$(printf 'need\nneed\nneed\nfine\nneed')" "$f"
+}
+
+test_status_a_terminal_lists_a_waived_hook_as_a_detail_of_its_task() {
+  _status_waived_fixture
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task t-w class=T2 status=active waived=1"
+  assert_contains "$OUT" "waived: hooks.ready .ai/hooks/check.sh: docs land next"
+  assert_not_contains "$OUT" "queue: hook waived"
+}
+
+test_status_a_task_without_waivers_has_no_waived_token() {
+  fixture_jig_repo
+  fixture_task t-n task/t-n active "class:T2"
+  run jig status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "waived"
+}
+
+test_status_html_marks_a_task_with_a_waived_hook() {
+  _status_waived_fixture
+  fixture_task t-n task/t-n active "class:T2"
+  run jig status --html
+  assert_eq 0 "$RC"
+  assert_contains "$(cat .ai/runtime/status.html)" '<span class="badge warn">hook waived</span>'
+  assert_eq 1 "$(grep -o 'hook waived</span>' .ai/runtime/status.html | wc -l | tr -d ' ')"
+}

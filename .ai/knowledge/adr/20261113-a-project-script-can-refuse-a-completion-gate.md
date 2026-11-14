@@ -12,7 +12,7 @@ paths:
   - scripts/lib/config.sh
   - schemas/config.md
 summary: Why a project's hooks.ready|consolidate|ship scripts run in task set and task ship after Jig's own checks, why the exit code alone decides, how a hook is run and what it is told, why a misconfigured path refuses and jig status names it, and why hooks are a project key only.
-reviewed_at: 2026-11-13
+reviewed_at: 2026-11-14
 ---
 # A project's own script can refuse a completion gate
 
@@ -112,5 +112,5 @@ team rule a clone must not switch off silently.
   gate never meets it.
 - **A hook with no end holds its gate**, and an autopilot run with it; whether a gate bounds a hook's
   run time is an open question of the spec (fog).
-- **A refusal has no way around it yet** but fixing the script or the config. The per-task waiver
-  with a reason, and autopilot treating a hook refusal as a stop, are the next task of the spec.
+- **A refusal is set aside for one task by a person**, with a reason, and autopilot treats a hook
+  refusal as a stop: amended by adr-20261114-a-person-waives-a-gate-hooks-refusal-for-one-task.
