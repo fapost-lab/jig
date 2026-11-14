@@ -12589,6 +12589,242 @@ test_task_list_has_no_parked_off_the_staging_flow() {
   assert_not_contains "$OUT" "parked"
 }
 
+# --- the close and the pull request on the staging flow
+# (the base is reached only by the promotion, so a close waits for it)
+
+# _scl_ready <id>... — each task's knowledge decision recorded, as a closable
+# task has it.
+_scl_ready() {
+  local id
+  for id in "$@"; do
+    sed 's/^knowledge_consolidated: false$/knowledge_consolidated: true/' ".ai/workspace/tasks/$id/state" > s.tmp
+    mv s.tmp ".ai/workspace/tasks/$id/state"
+  done
+}
+
+# _scl_wait <id> [<tail>] — the refusal a task waiting for the base gets.
+_scl_wait() {
+  printf 'task set: %s is on staging and not in main yet: %s' "$1" "${2:-prepare for prod, then close it once the promotion merged}"
+}
+
+# _scl_close <id> <offered> [<reason>] — the close action of <id> in OUT, whole.
+_scl_close() {
+  if [ "$2" = true ]; then
+    printf '"id":"close","command":"jig task set %s status consolidated","offered":true,"reason":null}' "$1"
+  else
+    printf '"id":"close","command":"jig task set %s status consolidated","offered":false,"reason":"%s"}' "$1" "$3"
+  fi
+}
+
+# The issue's case: CI landed the task on staging with no pull request, so
+# nothing says its work is in the base, and the close waits for the promotion
+# in the table, in the command and in the JSON write.
+test_task_close_waits_for_the_base_when_ci_landed_it_on_staging() {
+  _park_repo
+  printf 'git.staging_land: external\n' >> .ai/config.yaml
+  fixture_staging_ci_lands never
+  _scl_ready never
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" "$(_scl_close never false "$(_scl_wait never)")"
+  run jig task set never status consolidated
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "$(_scl_wait never)"
+  _tc_json never status consolidated
+  assert_eq 1 "$RC"
+  assert_eq not-closable "$(_tr_code)"
+  assert_contains "$OUT" "is on staging and not in main yet"
+  assert_not_contains "$(cat .ai/workspace/tasks/never/state)" "status: consolidated"
+}
+
+# The staging pull request merged is not the work in the base: the forge says
+# MERGED for it and there is no promotion, so the command still refuses.
+test_task_close_waits_for_the_base_when_the_staging_pull_request_merged() {
+  _park_repo
+  ship_cfg forge github
+  pr_check_stub_gh "" MERGED
+  _scl_ready on
+  printf 'pr_url: https://github.com/example/example/pull/7\n' >> .ai/workspace/tasks/on/state
+  run jig task set on status consolidated
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "$(_scl_wait on)"
+  assert_not_contains "$(cat .ai/workspace/tasks/on/state)" "status: consolidated"
+}
+
+# A promotion that merged with a merge commit puts the branch in the base: the
+# command closes and the table, once the cache has the staging pull request
+# merged, offers it.
+test_task_close_is_allowed_once_the_promotion_merged_by_merge_commit() {
+  _park_repo
+  ship_cfg forge github
+  pr_check_stub_gh "" MERGED
+  _scl_ready on
+  printf 'pr_url: https://github.com/example/example/pull/7\n' >> .ai/workspace/tasks/on/state
+  git merge -q --no-ff -m promote task/on
+  git push -q origin main
+  _park_cache task/on staging merged https://github.com/example/example/pull/7
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" "$(_scl_close on true)"
+  run jig task set on status consolidated
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/on/state "status: consolidated"
+}
+
+# A squash promotion leaves the branch out of the base: the cache's merged pull
+# request from the branch into the base is what says it landed, in the table
+# and in the command alike.
+test_task_close_is_allowed_when_the_cache_has_the_promotion_merged() {
+  _park_repo
+  ship_cfg forge github
+  pr_check_stub_gh "" MERGED
+  _scl_ready on
+  printf 'pr_url: https://github.com/example/example/pull/7\n' >> .ai/workspace/tasks/on/state
+  _park_cache task/on staging merged https://github.com/example/example/pull/7
+  _tl_json
+  assert_contains "$OUT" "$(_scl_close on false "$(_scl_wait on)")"
+  _park_cache task/on main merged https://github.com/example/example/pull/8
+  _tl_json
+  assert_contains "$OUT" "$(_scl_close on true)"
+  run jig task set on status consolidated
+  assert_eq 0 "$RC" "$OUT"
+}
+
+# A promotion the owner linked is judged by its own state: the cache says it is
+# open, and the close waits and names it; merged, it lets the close through.
+test_task_close_names_a_promotion_that_is_not_merged() {
+  _park_repo
+  _scl_ready on
+  printf 'pr_url: https://forge.test/pr/7\npromote_url: https://forge.test/pr/8\n' >> .ai/workspace/tasks/on/state
+  _park_cache task/on staging merged https://forge.test/pr/7
+  _park_cache task/on main open https://forge.test/pr/8
+  _tl_json
+  assert_contains "$OUT" "$(_scl_close on false "$(_scl_wait on "its promotion https://forge.test/pr/8 is open; close it once the promotion merged")")"
+  _park_cache task/on main merged https://forge.test/pr/8
+  _tl_json
+  assert_contains "$OUT" "$(_scl_close on true)"
+}
+
+# The command asks the forge about the promotion; one it cannot reach is said
+# to be unknown, with why, and not taken for a refusal of the promotion.
+test_task_close_says_when_the_forge_cannot_tell_whether_the_promotion_merged() {
+  _park_repo
+  ship_cfg forge github
+  pr_check_stub_gh "" FAIL
+  _scl_ready on
+  printf 'promote_url: https://github.com/example/example/pull/8\n' >> .ai/workspace/tasks/on/state
+  run jig task set on status consolidated
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "whether its promotion https://github.com/example/example/pull/8 merged is unknown, the forge could not be asked (gh exited 1 with no message); run this same command again once the forge answers"
+}
+
+# A squash promotion leaves the task's own commits on staging, and with no
+# forge the cache cannot say it merged: the command finds it in the base by git
+# as housekeeping does (jig_branch_in_base), and the table offers the close
+# once housekeeping has flagged the task needs-consolidation.
+test_task_close_is_allowed_once_a_squash_promotion_is_in_the_base() {
+  _park_repo
+  printf 'git.staging_land: external\n' >> .ai/config.yaml
+  fixture_staging_ci_lands never
+  _scl_ready never
+  git merge -q --squash task/never
+  git commit -q -m "promote never (squash)"
+  git push -q origin main
+  git fetch -q origin
+  _tl_json
+  assert_contains "$OUT" "$(_scl_close never false "$(_scl_wait never)")"
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run 2026-11-14T10:00:00Z forge=none\n'
+    printf '2026-11-14T10:00:00Z task=never status=ready remote=merged via=ancestry action=preserve flags=needs-consolidation\n'
+  } > .ai/runtime/housekeeping.log
+  _tl_json
+  assert_contains "$OUT" "$(_scl_close never true)"
+  run jig task set never status consolidated
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/never/state "status: consolidated"
+}
+
+# Closing a task already closed lands again, on the staging flow too: one an
+# older Jig closed while its work was only on staging is not refused now.
+test_task_close_of_a_task_already_closed_on_staging_lands_again() {
+  _park_repo
+  printf 'git.staging_land: external\n' >> .ai/config.yaml
+  fixture_staging_ci_lands never
+  _scl_ready never
+  sed 's/^status: ready$/status: consolidated/' .ai/workspace/tasks/never/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/never/state
+  run jig task set never status consolidated
+  assert_eq 0 "$RC" "$OUT"
+}
+
+# Pushed and not landed yet (CI lands it under `git.staging_land: external`):
+# no pull request and nothing on staging, yet its work left the branch, so the
+# close waits; once its branch is in the base, it closes.
+test_task_close_waits_for_a_task_pushed_but_not_landed() {
+  _park_repo
+  printf 'git.staging_land: external\n' >> .ai/config.yaml
+  _scl_ready never
+  git push -q origin task/never
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  local why="task set: never is pushed and not in main yet: once it lands on staging, prepare for prod, then close it once the promotion merged"
+  assert_contains "$OUT" "$(_scl_close never false "$why")"
+  run jig task set never status consolidated
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "$why"
+  git merge -q --no-ff -m "promote never" task/never
+  git push -q origin main
+  _tl_json
+  assert_contains "$OUT" "$(_scl_close never true)"
+  run jig task set never status consolidated
+  assert_eq 0 "$RC" "$OUT"
+}
+
+# A pull request `task ship` recorded as going into the base itself
+# (`pr_into: main`) is the landing: once the forge says it merged, the close
+# goes through without waiting for staging.
+test_task_close_of_a_pull_request_into_the_base_needs_no_promotion() {
+  _park_repo
+  ship_cfg forge github
+  pr_check_stub_gh "" MERGED
+  _scl_ready never
+  printf 'pr_url: https://github.com/example/example/pull/7\npr_into: main\n' >> .ai/workspace/tasks/never/state
+  run jig task set never status consolidated
+  assert_eq 0 "$RC" "$OUT"
+}
+
+# A task that never reached the staging branch and opened no pull request has
+# nothing to wait for: it closes as it did.
+test_task_close_is_allowed_for_a_task_that_never_reached_staging() {
+  _park_repo
+  _scl_ready never
+  _tl_json
+  assert_contains "$OUT" "$(_scl_close never true)"
+  run jig task set never status consolidated
+  assert_eq 0 "$RC" "$OUT"
+}
+
+# `pull_request` reads the pull request `pr_url` names by its url, so on the
+# staging flow the one into the staging branch has its state and checks; an old
+# cache line without the url column is found by branch and staging branch.
+test_task_list_reads_the_staging_pull_request_by_its_url() {
+  _park_repo
+  local url=https://forge.test/pr/7
+  printf 'pr_url: %s\n' "$url" >> .ai/workspace/tasks/on/state
+  printf 'task/on\tstaging\topen\tgreen\t2026-11-12T10:00:00Z\t-\t%s\tmergeable\n' "$url" > .ai/runtime/forge-cache
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" "\"pull_request\":{\"url\":\"$url\",\"state\":\"open\",\"ci\":\"green\",\"fetched_at\":\"2026-11-12T10:00:00Z\""
+  printf 'task/on\tstaging\topen\tgreen\t2026-11-12T10:00:00Z\n' > .ai/runtime/forge-cache
+  _tl_json
+  assert_contains "$OUT" "\"pull_request\":{\"url\":\"$url\",\"state\":\"open\",\"ci\":\"green\",\"fetched_at\":\"2026-11-12T10:00:00Z\""
+  # The url wins over a newer line for the same branch going elsewhere.
+  printf 'task/on\tmain\tmerged\t-\t2026-11-12T11:00:00Z\t-\thttps://forge.test/pr/8\tmergeable\ntask/on\tstaging\tmerged\t-\t2026-11-12T10:00:00Z\t-\t%s\t-\n' "$url" > .ai/runtime/forge-cache
+  _tl_json
+  assert_contains "$OUT" "\"pull_request\":{\"url\":\"$url\",\"state\":\"merged\",\"ci\":null,\"fetched_at\":\"2026-11-12T10:00:00Z\""
+}
+
 # The landing hint waits for the review: approved as the forge cache holds it,
 # or no review asked for (`git.staging_review: none`). Whom a pending review
 # waits for rides in `parked.review`.
@@ -14289,7 +14525,8 @@ test_task_list_json_starts_a_fixed_number_of_processes_per_task() {
   # what they cost must be what the bare ones cost.
   _tl_live_tasks rich 4 "issue:X-1" "absorbs:a,b" "absorbs_partly:c" "partly_in:d" \
     "gate_by:human" "autopilot_phase:s/1" "route_depth:lean" "domains:task" \
-    "paused_reason:none" "triage_task:t" "share:vendor" "setup:ok"
+    "paused_reason:none" "triage_task:t" "share:vendor" "setup:ok" \
+    "pr_url:https://forge.test/pr/1"
   ten=$(_tl_forks task list --all --json) || fail "task list --json failed under the probe"
   few=$((six - two))
   many=$((ten - six))

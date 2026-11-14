@@ -1049,7 +1049,7 @@ _hk_forge_state() {
 # evidence of an open PR. The housekeeping policy gives `open` and `unknown` the same
 # action, so this costs no behaviour and keeps the report honest.
 _hk_ancestry_state() {
-  local branch="$1" base_commit="${2:-}" base_name="${3:-}" base tip mb combined c
+  local branch="$1" base_commit="${2:-}" base_name="${3:-}" base tip
   [ -n "$base_name" ] || base_name=$(cfg git.base_branch main)
 
   # The task never had a branch of its own: it was worked on directly on the
@@ -1108,45 +1108,12 @@ _hk_ancestry_state() {
     fi
   fi
 
-  # 1. Fast-forward or a real merge commit.
-  if git -C "$JIG_PROJECT" merge-base --is-ancestor "$tip" "$base" 2>/dev/null; then
+  # 1. Fast-forward or a real merge commit; 2. a squash merge, matched by the
+  # patch-id of the branch's combined diff, never commit by commit; 3. a
+  # rebase merge, every commit upstream by `git cherry` (jig_branch_in_base).
+  if jig_branch_in_base "$tip" "$base"; then
     printf 'merged\n'
     return 0
-  fi
-
-  mb=$(git -C "$JIG_PROJECT" merge-base "$base" "$tip" 2>/dev/null || printf '')
-  if [ -z "$mb" ]; then
-    printf 'unknown\n'
-    return 0
-  fi
-
-  # 2. Squash merge: the branch's whole contribution collapses into one commit
-  # on the base, so its patch-id matches the combined diff — not any single
-  # commit's. Comparing commit-by-commit is what gets this case wrong.
-  # Guarded: an unguarded pipeline assignment under `set -e` + `pipefail`
-  # would abort the whole run mid-loop, and every git call here silences its
-  # own stderr, so there would be no diagnostic to explain the silence.
-  combined=$(git -C "$JIG_PROJECT" diff "$mb" "$tip" 2>/dev/null | git patch-id --stable 2>/dev/null | cut -d' ' -f1) || combined=""
-  if [ -n "$combined" ]; then
-    while IFS= read -r c; do
-      [ -z "$c" ] && continue
-      if [ "$c" = "$combined" ]; then
-        printf 'merged\n'
-        return 0
-      fi
-    done < <(_hk_base_patch_ids "$mb" "$base")
-  fi
-
-  # 3. Rebase merge: every commit is upstream individually. `git cherry`
-  # marks those with `-`; a single `+` means something did not land.
-  local cherry plus
-  cherry=$(git -C "$JIG_PROJECT" cherry "$base" "$tip" 2>/dev/null || printf '')
-  if [ -n "$cherry" ]; then
-    plus=$(printf '%s\n' "$cherry" | grep -c '^+' || true)
-    if [ "$plus" = "0" ]; then
-      printf 'merged\n'
-      return 0
-    fi
   fi
 
   printf 'unknown\n'
@@ -1252,16 +1219,6 @@ EOF
   else
     printf 'none\n'
   fi
-}
-
-# _hk_base_patch_ids <merge-base> <base> — patch-id of every commit the base
-# gained since the merge base, one per line.
-_hk_base_patch_ids() {
-  local mb="$1" base="$2" sha
-  while IFS= read -r sha; do
-    [ -z "$sha" ] && continue
-    git -C "$JIG_PROJECT" show "$sha" 2>/dev/null | git patch-id --stable 2>/dev/null | cut -d' ' -f1
-  done < <(git -C "$JIG_PROJECT" rev-list "$mb..$base" 2>/dev/null)
 }
 
 # _hk_resolve_ref <name> — print the first of <name> / origin/<name> that
