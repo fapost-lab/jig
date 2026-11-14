@@ -21,7 +21,8 @@ Classify, file and start the task with `jig-task` (or resume one that is filed).
 It prints `autopilot: on (unattended)` when this clone set `autopilot.unattended: true`: then
 the run asks nothing, and §5 replaces §3. Say in one line what will happen: the class, the
 route and its depth as `jig task route <id>` names them, any stage its `delegate:` lines hand to
-a helper, and where the run will end by the `autopilot git:` line `start` printed — merged at
+a helper, and where the run will end by the `autopilot git:` lines `start` printed (a second,
+`autopilot git on <staging>:`, is the level for a pull request into the staging branch) — merged at
 `merge`, an open pull request at `pr`, pushed for CI to land at either under
 `git.staging_land: external`, or "ready for your commit" at `none`. Offer to
 open the status page with `.ai/scripts/jig status --open`, where the human can watch the run

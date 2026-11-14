@@ -1240,7 +1240,10 @@ _task_new_body() {
   if [ "$as_json" = 1 ]; then
     # The filed task as `task list --json` lists it: one producer of a task's
     # facts. A task just filed has no branch, so no worktree to look up, and
-    # no housekeeping flag can stand for it yet.
+    # no housekeeping flag can stand for it yet; nor has the forge cache a
+    # pull request of it, but the producer looks it up.
+    # shellcheck source=lib/forgecache.sh
+    . "$JIG_LIB/forgecache.sh"
     printf '{"task":%s}\n' "$(_task_list_json_task "$id" "" "")"
     return 0
   fi
@@ -1961,7 +1964,7 @@ _task_set_body() {
       fi
       ;;
     task_id | issue | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash | paused_stash_applied \
-      | autopilot | autopilot_repairs | autopilot_mode | autopilot_phase | autopilot_handover | gate | gate_design | gate_by | pr_url | promote_url | park_resumed_at \
+      | autopilot | autopilot_repairs | autopilot_mode | autopilot_phase | autopilot_handover | gate | gate_design | gate_by | pr_url | pr_into | promote_url | park_resumed_at \
       | archived_at | archived_reason | archived_from \
       | abandoned_at | abandoned_reason | moved_to | triage_task | triage_of \
       | absorbed_into | absorbs | partly_in | absorbs_partly \
@@ -2223,7 +2226,7 @@ EOF
     [ -n "$(git -C "$JIG_PROJECT" rev-list -n 1 "$baseref..refs/remotes/origin/$branch" -- 2>/dev/null)" ] || return 0
     pushed=1
   fi
-  if ! declare -F forgecache_pr >/dev/null; then
+  if ! declare -F forgecache_entry_url >/dev/null; then
     # shellcheck source=lib/forgecache.sh
     . "$JIG_LIB/forgecache.sh"
   fi
@@ -2240,7 +2243,7 @@ EOF
     if [ "$mode" = forge ]; then
       jig_pr_state_v pstate pwhy "$promote"
     else
-      forgecache_pr "$cache" "$promote" "$branch" "$base"
+      forgecache_entry_url "$cache" "$promote"
       pstate=$_FORGECACHE_STATE
     fi
     [ "$pstate" != merged ] || return 0
@@ -2281,27 +2284,6 @@ EOF
   fi
   printf 'task set: %s is on %s and not in %s yet: %s\n' "$id" "$staging" "$base" "$msg"
   return 0
-}
-
-# _task_pr_into_v <var> <id> — into <var>, the branch the pull request `pr_url`
-# names goes into: the staging branch on a sound staging flow for a task of the
-# project's base, else the task's base. Where a listing has read the staging
-# flow (_task_list_staging_read, on it or not) it answers from that, with no
-# process. The staging review state of a task, for a reader, is this branch plus
-# forgecache_pr.
-_task_pr_into_v() {
-  local __tpi_base __tpi_def __tpi_staging=""
-  jig_task_base_v __tpi_base "$2"
-  if [ "$_TASK_LIST_STAGING_READ" = 1 ]; then
-    __tpi_staging=$_TASK_LIST_STAGING_BRANCH
-  else
-    __tpi_staging=$(jig_staging_in_use) || __tpi_staging=""
-  fi
-  if [ -n "$__tpi_staging" ]; then
-    cfg_v __tpi_def git.base_branch main
-    [ "$__tpi_base" != "$__tpi_def" ] || __tpi_base=$__tpi_staging
-  fi
-  printf -v "$1" '%s' "$__tpi_base"
 }
 
 # _task_run_unattended <id> — exit 0 when the task's own run was started
@@ -2959,7 +2941,7 @@ _task_autopilot_start() {
   fi
   [ -z "$phase" ] || printf 'phase: %s\n' "$phase"
   _task_autopilot_depth_line "$id"
-  _task_autopilot_git_line
+  _task_autopilot_git_line "$id"
 }
 
 # _task_autopilot_parked_refusal <who> <id> <parked> — the refusal of a run on
@@ -4685,7 +4667,7 @@ EOF
     printf 'lean: %s\n' "$(_task_route_lean_note "$class")"
   fi
   printf 'never trimmed: tests on changed files, CI before a merge, consolidation\n'
-  _task_autopilot_git_line
+  _task_autopilot_git_line "$id"
   _task_route_delegates "$id" "$class"
   local from
   from=$(task_state_get "$id" class_lowered_from)
@@ -5674,7 +5656,8 @@ _TASK_LIST_FORGE_CACHE=""
 # "<id><TAB>on|behind" for the tasks whose work reached the staging branch.
 _TASK_LIST_STAGING_ON=""
 _TASK_LIST_STAGING=""
-# The staging branch's name, when _TASK_LIST_STAGING_ON is 1.
+# The staging branch's name on that flow, read with it: where a task's pull
+# request goes (its `pull_request`), asked once per listing.
 _TASK_LIST_STAGING_BRANCH=""
 
 # _task_list_staging_read <ids> — fill the two globals above for the tasks
@@ -5720,8 +5703,23 @@ EOF
 #     that sends the fix to the staging branch, which drops the record. Only
 #     that the person took it back is written; why it waits never is;
 #   - `landing` when the reason is `review`, the flow lands by pull request,
-#     and this person's agent.git is below `merge`: they land it, not Jig.
+#     this person's agent.git is below `merge` (they land it, not Jig) and the
+#     review is over: the pull request is approved as housekeeping last read it
+#     from the forge (the forge cache's review column), or the project asks for
+#     no review (`git.staging_review: none`). Waiting for a reviewer, changes
+#     requested, no review and a review nobody has read yet are not a landing:
+#     the hint tells a board to offer the landing only when it can succeed.
 _TASK_PARKED=""
+
+# The review of each parked `review` task, beside _TASK_PARKED and never in it
+# (its lines are read by their three fields): "<id><TAB><review><TAB><waiting>"
+# lines, <review> approved|changes|waiting|none or `-` when the cache does not
+# say, <waiting> the reviewers still requested, comma-separated, or `-`.
+# Filled by _task_parked_read from the forge cache alone; a `signal` task has
+# no line. The pull request is the task's own: the one its `pr_url` names while
+# the cache has it and it goes into the staging branch, else the newest from
+# its branch into the staging branch, as jig_parked_states picks it.
+_TASK_PARKED_REVIEW=""
 
 # _task_parked_read <ids> [<staging-states>] — fill _TASK_PARKED for the tasks
 # <ids> names, one per line, in one jig_parked_states call: a fixed number of
@@ -5731,8 +5729,9 @@ _TASK_PARKED=""
 # plain command, never through $(...), so the global reaches the caller.
 _task_parked_read() {
   local ids="$1" staging land level default_base id st branch base pr pm rs rows="" t=$'\t'
-  local answer pid reason flow
+  local answer pid reason flow cache review waiting sreview found pbranch ppr
   _TASK_PARKED=""
+  _TASK_PARKED_REVIEW=""
   [ -n "$ids" ] || return 0
   # The direct flow answers with no process at all.
   cfg_v flow git.flow direct
@@ -5760,16 +5759,38 @@ EOF
   # shellcheck source=lib/forgecache.sh
   . "$JIG_LIB/forgecache.sh"
   cfg_v land git.staging_land pr
+  cache=$(forgecache_read)
   if [ $# -ge 2 ]; then
-    answer=$(jig_parked_states "$staging" "$land" "$rows" "$(forgecache_read)" "$2")
+    answer=$(jig_parked_states "$staging" "$land" "$rows" "$cache" "$2")
   else
-    answer=$(jig_parked_states "$staging" "$land" "$rows" "$(forgecache_read)")
+    answer=$(jig_parked_states "$staging" "$land" "$rows" "$cache")
   fi
   [ -n "$answer" ] || return 0
-  cfg_v level agent.git none
+  jig_staging_git_v level || true; level=${level%%"$t"*}
+  cfg_v sreview git.staging_review ask
   while IFS="$t" read -r pid reason; do
     [ -n "$pid" ] || continue
-    if [ "$reason" = review ] && [ "$land" = pr ] && [ "$level" != merge ]; then
+    review="-"
+    waiting="-"
+    if [ "$reason" = review ]; then
+      # The review of this task's own pull request, from the cache alone.
+      found=""
+      task_state_var ppr "$pid" pr_url
+      if [ -n "$ppr" ]; then
+        forgecache_entry_url "$cache" "$ppr"
+        [ "$_FORGECACHE_BASE" != "$staging" ] || found=1
+      fi
+      if [ -z "$found" ]; then
+        task_state_var pbranch "$pid" branch
+        forgecache_entry "$cache" "$pbranch" "$staging"
+      fi
+      review=${_FORGECACHE_REVIEW:--}
+      waiting=${_FORGECACHE_WAITING:--}
+      _TASK_PARKED_REVIEW="$_TASK_PARKED_REVIEW$pid$t$review$t$waiting
+"
+    fi
+    if [ "$reason" = review ] && [ "$land" = pr ] && [ "$level" != merge ] \
+      && { [ "$review" = approved ] || [ "$sreview" = none ]; }; then
       _TASK_PARKED="$_TASK_PARKED$pid$t$reason${t}landing
 "
     else
@@ -5779,6 +5800,38 @@ EOF
   done <<EOF
 $answer
 EOF
+}
+
+# _task_parked_review_lookup_v <var> <id> — "<review><TAB><waiting>" from
+# _TASK_PARKED_REVIEW into <var>, each `-` when the cache does not say; empty
+# when the task is not parked for review. In the caller's shell, without a
+# process.
+_task_parked_review_lookup_v() {
+  local __tpr_nl=$'\n' __tpr_t=$'\t' __tpr_all __tpr_rest
+  __tpr_all="$__tpr_nl$_TASK_PARKED_REVIEW"
+  case "$__tpr_all" in
+    *"$__tpr_nl$2$__tpr_t"*)
+      __tpr_rest=${__tpr_all#*"$__tpr_nl$2$__tpr_t"}
+      printf -v "$1" '%s' "${__tpr_rest%%"$__tpr_nl"*}" ;;
+    *) printf -v "$1" '%s' "" ;;
+  esac
+}
+
+# _task_review_json_v <var> <review> <waiting> — a review as the task's JSON
+# carries it, into <var>: {"state":..,"waiting_for":[..]}, or null when the
+# review is unknown (empty or `-`: a cache line written before the column
+# existed, one `task ship` recorded, a forge that was not asked or could not
+# say). The same shape `task pr-status --json` prints as `review`. In the
+# caller's shell; <waiting> is comma-separated logins, `-` or empty for none.
+_task_review_json_v() {
+  local __trj_r="$2" __trj_w="$3"
+  case "$__trj_r" in
+    approved | changes | waiting | none) ;;
+    *) printf -v "$1" '%s' null; return 0 ;;
+  esac
+  [ "$__trj_w" != "-" ] || __trj_w=""
+  _task_json_ids "$__trj_w"
+  printf -v "$1" '{"state":"%s","waiting_for":%s}' "$__trj_r" "$_JSON"
 }
 
 # _task_parked_lookup_v <var> <id> — "<reason><TAB><hint>" from _TASK_PARKED
@@ -5951,7 +6004,7 @@ _task_list_json_task_v() {
   local __tlj_var="$1" id="$2" worktrees="$3" flagged="$4" line o t=$'\t' v
   local class status issue consolidated paused created updated branch base pr_url gate_by
   local wt n gate facts state repairs stage stage_at stop stop_at phase handover_at goal flag flags="" mode atext
-  local into pr_url_state="" base_state=""
+  local into defbase found pr_base rvl rvj promote_url pr_url_state="" base_state=""
   task_state_var class "$id" class
   task_state_var status "$id" status
   task_state_var issue "$id" issue
@@ -6008,7 +6061,14 @@ EOF
     if [ -n "$v" ]; then
       json_quote "${v%%$'\t'*}"; line=$_JSON
       if [ "${v#*$'\t'}" = landing ]; then flag='"landing"'; else flag=null; fi
-      o="$o,\"parked\":{\"reason\":$line,\"hint\":$flag}"
+      # Whom a review waits for, as the forge cache holds it: null for a task
+      # parked for a signal, and for a review the cache cannot say.
+      rvj=null
+      if [ "${v%%$'\t'*}" = review ]; then
+        _task_parked_review_lookup_v rvl "$id"
+        _task_review_json_v rvj "${rvl%%"$t"*}" "${rvl#*"$t"}"
+      fi
+      o="$o,\"parked\":{\"reason\":$line,\"hint\":$flag,\"review\":$rvj}"
     else
       o="$o,\"parked\":null"
     fi
@@ -6065,22 +6125,90 @@ EOF
     o="$o,\"autopilot\":null"
   fi
 
-  # What `task ship` opened, with its state and checks as housekeeping last
-  # heard them from the forge (lib/forgecache.sh), joined by the task's branch
-  # and base as housekeeping's own remote state joins them. Reading never asks
-  # the forge: an old entry says how old it is, a missing one is null.
+  # The task's own pull request, with its state, checks and review as
+  # housekeeping last heard them from the forge (lib/forgecache.sh). Reading
+  # never asks the forge: an old entry says how old it is, a missing one is
+  # null. It is the one `task ship` recorded (`pr_url`), found by its address;
+  # failing that, or with none recorded (opened by hand), the newest from the
+  # task's branch into where its pull request goes: the staging branch on the
+  # staging flow for a task of the default base, else the task's base.
+  # `base` is where the pull request goes.
+  cfg_v defbase git.base_branch main
+  into=$base
+  if [ "$_TASK_LIST_STAGING_ON" = 1 ] && [ -n "$_TASK_LIST_STAGING_BRANCH" ] && [ "$base" = "$defbase" ]; then
+    into=$_TASK_LIST_STAGING_BRANCH
+  fi
+  # What the actions table is told of the pull request stays what it was: the
+  # entry from the task's branch into its base, and only with a recorded
+  # `pr_url` (below).
+  local pr_state="" pr_ci="" pr_mergeable=""
   if [ -n "$pr_url" ]; then
-    json_quote "$pr_url"; o="$o,\"pull_request\":{\"url\":$_JSON"
-    # On the staging flow that is the staging branch, not the task's base
-    # (_task_pr_into_v, answered from the listing's own read, no process).
-    _task_pr_into_v into "$id"
-    forgecache_pr "$_TASK_LIST_FORGE_CACHE" "$pr_url" "$branch" "$into"
-    pr_url_state=$_FORGECACHE_STATE
+    forgecache_entry "$_TASK_LIST_FORGE_CACHE" "$branch" "$base"
+    pr_state=$_FORGECACHE_STATE
+    pr_ci=$_FORGECACHE_CI
+    pr_mergeable=$_FORGECACHE_MERGEABLE
+  fi
+  found=""
+  if [ -n "$pr_url" ]; then
+    forgecache_entry_url "$_TASK_LIST_FORGE_CACHE" "$pr_url"
+    if [ -n "$_FORGECACHE_HEAD" ]; then
+      found=1
+    else
+      forgecache_entry "$_TASK_LIST_FORGE_CACHE" "$branch" "$into"
+      # Another pull request of the same branch never lends its state to
+      # the one the task recorded; a line without an address may.
+      if [ -n "$_FORGECACHE_URL" ] && [ "$_FORGECACHE_URL" != "$pr_url" ]; then
+        _forgecache_clear
+      fi
+      [ -z "$_FORGECACHE_HEAD" ] || found=1
+    fi
+    v=$pr_url
+  else
+    forgecache_entry "$_TASK_LIST_FORGE_CACHE" "$branch" "$into"
+    [ -z "$_FORGECACHE_HEAD" ] || found=1
+    v=$_FORGECACHE_URL
+  fi
+  # The close reads the state of the pull request `pr_url` names.
+  [ -z "$pr_url" ] || pr_url_state=$_FORGECACHE_STATE
+  if [ -n "$pr_url" ] || [ -n "$found" ]; then
+    pr_base=$into
+    [ -z "$found" ] || pr_base=$_FORGECACHE_BASE
+    json_str_or_null "$v"; o="$o,\"pull_request\":{\"url\":$_JSON"
     json_str_or_null "$_FORGECACHE_STATE"; o="$o,\"state\":$_JSON"
     json_str_or_null "$_FORGECACHE_CI"; o="$o,\"ci\":$_JSON"
-    json_str_or_null "$_FORGECACHE_AT"; o="$o,\"fetched_at\":$_JSON}"
+    json_str_or_null "$_FORGECACHE_AT"; o="$o,\"fetched_at\":$_JSON"
+    json_quote "$pr_base"; o="$o,\"base\":$_JSON"
+    json_str_or_null "$_FORGECACHE_MERGEABLE"; o="$o,\"mergeable\":$_JSON"
+    _task_review_json_v rvj "$_FORGECACHE_REVIEW" "$_FORGECACHE_WAITING"
+    o="$o,\"review\":$rvj}"
   else
     o="$o,\"pull_request\":null"
+  fi
+
+  # The promotion pull request on the staging flow: from the task's branch
+  # into the default base, as the cache holds it, else the address `task
+  # promote` recorded. A task of an epic has none.
+  if [ "$_TASK_LIST_STAGING_ON" = 1 ]; then
+    found=""
+    task_state_var promote_url "$id" promote_url
+    if [ "$base" = "$defbase" ]; then
+      forgecache_entry "$_TASK_LIST_FORGE_CACHE" "$branch" "$base"
+      [ -z "$_FORGECACHE_HEAD" ] || found=1
+    else
+      promote_url=""
+      forgecache_entry "" "" ""
+    fi
+    if [ -n "$found" ] || [ -n "$promote_url" ]; then
+      v=$_FORGECACHE_URL
+      [ -n "$v" ] || v=$promote_url
+      json_str_or_null "$v"; o="$o,\"promotion\":{\"url\":$_JSON"
+      json_str_or_null "$_FORGECACHE_STATE"; o="$o,\"state\":$_JSON"
+      json_str_or_null "$_FORGECACHE_CI"; o="$o,\"ci\":$_JSON"
+      json_str_or_null "$_FORGECACHE_MERGEABLE"; o="$o,\"mergeable\":$_JSON"
+      json_str_or_null "$_FORGECACHE_AT"; o="$o,\"fetched_at\":$_JSON}"
+    else
+      o="$o,\"promotion\":null"
+    fi
   fi
 
   # A `jig task ship` of this task waiting for CI right now (jig_shipping_*,
@@ -6103,19 +6231,13 @@ EOF
 
   # What a person may do next (_task_actions): every row of the table, with
   # the pull request's state as the forge cache holds it, never the forge's.
-  local action offered command reason actions="" pr_state="" pr_ci="" pr_mergeable=""
+  local action offered command reason actions=""
   # What the cache says of a pull request from the branch into the task's base
   # (on the staging flow, its promotion): `close` reads it for every task with
-  # a branch; the other rows read it, its checks and its mergeable word only
-  # for a task with a pull request.
+  # a branch, as it reads the state of the pull request `pr_url` names.
   if [ -n "$branch" ]; then
     forgecache_entry "$_TASK_LIST_FORGE_CACHE" "$branch" "$base"
     base_state=$_FORGECACHE_STATE
-    if [ -n "$pr_url" ]; then
-      pr_state=$_FORGECACHE_STATE
-      pr_ci=$_FORGECACHE_CI
-      pr_mergeable=$_FORGECACHE_MERGEABLE
-    fi
   fi
   # Housekeeping found the work in the base (needs-consolidation, its own
   # forge and git tiers): the close reads that as a merge into the base.
@@ -7012,11 +7134,18 @@ _task_ship_unverified_notice() {
 # _task_ship_git <id> — `<level><TAB><key>`: the git level `task ship` uses
 # for <id>, and the key it came from. A task whose autopilot run is `on`, or
 # `stopped` in an unattended run (whose repairs ran out: it ships its draft
-# from there), ships at the run's level, jig_autopilot_git; every other ship
-# at `agent.git` — a run a person took over (`handover`, which ends it) too. An attended run that stopped is waiting for its person, who
-# may well finish the task by hand: that ship is theirs, at their level. Read when it ships, not recorded at `start`: a person
-# who lowers either key halfway through a run is obeyed at once. Exit 1 when
-# the level is invalid, like jig_agent_git.
+# from there), ships at the run's level, jig_autopilot_git, when `autopilot.git`
+# is set: the run's explicit level, one for everything it ships. Otherwise a
+# task whose pull request goes into the staging branch (_task_ships_to_staging)
+# ships at `agent.git_staging` when this clone sets it, and every other ship —
+# a run without `autopilot.git`, a run a person took over (`handover`, which
+# ends it), anything into the base branch or an epic — at `agent.git`. An
+# attended run that stopped is waiting for its person, who may well finish the
+# task by hand: that ship is theirs, at their level. Read when it ships, not
+# recorded at `start`: a person who lowers either key halfway through a run is
+# obeyed at once. Exit 1 when the level is invalid, like jig_agent_git; an
+# invalid `agent.git_staging` is named and never falls back to `agent.git`
+# (adr-20261114-landing-on-staging-has-its-own-git-level).
 _task_ship_git() {
   local line rc=0
   _task_ship_git_v line "$1" || rc=$?
@@ -7024,27 +7153,59 @@ _task_ship_git() {
   return "$rc"
 }
 
-# _task_ship_git_v <var> <id> — the same `<level><TAB><key>` into <var>, with
-# the same exit status, in the caller's shell.
+# _task_ship_git_v <var> <id> [base] — the same `<level><TAB><key>` into <var>,
+# with the same exit status, in the caller's shell. With `base` the pull
+# request is known to go into the base branch (`jig task merge-pr`): the
+# staging step is skipped.
 _task_ship_git_v() {
-  local __tsg_run __tsg_mode __tsg_value
+  local __tsg_run __tsg_mode __tsg_value __tsg_auto=""
   task_state_var __tsg_run "$2" autopilot
   case "$__tsg_run" in
     on)
-      jig_autopilot_git_v "$1"
-      return
+      __tsg_auto=1
       ;;
     stopped)
       _task_autopilot_mode_v __tsg_mode "$2"
-      if [ "$__tsg_mode" = unattended ]; then
-        jig_autopilot_git_v "$1"
-        return
-      fi
+      [ "$__tsg_mode" != unattended ] || __tsg_auto=1
       ;;
   esac
+  if [ -n "$__tsg_auto" ]; then
+    cfg_v __tsg_value autopilot.git ""
+    if [ -n "$__tsg_value" ]; then
+      jig_autopilot_git_v "$1"
+      return
+    fi
+  fi
+  cfg_v __tsg_value agent.git_staging ""
+  if [ -n "$__tsg_value" ] && [ "${3:-}" != base ] && _task_ships_to_staging "$2"; then
+    printf -v "$1" '%s\tagent.git_staging' "$__tsg_value"
+    _cfg_agent_git_level "$__tsg_value"
+    return
+  fi
   cfg_v __tsg_value agent.git none
   printf -v "$1" '%s\tagent.git' "$__tsg_value"
   _cfg_agent_git_level "$__tsg_value"
+}
+
+# _task_ships_to_staging <id> — exit 0 when <id>'s pull request goes into the
+# staging branch as far as local reads can tell: the project is on a sound
+# staging flow and the task is cut from the base branch. Whether the task
+# changes the flow itself is not known here before its first ship (task_ship
+# re-reads its level when it finds out); after it, the recorded `pr_into` says
+# where its pull request went. No process per task in a listing
+# (_task_staging_sound_v).
+_task_ships_to_staging() {
+  local __tst_flow __tst_staging __tst_base __tst_base_branch __tst_into
+  cfg_v __tst_flow git.flow direct
+  [ "$__tst_flow" = staging ] || return 1
+  _task_staging_sound_v __tst_staging || return 1
+  jig_task_base_v __tst_base "$1"
+  cfg_v __tst_base_branch git.base_branch main
+  [ "$__tst_base" = "$__tst_base_branch" ] || return 1
+  # Once a ship opened its pull request, where it went is known: one into the
+  # base (a task that changes the flow) answers to agent.git.
+  task_state_var __tst_into "$1" pr_into
+  [ -z "$__tst_into" ] || [ "$__tst_into" = "$__tst_staging" ]
 }
 
 # _task_ship_level_refusal <id> — why `jig task ship <id>` refuses at the git
@@ -7065,11 +7226,15 @@ EOF
   return 0
 }
 
-# _task_autopilot_git_line — `autopilot git: <level> (<key>)`, the level an
-# autopilot run ships at and where it comes from, as `task autopilot start`
-# and `task route` print it. An invalid value is named, never guessed.
+# _task_autopilot_git_line [<id>] — `autopilot git: <level> (<key>)`, the level
+# an autopilot run ships at and where it comes from, as `task autopilot start`
+# and `task route` print it. An invalid value is named, never guessed. With
+# <id> of a task whose pull request goes into the staging branch, a second
+# line `autopilot git on <staging>: <level> (<key>)` when agent.git_staging,
+# not the line above, answers there: only without `autopilot.git`, which
+# answers for everything a run ships (_task_ship_git_v).
 _task_autopilot_git_line() {
-  local line level key rc=0
+  local line level key rc=0 staging value
   line=$(jig_autopilot_git) || rc=$?
   IFS=$'\t' read -r level key <<EOF
 $line
@@ -7078,6 +7243,17 @@ EOF
     printf 'autopilot git: %s (%s)\n' "$level" "$key"
   else
     printf 'autopilot git: invalid %s %s (expected none|commit|push|pr|merge)\n' "$key" "$level"
+  fi
+  [ -n "${1:-}" ] || return 0
+  [ "$key" != autopilot.git ] || return 0
+  cfg_v value agent.git_staging ""
+  [ -n "$value" ] || return 0
+  _task_ships_to_staging "$1" || return 0
+  cfg_v staging git.staging_branch ""
+  if _cfg_agent_git_level "$value"; then
+    printf 'autopilot git on %s: %s (agent.git_staging)\n' "$staging" "$value"
+  else
+    printf 'autopilot git on %s: invalid agent.git_staging %s (expected none|commit|push|pr|merge)\n' "$staging" "$value"
   fi
 }
 
@@ -7595,7 +7771,8 @@ task_land() {
 # _task_land_refusal printed, for a person's landing.
 _task_land_refusal_code() {
   case "$1" in
-    *"is not on the staging flow"* | *"is cut from "* | *"git.staging_land is external"*) printf 'wrong-flow\n' ;;
+    *"is not on the staging flow"* | *"is cut from "* | *"git.staging_land is external"* \
+      | *"; landing is for a pull request into the staging branch"*) printf 'wrong-flow\n' ;;
     *"has no pull request"*) printf 'no-pull-request\n' ;;
     *" is closed; "*) printf 'pull-request-closed\n' ;;
     *"runs on autopilot"*) printf 'autopilot-running\n' ;;
@@ -7689,7 +7866,7 @@ _task_land_body() {
   refusal=$(_task_land_refusal "$id" "") || exit 1
   case "$refusal" in
     '') ;;
-    "task land: landing "*" needs agent.git: merge "*)
+    "task land: landing "*" needs agent.git"*": merge "*)
       pr=$(task_state_get "$id" pr_url)
       printf '%s; %s stays open, the person lands it\n' "$refusal" "${pr:-its pull request}" >&2
       jig_status_page_flush
@@ -7817,7 +7994,11 @@ _task_land_refusal() {
       return 0
     fi
     if [ "$level" != merge ]; then
-      printf 'task land: landing %s on %s needs agent.git: merge (git level %s (%s))\n' "$id" "${staging:-the staging branch}" "$level" "$key"
+      # The key named is the one that is the staging level's, else agent.git
+      # as ever: under autopilot.git the level in the brackets says who answered.
+      local need=agent.git
+      [ "$key" != agent.git_staging ] || need=agent.git_staging
+      printf 'task land: landing %s on %s needs %s: merge (git level %s (%s))\n' "$id" "${staging:-the staging branch}" "$need" "$level" "$key"
       return 0
     fi
   fi
@@ -7839,6 +8020,14 @@ _task_land_refusal() {
   task_state_var pr "$id" pr_url
   if [ -z "$pr" ]; then
     printf 'task land: %s has no pull request into %s; run jig task ship %s first\n' "$id" "$staging" "$id"
+    return 0
+  fi
+  # The command's own refusal (land_task), asked here too: a pull request a
+  # ship opened into another branch is not landed, so the row is not offered.
+  local into
+  task_state_var into "$id" pr_into
+  if [ -n "$into" ] && [ "$into" != "$staging" ]; then
+    printf 'task land: %s goes into %s, not %s; landing is for a pull request into the staging branch\n' "$pr" "$into" "$staging"
     return 0
   fi
   case "$pr_state" in
@@ -8134,6 +8323,30 @@ EOF
   # request goes is decided here, never after the commit or the push.
   local staging="" land=""
   _task_ship_flow_v staging land "$id" "$level" "$base"
+  # The level above was read as the staging branch's (agent.git_staging) before
+  # the flow was known. A task that changes the flow itself goes into its base
+  # as on the direct flow, and the base answers to agent.git: read again, before
+  # anything is committed (adr-20261114-landing-on-staging-has-its-own-git-level).
+  if [ -z "$staging" ] && [ "$key" = agent.git_staging ]; then
+    local own_level
+    cfg_v own_level agent.git none
+    key=agent.git
+    level=$own_level
+    if ! _cfg_agent_git_level "$level"; then
+      jig_die "task ship: invalid agent.git: $level (expected none|commit|push|pr|merge)"
+    fi
+    if [ "$level" = none ]; then
+      local own_none
+      own_none=$(_task_ship_refusal "$id" "$draft") || exit 1
+      [ -n "$own_none" ] || _task_ship_resumed_done "$id" "$dir" "$draft" ""
+      printf 'task ship: agent.git is none in this clone; the human commits\n' >&2
+      exit 3
+    fi
+    # The flow was asked at the staging level; at agent.git's it may fetch the
+    # base it skipped, so ask it again before the flow's answer is trusted.
+    _task_ship_flow_v staging land "$id" "$level" "$base"
+    [ -z "$staging" ] || jig_die "task ship: the git flow $base has on origin changed between two reads; nothing was committed. Run again."
+  fi
   # An open pull request into another branch is refused here, before the
   # commit, not where the pull request is opened: by then the push would
   # already have added this commit to it (adr-20260925-a-ship-refuses-before-it-sends).
@@ -8360,6 +8573,10 @@ EOF
   case "$JIG_SHIP_URL" in
     https://*)
       _task_rewrite_state "$dir" pr_url "$JIG_SHIP_URL"
+      # Where it goes, kept beside it: the staging level answers only for a
+      # pull request into the staging branch (_task_ships_to_staging), and a
+      # task that changes the flow opens its own into the base.
+      _task_rewrite_state "$dir" pr_into "$pr_base"
       # The open P2/P3 go to one triage task once a pull request exists to
       # link, before the merge and before the autopilot's `end` names it
       # (adr-20261029-a-ship-hands-open-findings-to-one-triage-task). A draft

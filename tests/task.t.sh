@@ -12388,7 +12388,7 @@ test_task_list_json_pins_a_task_with_every_fact() {
   assert_eq 0 "$RC" "$ERR"
   _tl_cut_actions
   assert_eq '[{"id":"start","command":"jig task start SRD-9-full","offered":true,"reason":null},{"id":"pause","command":"jig task pause SRD-9-full","offered":false,"reason":"task pause: already paused: SRD-9-full"},{"id":"resume","command":"jig task resume SRD-9-full","offered":true,"reason":null},{"id":"request-pause","command":"jig queue request task:SRD-9-full pause","offered":false,"reason":"queue request: task SRD-9-full is already paused"},{"id":"cancel-pause-request","command":"jig queue cancel task:SRD-9-full pause","offered":false,"reason":"queue cancel: no pause of task:SRD-9-full is requested"},{"id":"approve-gate","command":"jig task gate SRD-9-full approved","offered":false,"reason":"task gate: SRD-9-full is stopped; if a human answered, run: jig task autopilot SRD-9-full resume --answer <text> --by human; then approve with --by agent; or, if a person takes the task on: jig task autopilot SRD-9-full handover --by human --answer <text>"},{"id":"answer-stop","command":"jig task autopilot SRD-9-full resume --answer <text> --by human","offered":true,"reason":null},{"id":"handover","command":"jig task autopilot SRD-9-full handover --by human --answer <text>","offered":true,"reason":null},{"id":"set-class","command":"jig task set SRD-9-full class <Tn>","offered":true,"reason":null},{"id":"ship","command":"jig task ship SRD-9-full --message-file <file>","offered":false,"reason":"task ship: agent.git is none in this clone; the human commits"},{"id":"land","command":"jig task land SRD-9-full --by human","offered":false,"reason":"task land: SRD-9-full is not on the staging flow; a task in this project lands with jig task ship"},{"id":"request-review","command":"jig task request-review SRD-9-full --reviewer <login> --by human","offered":true,"reason":null},{"id":"merge","command":"jig task merge-pr SRD-9-full --by human","offered":false,"reason":"task merge-pr: the forge cache says the checks of SRD-9-full'"'"'s pull request are red; the table withholds the merge until they are green (the command itself looks at the forge now)"},{"id":"promote","command":"jig task promote SRD-9-full --by human","offered":false,"reason":"task promote: SRD-9-full is not on the staging flow; a task in this project reaches main with jig task ship"},{"id":"pr-status","command":"jig task pr-status SRD-9-full --json","offered":true,"reason":null},{"id":"close","command":"jig task set SRD-9-full status consolidated","offered":false,"reason":"task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set SRD-9-full knowledge_consolidated true"},{"id":"abandon","command":"jig task abandon SRD-9-full","offered":true,"reason":null},{"id":"archive","command":"jig task archive SRD-9-full","offered":true,"reason":null},{"id":"unarchive","command":"jig task unarchive SRD-9-full","offered":false,"reason":"task unarchive: task SRD-9-full is not archived"},{"id":"reopen","command":"jig task set SRD-9-full status active","offered":false,"reason":"task SRD-9-full is active, not abandoned"}]' "$ACTIONS"
-  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"pause_request\":null,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"archived_at\":null,\"archived_reason\":null,\"archived_from\":null,\"absorbed_into\":null,\"absorbs\":[],\"absorbs_partly\":[],\"partly_in\":[],\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\",\"handover_at\":null},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\",\"state\":\"open\",\"ci\":\"red\",\"fetched_at\":\"2026-10-02T12:00:00Z\"},\"shipping\":null,\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"archived\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
+  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"pause_request\":null,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"archived_at\":null,\"archived_reason\":null,\"archived_from\":null,\"absorbed_into\":null,\"absorbs\":[],\"absorbs_partly\":[],\"partly_in\":[],\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\",\"handover_at\":null},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\",\"state\":\"open\",\"ci\":\"red\",\"fetched_at\":\"2026-10-02T12:00:00Z\",\"base\":\"main\",\"mergeable\":null,\"review\":null},\"shipping\":null,\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"archived\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
 }
 
 test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
@@ -12498,17 +12498,19 @@ _park_repo() {
   : > .ai/runtime/forge-cache
 }
 
-# _park_cache <head> <base> <state> [<url>] — one forge cache line, all eight
-# columns, newest first as housekeeping writes them.
+# _park_cache <head> <base> <state> [<url> [<review> [<waiting_for>]]] — one
+# forge cache line, all ten columns, newest first as housekeeping writes them.
+# The review is `-` (the forge was not asked) unless given.
 _park_cache() {
   local f=.ai/runtime/forge-cache
-  { printf '%s\t%s\t%s\t-\t2026-11-12T10:00:00Z\t-\t%s\tmergeable\n' "$1" "$2" "$3" "${4:--}"; cat "$f"; } > "$f.tmp"
+  { printf '%s\t%s\t%s\t-\t2026-11-12T10:00:00Z\t-\t%s\tmergeable\t%s\t%s\n' "$1" "$2" "$3" "${4:--}" "${5:--}" "${6:--}"; cat "$f"; } > "$f.tmp"
   mv "$f.tmp" "$f"
 }
 
-# _tl_parked_of <id> — the `parked` value of one task in a `task list --json`.
+# _tl_parked_of <id> — the `parked` value of one task in a `task list --json`:
+# null, or the object with its review object (one level of braces inside).
 _tl_parked_of() {
-  printf '%s\n' "$OUT" | sed -E -n "s/.*\\{\"id\":\"$1\",[^{]*\"parked\":(null|\\{[^}]*\\}).*/\\1/p"
+  printf '%s\n' "$OUT" | sed -E -n "s/.*\\{\"id\":\"$1\",[^{]*\"parked\":(null|\\{[^{}]*(\\{[^{}]*\\})?[^{}]*\\}).*/\\1/p"
 }
 
 # Parked is derived from git and the forge cache: on staging waits for the
@@ -12521,30 +12523,34 @@ test_task_list_says_which_tasks_are_parked_at_staging() {
   fixture_task unstarted "" ready
   _tl_json
   assert_eq 0 "$RC" "$ERR"
-  assert_eq '{"reason":"signal","hint":null}' "$(_tl_parked_of on)"
-  assert_eq '{"reason":"signal","hint":null}' "$(_tl_parked_of promoted)"
+  assert_eq '{"reason":"signal","hint":null,"review":null}' "$(_tl_parked_of on)"
+  assert_eq '{"reason":"signal","hint":null,"review":null}' "$(_tl_parked_of promoted)"
   assert_eq null "$(_tl_parked_of behind)"
   assert_eq null "$(_tl_parked_of never)"
   assert_eq null "$(_tl_parked_of fresh)"
   assert_eq null "$(_tl_parked_of unstarted)"
-  assert_contains "$OUT" '"staging":"on","parked":{"reason":"signal","hint":null},"worktree":null'
+  assert_contains "$OUT" '"staging":"on","parked":{"reason":"signal","hint":null,"review":null},"worktree":null'
 
-  # A fix with a pull request into staging open waits for review; agent.git
-  # below `merge` (none by default) lands it by hand.
+  # A fix with a pull request into staging open waits for review. Nobody has
+  # said it is approved (the cache's review column is `-`): not a landing yet.
   _park_cache task/behind staging open
   _park_cache task/promoted main open
   _tl_json
-  assert_eq '{"reason":"review","hint":"landing"}' "$(_tl_parked_of behind)"
+  assert_eq '{"reason":"review","hint":null,"review":null}' "$(_tl_parked_of behind)"
   assert_eq null "$(_tl_parked_of promoted)"
+  # Approved, and agent.git below `merge` (none by default): the person lands it.
+  _park_cache task/behind staging open - approved
+  _tl_json
+  assert_eq '{"reason":"review","hint":"landing","review":{"state":"approved","waiting_for":[]}}' "$(_tl_parked_of behind)"
   printf 'agent.git: merge\n' > .ai/config.local.yaml
   _tl_json
-  assert_eq '{"reason":"review","hint":null}' "$(_tl_parked_of behind)"
+  assert_eq '{"reason":"review","hint":null,"review":{"state":"approved","waiting_for":[]}}' "$(_tl_parked_of behind)"
 
   # The owner's link: a pull request ship just opened, before housekeeping
   # heard of it, is open; one the cache says closed is not.
   printf 'pr_url: https://forge.test/pr/7\n' >> .ai/workspace/tasks/never/state
   _tl_json
-  assert_eq '{"reason":"review","hint":null}' "$(_tl_parked_of never)"
+  assert_eq '{"reason":"review","hint":null,"review":null}' "$(_tl_parked_of never)"
   _park_cache task/never staging closed https://forge.test/pr/7
   _tl_json
   assert_eq null "$(_tl_parked_of never)"
@@ -12561,7 +12567,7 @@ test_task_list_says_which_tasks_are_parked_at_staging() {
   assert_eq null "$(_tl_parked_of promoted)"
 
   # The text listing says it on the task's line.
-  _park_cache task/behind staging open
+  _park_cache task/behind staging open - approved
   run jig task list
   assert_contains "$OUT" "behind class=T2 status=ready branch=task/behind parked=review"
   printf 'agent.git: pr\n' > .ai/config.local.yaml
@@ -12794,14 +12800,88 @@ test_task_list_reads_the_staging_pull_request_by_its_url() {
   printf 'task/on\tstaging\topen\tgreen\t2026-11-12T10:00:00Z\t-\t%s\tmergeable\n' "$url" > .ai/runtime/forge-cache
   _tl_json
   assert_eq 0 "$RC" "$ERR"
-  assert_contains "$OUT" "\"pull_request\":{\"url\":\"$url\",\"state\":\"open\",\"ci\":\"green\",\"fetched_at\":\"2026-11-12T10:00:00Z\"}"
+  assert_contains "$OUT" "\"pull_request\":{\"url\":\"$url\",\"state\":\"open\",\"ci\":\"green\",\"fetched_at\":\"2026-11-12T10:00:00Z\""
   printf 'task/on\tstaging\topen\tgreen\t2026-11-12T10:00:00Z\n' > .ai/runtime/forge-cache
   _tl_json
-  assert_contains "$OUT" "\"pull_request\":{\"url\":\"$url\",\"state\":\"open\",\"ci\":\"green\",\"fetched_at\":\"2026-11-12T10:00:00Z\"}"
+  assert_contains "$OUT" "\"pull_request\":{\"url\":\"$url\",\"state\":\"open\",\"ci\":\"green\",\"fetched_at\":\"2026-11-12T10:00:00Z\""
   # The url wins over a newer line for the same branch going elsewhere.
   printf 'task/on\tmain\tmerged\t-\t2026-11-12T11:00:00Z\t-\thttps://forge.test/pr/8\tmergeable\ntask/on\tstaging\tmerged\t-\t2026-11-12T10:00:00Z\t-\t%s\t-\n' "$url" > .ai/runtime/forge-cache
   _tl_json
-  assert_contains "$OUT" "\"pull_request\":{\"url\":\"$url\",\"state\":\"merged\",\"ci\":null,\"fetched_at\":\"2026-11-12T10:00:00Z\"}"
+  assert_contains "$OUT" "\"pull_request\":{\"url\":\"$url\",\"state\":\"merged\",\"ci\":null,\"fetched_at\":\"2026-11-12T10:00:00Z\""
+}
+
+# The landing hint waits for the review: approved as the forge cache holds it,
+# or no review asked for (`git.staging_review: none`). Whom a pending review
+# waits for rides in `parked.review`.
+test_task_list_landing_hint_waits_for_an_approval() {
+  _park_repo
+  _park_cache task/behind staging open - waiting ann,bo
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq '{"reason":"review","hint":null,"review":{"state":"waiting","waiting_for":["ann","bo"]}}' "$(_tl_parked_of behind)"
+  _park_cache task/behind staging open - changes
+  _tl_json
+  assert_eq '{"reason":"review","hint":null,"review":{"state":"changes","waiting_for":[]}}' "$(_tl_parked_of behind)"
+  _park_cache task/behind staging open - none
+  _tl_json
+  assert_eq '{"reason":"review","hint":null,"review":{"state":"none","waiting_for":[]}}' "$(_tl_parked_of behind)"
+  run jig task list
+  assert_contains "$OUT" "behind class=T2 status=ready branch=task/behind parked=review"
+  assert_not_contains "$OUT" "parked=review,landing"
+  # A person who asks for no review lands what nobody has reviewed.
+  printf 'git.staging_review: none\n' >> .ai/config.yaml
+  _tl_json
+  assert_eq '{"reason":"review","hint":"landing","review":{"state":"none","waiting_for":[]}}' "$(_tl_parked_of behind)"
+  : > .ai/runtime/forge-cache
+  _park_cache task/behind staging open
+  _tl_json
+  assert_eq '{"reason":"review","hint":"landing","review":null}' "$(_tl_parked_of behind)"
+  # The task's own address is how its pull request is found, by its base.
+  sed '/^git.staging_review:/d' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  printf 'pr_url: https://forge.test/pr/21\n' >> .ai/workspace/tasks/behind/state
+  _park_cache task/other staging open https://forge.test/pr/21 approved
+  _tl_json
+  assert_eq '{"reason":"review","hint":"landing","review":{"state":"approved","waiting_for":[]}}' "$(_tl_parked_of behind)"
+}
+
+# A pull request nobody opened with `jig task ship` is the task's all the same,
+# found by its branch into the staging branch, with the state of that line (not
+# of a line into the base) and what the forge said of its review; the promotion
+# pull request has its own key.
+test_task_list_json_has_the_staging_pull_request_and_the_promotion() {
+  _park_repo
+  _park_cache task/never main open https://forge.test/pr/12 - -
+  _park_cache task/never staging open https://forge.test/pr/11 approved
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"pull_request":{"url":"https://forge.test/pr/11","state":"open","ci":null,"fetched_at":"2026-11-12T10:00:00Z","base":"staging","mergeable":"mergeable","review":{"state":"approved","waiting_for":[]}},"promotion":{"url":"https://forge.test/pr/12","state":"open","ci":null,"mergeable":"mergeable","fetched_at":"2026-11-12T10:00:00Z"},"shipping"'
+  # With a recorded address the cache is asked for it first; a promotion the
+  # owner opened and the cache has not heard of is the recorded one.
+  printf 'pr_url: https://forge.test/pr/11\n' >> .ai/workspace/tasks/never/state
+  printf 'promote_url: https://forge.test/pr/13\n' >> .ai/workspace/tasks/on/state
+  _tl_json
+  assert_contains "$OUT" '"pull_request":{"url":"https://forge.test/pr/11","state":"open","ci":null,"fetched_at":"2026-11-12T10:00:00Z","base":"staging","mergeable":"mergeable","review":{"state":"approved","waiting_for":[]}},"promotion":{"url":"https://forge.test/pr/12"'
+  assert_contains "$OUT" '"promotion":{"url":"https://forge.test/pr/13","state":null,"ci":null,"mergeable":null,"fetched_at":null},"shipping"'
+  # No pull request and no promotion: both null.
+  assert_contains "$OUT" '"pull_request":null,"promotion":null,"shipping"'
+  # A recorded address the cache no longer holds borrows nothing from another
+  # pull request of the same branch.
+  printf 'pr_url: https://forge.test/pr/3\n' >> .ai/workspace/tasks/behind/state
+  _park_cache task/behind staging open https://forge.test/pr/31 approved
+  _tl_json
+  assert_contains "$OUT" '"pull_request":{"url":"https://forge.test/pr/3","state":null,"ci":null,"fetched_at":null,"base":"staging","mergeable":null,"review":null}'
+  # An epic's task is never promoted.
+  sed 's/^status: ready$/status: ready\nbase_branch: epic\/x/' .ai/workspace/tasks/never/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/never/state
+  _tl_json
+  assert_not_contains "$OUT" '"promotion":{"url":"https://forge.test/pr/12"'
+  # Off the staging flow the object has no `promotion` and its pull request
+  # goes into the task's base.
+  sed 's|^git.flow:.*|git.flow: direct|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  _tl_json
+  assert_not_contains "$OUT" '"promotion"'
 }
 
 # A parked task holds no current-task slot: the checkout stays on its branch
@@ -12910,7 +12990,7 @@ test_task_resumed_from_park_stays_unparked_when_ready_again() {
   _tl_json
   assert_eq 0 "$RC" "$ERR"
   assert_eq null "$(_tl_parked_of on)"
-  assert_eq '{"reason":"signal","hint":null}' "$(_tl_parked_of promoted)"
+  assert_eq '{"reason":"signal","hint":null,"review":null}' "$(_tl_parked_of promoted)"
   git checkout -q task/on
   run_split jig task current
   assert_eq 0 "$RC" "$ERR"
@@ -12941,7 +13021,9 @@ test_task_ship_staging_drops_park_resumed_at() {
   assert_eq 0 "$RC" "$OUT"
   if grep -q '^park_resumed_at:' .ai/workspace/tasks/T-1/state; then fail "the ship kept park_resumed_at"; fi
   run_split jig task list --json
-  assert_contains "$OUT" '"parked":{"reason":"review","hint":"landing"}'
+  # The ship recorded its pull request with no review read: parked for
+  # review, and not a landing until the forge says it is approved.
+  assert_contains "$OUT" '"parked":{"reason":"review","hint":null,"review":null}'
 }
 
 # _ship_resumed_hands_over <level> — below `push` the ship hands the commit or
@@ -12963,7 +13045,9 @@ _ship_resumed_hands_over() {
   esac
   if grep -q '^park_resumed_at:' .ai/workspace/tasks/T-1/state; then fail "a ship at $1 kept park_resumed_at"; fi
   run_split jig task list --json
-  assert_contains "$OUT" '"parked":{"reason":"review","hint":"landing"}'
+  # The ship recorded its pull request with no review read: parked for
+  # review, and not a landing until the forge says it is approved.
+  assert_contains "$OUT" '"parked":{"reason":"review","hint":null,"review":null}'
 }
 
 test_task_ship_staging_at_none_drops_park_resumed_at() {
@@ -13113,6 +13197,7 @@ test_task_list_json_joins_the_pull_request_to_the_forge_cache() {
   fixture_task b-merged task/b-merged active "pr_url:https://github.com/example/example/pull/2" "base_branch:epic/x"
   fixture_task c-unheard task/c-unheard active "pr_url:https://github.com/example/example/pull/3"
   fixture_task d-no-pr task/d-no-pr active
+  fixture_task e-bare task/e-bare active
   mkdir -p .ai/runtime
   {
     printf '# jig forge cache\n'
@@ -13125,11 +13210,14 @@ test_task_list_json_joins_the_pull_request_to_the_forge_cache() {
   _tl_json
   assert_eq 0 "$RC" "$ERR"
   _tl_cut_actions
-  assert_contains "$OUT" '"pull_request":{"url":"https://github.com/example/example/pull/1","state":"open","ci":"pending","fetched_at":"2026-10-15T10:00:00Z"}'
-  assert_contains "$OUT" '"pull_request":{"url":"https://github.com/example/example/pull/2","state":"merged","ci":null,"fetched_at":"2026-10-14T10:00:00Z"}'
-  assert_contains "$OUT" '"pull_request":{"url":"https://github.com/example/example/pull/3","state":null,"ci":null,"fetched_at":null}'
-  # No pull request opened: the cache does not invent one.
-  assert_contains "$OUT" '"id":"d-no-pr",'
+  assert_contains "$OUT" '"pull_request":{"url":"https://github.com/example/example/pull/1","state":"open","ci":"pending","fetched_at":"2026-10-15T10:00:00Z","base":"main","mergeable":null,"review":null}'
+  assert_contains "$OUT" '"pull_request":{"url":"https://github.com/example/example/pull/2","state":"merged","ci":null,"fetched_at":"2026-10-14T10:00:00Z","base":"epic/x","mergeable":null,"review":null}'
+  assert_contains "$OUT" '"pull_request":{"url":"https://github.com/example/example/pull/3","state":null,"ci":null,"fetched_at":null,"base":"main","mergeable":null,"review":null}'
+  # A pull request opened outside `jig task ship` is the task's all the same:
+  # the cache has it by the task's branch, with no address to give.
+  assert_contains "$OUT" '"pull_request":{"url":null,"state":"open","ci":"green","fetched_at":"2026-10-15T10:00:00Z","base":"main","mergeable":null,"review":null},"shipping"'
+  # Nothing opened and nothing cached: the cache does not invent one.
+  assert_contains "$OUT" '"id":"e-bare",'
   assert_contains "$OUT" '"pull_request":null,"shipping":null,"housekeeping_flags":[]}]'
 }
 
@@ -13144,7 +13232,7 @@ test_task_list_json_in_a_worktree_reads_the_owners_forge_cache() {
   mkdir -p .ai/runtime
   printf 'task/T-1\tmain\topen\tgreen\t2026-10-15T10:00:00Z\n' > .ai/runtime/forge-cache
   OUT=$(cd "$wt" && jig task list --json 2>/dev/null)
-  assert_contains "$OUT" '"pull_request":{"url":"https://github.com/example/example/pull/9","state":"open","ci":"green","fetched_at":"2026-10-15T10:00:00Z"}'
+  assert_contains "$OUT" '"pull_request":{"url":"https://github.com/example/example/pull/9","state":"open","ci":"green","fetched_at":"2026-10-15T10:00:00Z","base":"main","mergeable":null,"review":null}'
 
   local bin="$PWD/bin"
   mkdir -p "$bin"
@@ -14463,7 +14551,14 @@ test_parked_tasks_start_no_process_per_ready_task() {
   }
   rm -rf .ai/workspace/tasks/*
   mkdir -p .ai/runtime
-  printf 'task/r-2\tstaging\topen\t-\t2026-11-12T10:00:00Z\t-\thttps://forge.test/pr/2\tmergeable\n' > .ai/runtime/forge-cache
+  # r-3 to r-6 come later; their pull requests are approved, so the parked ones
+  # among them are landings.
+  {
+    printf 'task/r-2\tstaging\topen\t-\t2026-11-12T10:00:00Z\t-\thttps://forge.test/pr/2\tmergeable\t-\t-\n'
+    for i in 3 4 5 6; do
+      printf 'task/r-%s\tstaging\topen\t-\t2026-11-12T10:00:00Z\t-\thttps://forge.test/pr/%s\tmergeable\tapproved\t-\n' "$i" "$i"
+    done
+  } > .ai/runtime/forge-cache
   for i in 1 2; do
     git branch "task/r-$i" task/on
     fixture_task "r-$i" "task/r-$i" ready "class:T2" "pr_url:https://forge.test/pr/$i"
@@ -14509,8 +14604,8 @@ test_parked_tasks_start_no_process_per_ready_task() {
   done
   run_split jig task list --json
   assert_contains "$OUT" '"id":"r-1"'
-  assert_contains "$OUT" '"parked":{"reason":"signal","hint":null}'
-  assert_contains "$OUT" '"parked":{"reason":"review","hint":"landing"}'
+  assert_contains "$OUT" '"parked":{"reason":"signal","hint":null,"review":null}'
+  assert_contains "$OUT" '"parked":{"reason":"review","hint":"landing","review":{"state":"approved","waiting_for":[]}}'
 }
 
 # `jig context` is what `task list --json` pays for a task with a review receipt
@@ -15413,4 +15508,259 @@ test_task_pause_stash_that_fails_puts_the_request_back() {
     fail "a failed stash left the task paused"
   fi
   assert_eq "" "$( (cd .ai/workspace/tasks/fresh && ls -a) | grep '^state\.tmp' || true)" "a failed pause left its new state behind"
+}
+
+# --- agent.git_staging: the git level of a task whose pull request goes into
+# the staging branch (adr-20261114-landing-on-staging-has-its-own-git-level)
+
+# At `agent.git: none` the ship goes on when the staging level allows it, and
+# lands the task on the staging branch.
+test_task_ship_staging_level_lands_at_agent_git_none() {
+  sship_setup none
+  ship_cfg_local agent.git_staging merge
+  printf 'APPROVED|APPROVED\n' > gh-review
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: git level merge (agent.git_staging)"
+  assert_contains "$OUT" "landed https://github.com/example/example/pull/99 on staging (merged on the forge)"
+  assert_pr_base staging
+  assert_file gh-merge.argv
+}
+
+# The staging level lowers as well as raises: agent.git merge does not land a
+# staging task when agent.git_staging says pr.
+test_task_ship_staging_level_below_agent_git_stops_at_the_pull_request() {
+  sship_setup merge
+  ship_cfg_local agent.git_staging pr
+  printf 'APPROVED|APPROVED\n' > gh-review
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: git level pr (agent.git_staging)"
+  assert_pr_base staging
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_staging_level_none_leaves_the_commit_to_the_human() {
+  sship_setup merge
+  ship_cfg_local agent.git_staging none
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: agent.git_staging is none in this clone; the human commits"
+}
+
+# A task that changes the flow itself goes into main: its level is agent.git's,
+# read again before anything is committed.
+test_task_ship_own_flow_change_reads_agent_git_not_the_staging_level() {
+  sship_setup pr
+  ship_cfg_local agent.git_staging merge
+  sed -e 's/^git.staging_branch:.*/git.staging_branch: stage/' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git add .ai/config.yaml
+  printf 'APPROVED|APPROVED\n' > gh-review
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: T-1 changes the git flow; its pull request goes into main, as on the direct flow"
+  assert_contains "$OUT" "task ship: git level pr (agent.git)"
+  assert_pr_base main
+  assert_no_file gh-merge.argv
+}
+
+# The pull request of a task that changes the flow went into main: the agent's
+# land answers to agent.git, and no landing merges it, whoever asks.
+test_task_land_of_an_own_flow_pull_request_into_main_merges_nothing() {
+  sship_setup pr
+  ship_cfg_local agent.git_staging merge
+  sed -e 's/^git.staging_branch:.*/git.staging_branch: stage/' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git add .ai/config.yaml
+  printf 'APPROVED|APPROVED\n' > gh-review
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_pr_base main
+  run jig task show T-1
+  assert_contains "$OUT" "pr_into: main"
+
+  run jig task land T-1
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "needs agent.git: merge (git level pr (agent.git))"
+  assert_no_file gh-merge.argv
+
+  run jig task land T-1 --by human --json
+  assert_contains "$OUT" '"code":"wrong-flow"'
+  assert_contains "$OUT" "landing is for a pull request into the staging branch"
+  [ "$RC" -ne 0 ] || fail "a person's land of a pull request into main must refuse: $OUT"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_own_flow_change_at_agent_git_none_commits_nothing() {
+  sship_setup none
+  ship_cfg_local agent.git_staging merge
+  sed -e 's/^git.staging_branch:.*/git.staging_branch: stage/' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git add .ai/config.yaml
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: agent.git is none in this clone; the human commits"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+  assert_no_file gh-create.argv
+}
+
+# On the direct flow nothing goes into a staging branch: the key is not read.
+test_task_ship_direct_flow_does_not_read_the_staging_level() {
+  sship_setup pr 'git.flow: direct'
+  ship_cfg_local agent.git_staging merge
+  printf 'APPROVED|APPROVED\n' > gh-review
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: git level pr (agent.git)"
+  assert_pr_base main
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_invalid_staging_level_names_its_key_and_does_not_fall_back() {
+  sship_setup merge
+  ship_cfg_local agent.git_staging yolo
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task ship: invalid agent.git_staging: yolo (expected none|commit|push|pr|merge)"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+}
+
+# A run with autopilot.git answers it, whatever the staging level says.
+test_task_ship_autopilot_git_answers_a_run_over_the_staging_level() {
+  sship_setup none
+  ship_cfg_local agent.git_staging merge
+  ship_cfg_local autopilot.git pr
+  jig task set T-1 class T1 >/dev/null
+  jig task autopilot T-1 start >/dev/null
+  printf 'APPROVED|APPROVED\n' > gh-review
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: git level pr (autopilot.git)"
+  assert_no_file gh-merge.argv
+}
+
+# Without autopilot.git a run on a staging task goes by the staging level.
+test_task_ship_run_without_autopilot_git_goes_by_the_staging_level() {
+  sship_setup pr
+  ship_cfg_local agent.git_staging merge
+  jig task set T-1 class T1 >/dev/null
+  jig task autopilot T-1 start >/dev/null
+  printf 'APPROVED|APPROVED\n' > gh-review
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: git level merge (agent.git_staging)"
+}
+
+test_task_land_by_the_agent_reads_the_staging_level() {
+  sship_setup pr
+  printf 'APPROVED|APPROVED\n' > gh-review
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_no_file gh-merge.argv
+
+  ship_cfg_local agent.git_staging merge
+  run jig task land T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "landed https://github.com/example/example/pull/99 on staging"
+  assert_file gh-merge.argv
+}
+
+test_task_land_by_the_agent_below_merge_at_the_staging_level_names_that_key() {
+  sship_setup merge
+  ship_cfg_local agent.git_staging pr
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+
+  run jig task land T-1
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "task land: landing T-1 on staging needs agent.git_staging: merge (git level pr (agent.git_staging)); https://github.com/example/example/pull/99 stays open, the person lands it"
+  assert_no_file gh-merge.argv
+}
+
+# An autopilot run answers autopilot.git for a landing as for a ship: the
+# refusal names the level and the key it came from, and is still exit 3.
+test_task_land_by_the_agent_in_a_run_below_merge_is_still_the_persons() {
+  sship_setup pr
+  ship_cfg_local agent.git_staging merge
+  ship_cfg_local autopilot.git pr
+  jig task set T-1 class T1 >/dev/null
+  jig task autopilot T-1 start >/dev/null
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+
+  run jig task land T-1
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "task land: landing T-1 on staging needs agent.git: merge (git level pr (autopilot.git))"
+  assert_no_file gh-merge.argv
+}
+
+# A task of an epic ships into its epic, which agent.git governs.
+test_task_ship_epic_task_on_the_staging_flow_reads_agent_git() {
+  sship_setup pr
+  ship_cfg_local agent.git_staging merge
+  git branch -q epic/x main
+  git push -q origin epic/x
+  git fetch -q origin
+  sed 's|^base_branch:.*|base_branch: epic/x|' .ai/workspace/tasks/T-1/state > state.tmp
+  mv state.tmp .ai/workspace/tasks/T-1/state
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: git level pr (agent.git)"
+  assert_pr_base epic/x
+  assert_no_file gh-merge.argv
+}
+
+test_task_land_by_human_reads_no_staging_level() {
+  shuman_setup
+  ship_cfg_local agent.git_staging none
+  printf 'APPROVED|APPROVED\n' > gh-review
+
+  shuman_land
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"outcome":"landed"'
+  assert_file gh-merge.argv
+}
+
+# A staging task's pull request is the agent's to ask a review for at pr.
+test_task_request_review_reads_the_staging_level() {
+  sship_setup none
+  ship_cfg_local agent.git_staging pr
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  ship_cfg_local agent.git_staging commit
+
+  run jig task request-review T-1 --reviewer bob
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "this needs agent.git_staging: pr or merge (git level commit (agent.git_staging))"
+}
+
+test_task_route_names_the_staging_level_when_it_differs() {
+  sship_setup pr
+  ship_cfg_local agent.git_staging merge
+  jig task set T-1 class T1 >/dev/null
+
+  run jig task route T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "autopilot git: pr (agent.git)"
+  assert_contains "$OUT" "autopilot git on staging: merge (agent.git_staging)"
+
+  ship_cfg_local autopilot.git pr
+  run jig task route T-1
+  assert_not_contains "$OUT" "autopilot git on staging"
 }

@@ -242,7 +242,8 @@ finding, this one command closes it as done — it has no class and no route, an
 the knowledge decision itself. Never `jig task abandon` a decided triage. Once the task's branch
 is confirmed merged, housekeeping moves the workspace to trash; a task whose landing
 cannot be observed keeps its workspace, closed and unflagged, because housekeeping never
-destroys on `unknown`. A problem found after the close is a new task.
+destroys on `unknown` — unless it was never started (no branch, nothing at its branch name), which
+goes to trash too; a triage task waits there until its source task's workspace is gone. A problem found after the close is a new task.
 
 ## 7. Report
 

@@ -3523,7 +3523,7 @@ test_status_json_pins_an_item_with_every_field() {
   } > .ai/runtime/housekeeping.log
   _st_json
   assert_eq 0 "$RC" "$ERR"
-  assert_eq '{"schema":1,"revision":R,"generated_at":"T","data":{"attention":[{"kind":"pull-request-waiting","subject":{"type":"task","id":"shipped"},"tasks":["shipped"],"title":"A pull request is waiting for review or merge","detail":"opened by jig task ship","todo":"Merge it: jig task merge-pr shipped --by human; see why it waits: jig task pr-status shipped --json","url":"https://example.com/o/r/pull/7","pull_request":{"branch":"task/shipped","base":"main","state":null,"fetched_at":null,"url":"https://example.com/o/r/pull/7","ci":null,"mergeable":null},"actions":[{"id":"merge","command":"jig task merge-pr shipped --by human","offered":true,"reason":null},{"id":"pr-status","command":"jig task pr-status shipped --json","offered":true,"reason":null}]},{"kind":"pull-request-of-abandoned-task","subject":{"type":"task","id":"given-up"},"tasks":["given-up"],"title":"A pull request was open for a task you abandoned","detail":"open as of housekeeping at 2026-10-01 09:30 UTC","todo":"It may have been closed or merged since: jig last asked the forge then. Run jig housekeeping to refresh, then close on the forge what is still open, or reopen the task. Nothing here will merge it.","url":null},{"kind":"knowledge-proposed","subject":{"type":"project","id":null},"tasks":[],"title":"Knowledge is waiting for your decision","detail":"2 document(s) proposed","todo":"Ask the agent: what'"'"'s proposed? (jig-accept)","url":null}],"housekeeping":{"ran_at":"2026-10-01T09:30:00Z","forge":"github","stale":true},"knowledge_counts_at":"2026-10-15T08:00:00Z","origin":{"base":"main","fetched_at":null,"behind":null,"ahead":null}}}' "$OUT"
+  assert_eq '{"schema":1,"revision":R,"generated_at":"T","data":{"attention":[{"kind":"pull-request-waiting","subject":{"type":"task","id":"shipped"},"tasks":["shipped"],"title":"A pull request is waiting for review or merge","detail":"opened by jig task ship","todo":"Merge it: jig task merge-pr shipped --by human; see why it waits: jig task pr-status shipped --json","url":"https://example.com/o/r/pull/7","pull_request":{"branch":"task/shipped","base":"main","state":null,"fetched_at":null,"url":"https://example.com/o/r/pull/7","ci":null,"mergeable":null,"review":null},"actions":[{"id":"merge","command":"jig task merge-pr shipped --by human","offered":true,"reason":null},{"id":"pr-status","command":"jig task pr-status shipped --json","offered":true,"reason":null}]},{"kind":"pull-request-of-abandoned-task","subject":{"type":"task","id":"given-up"},"tasks":["given-up"],"title":"A pull request was open for a task you abandoned","detail":"open as of housekeeping at 2026-10-01 09:30 UTC","todo":"It may have been closed or merged since: jig last asked the forge then. Run jig housekeeping to refresh, then close on the forge what is still open, or reopen the task. Nothing here will merge it.","url":null},{"kind":"knowledge-proposed","subject":{"type":"project","id":null},"tasks":[],"title":"Knowledge is waiting for your decision","detail":"2 document(s) proposed","todo":"Ask the agent: what'"'"'s proposed? (jig-accept)","url":null}],"housekeeping":{"ran_at":"2026-10-01T09:30:00Z","forge":"github","stale":true},"knowledge_counts_at":"2026-10-15T08:00:00Z","origin":{"base":"main","fetched_at":null,"behind":null,"ahead":null}}}' "$OUT"
 }
 
 # A task started against the queue's answer is shown wherever the task is: its
@@ -4548,6 +4548,9 @@ _st_park() {
 test_status_lists_parked_tasks_on_their_own_line() {
   _st_park on promoted never
   printf 'pr_url: https://forge.test/pr/3\n' >> .ai/workspace/tasks/never/state
+  # Landing waits for the approval the cache holds.
+  mkdir -p .ai/runtime
+  printf 'task/never\tstaging\topen\t-\t2026-11-14T09:00:00Z\t-\thttps://forge.test/pr/3\tmergeable\tapproved\t-\n' > .ai/runtime/forge-cache
   run jig status
   assert_eq 0 "$RC"
   assert_contains "$OUT" "parked: never (review, landing), on (signal), promoted (signal)"
@@ -4597,6 +4600,8 @@ test_status_json_asks_nothing_of_a_task_parked_for_the_signal() {
   mv c.tmp .ai/config.yaml
   printf 'pr_url: https://forge.test/pr/4\n' >> .ai/workspace/tasks/on/state
   printf 'pr_url: https://forge.test/pr/5\n' >> .ai/workspace/tasks/never/state
+  mkdir -p .ai/runtime
+  printf 'task/never\tstaging\topen\t-\t2026-11-14T09:00:00Z\t-\thttps://forge.test/pr/5\tmergeable\tapproved\t-\n' > .ai/runtime/forge-cache
   run jig status --json
   assert_eq 0 "$RC" "$OUT"
   assert_not_contains "$OUT" '"subject":{"type":"task","id":"on"},"tasks":["on"],"title":"A pull request'
@@ -4614,17 +4619,17 @@ test_status_json_pull_request_items_carry_the_cache_and_the_actions() {
   printf 'pr_url: https://forge.test/pr/6\n' >> .ai/workspace/tasks/behind/state
   mkdir -p .ai/runtime
   printf '%s\n' \
-    "task/never${t}staging${t}open${t}green${t}2026-11-14T09:00:00Z${t}-${t}https://forge.test/pr/5${t}mergeable" \
+    "task/never${t}staging${t}open${t}green${t}2026-11-14T09:00:00Z${t}-${t}https://forge.test/pr/5${t}mergeable${t}approved${t}-" \
     "task/behind${t}main${t}open${t}red${t}2026-11-14T09:05:00Z${t}-${t}https://forge.test/pr/6${t}-" > .ai/runtime/forge-cache
   run jig status --json
   assert_eq 0 "$RC" "$OUT"
   # Parked for review and landing: the person's land, and the cache's words.
-  assert_contains "$OUT" '"title":"A pull request is waiting for review and for you to land it","detail":"CI is green and it merges cleanly, as of 2026-11-14T09:00:00Z","todo":"Land it: jig task land never --by human; see why it waits: jig task pr-status never --json","url":"https://forge.test/pr/5","pull_request":{"branch":"task/never","base":"staging","state":"open","fetched_at":"2026-11-14T09:00:00Z","url":"https://forge.test/pr/5","ci":"green","mergeable":"mergeable"},"actions":[{"id":"land","command":"jig task land never --by human","offered":'
+  assert_contains "$OUT" '"title":"A pull request is waiting for review and for you to land it","detail":"CI is green and it merges cleanly, as of 2026-11-14T09:00:00Z","todo":"Land it: jig task land never --by human; see why it waits: jig task pr-status never --json","url":"https://forge.test/pr/5","pull_request":{"branch":"task/never","base":"staging","state":"open","fetched_at":"2026-11-14T09:00:00Z","url":"https://forge.test/pr/5","ci":"green","mergeable":"mergeable","review":{"state":"approved","waiting_for":[]}},"actions":[{"id":"land","command":"jig task land never --by human","offered":'
   assert_contains "$OUT" '{"id":"pr-status","command":"jig task pr-status never --json","offered":true,"reason":null}]'
   assert_not_contains "$OUT" '"id":"merge","command":"jig task merge-pr never'
   # The plain one: the direct flow's merge.
   assert_contains "$OUT" '"detail":"CI is red, as of 2026-11-14T09:05:00Z","todo":"Merge it: jig task merge-pr behind --by human; see why it waits: jig task pr-status behind --json"'
-  assert_contains "$OUT" '"mergeable":null},"actions":[{"id":"merge","command":"jig task merge-pr behind --by human","offered":'
+  assert_contains "$OUT" '"mergeable":null,"review":null},"actions":[{"id":"merge","command":"jig task merge-pr behind --by human","offered":'
   assert_not_contains "$OUT" "jig merges one itself"
   assert_not_contains "$OUT" "jig lands it itself"
   # The page renders the same words.
@@ -4637,7 +4642,7 @@ test_status_json_pull_request_items_carry_the_cache_and_the_actions() {
   run jig status --json
   assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" '"detail":"parked at the staging branch"'
-  assert_contains "$OUT" '"pull_request":{"branch":"task/never","base":"staging","state":null,"fetched_at":null,"url":"https://forge.test/pr/5","ci":null,"mergeable":null}'
+  assert_contains "$OUT" '"pull_request":{"branch":"task/never","base":"staging","state":null,"fetched_at":null,"url":"https://forge.test/pr/5","ci":null,"mergeable":null,"review":null}'
   # A conflict, and a running check, in their own words.
   printf '%s\n' \
     "task/never${t}staging${t}open${t}pending${t}2026-11-14T09:00:00Z${t}-${t}https://forge.test/pr/5${t}-" \
@@ -4645,6 +4650,71 @@ test_status_json_pull_request_items_carry_the_cache_and_the_actions() {
   run jig status --json
   assert_contains "$OUT" '"detail":"CI is running, as of 2026-11-14T09:00:00Z"'
   assert_contains "$OUT" '"detail":"it conflicts with main, as of 2026-11-14T09:05:00Z"'
+}
+
+# A task parked for review that is not a landing yet is still the reader's
+# business: the pull request waits for a reviewer, or was sent back. Each says
+# so in its title, names who is waited for, and carries the review in the item's
+# pull request (the cache's review column, never the forge).
+test_status_json_names_the_review_a_parked_pull_request_waits_for() {
+  local t
+  t=$(printf '\t')
+  _st_park never
+  printf 'pr_url: https://forge.test/pr/5\n' >> .ai/workspace/tasks/never/state
+  mkdir -p .ai/runtime
+  printf '%s\n' \
+    "task/never${t}staging${t}open${t}green${t}2026-11-14T09:00:00Z${t}-${t}https://forge.test/pr/5${t}mergeable${t}waiting${t}ann,bo" \
+    > .ai/runtime/forge-cache
+  run jig status --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"title":"A pull request is waiting for review","detail":"waiting for review from ann, bo; CI is green and it merges cleanly, as of 2026-11-14T09:00:00Z"'
+  assert_contains "$OUT" '"review":{"state":"waiting","waiting_for":["ann","bo"]}},"actions":[{"id":"land",'
+  assert_not_contains "$OUT" "waiting for review and for you to land it"
+  # The text report names it on the parked line, without the landing hint.
+  run jig status
+  assert_contains "$OUT" "parked: never (review)"
+  assert_not_contains "$OUT" "(review, landing)"
+
+  printf '%s\n' \
+    "task/never${t}staging${t}open${t}green${t}2026-11-14T09:00:00Z${t}-${t}https://forge.test/pr/5${t}mergeable${t}changes${t}-" \
+    > .ai/runtime/forge-cache
+  run jig status --json
+  assert_contains "$OUT" '"title":"Changes were requested on a pull request"'
+  assert_contains "$OUT" '"todo":"Take it back for a fix: jig task resume never; see the review: jig task pr-status never --json"'
+  assert_contains "$OUT" '"review":{"state":"changes","waiting_for":[]}},"actions":[{"id":"resume","command":"jig task resume never","offered":true,"reason":null},{"id":"pr-status",'
+  assert_not_contains "$OUT" '{"id":"land","command":"jig task land never --by human"'
+  # A promotion opened by hand and closed is not the pull request the review
+  # was read from: the item names the one into staging.
+  printf '%s\n' \
+    "task/never${t}main${t}closed${t}-${t}2026-11-14T09:10:00Z${t}-${t}https://forge.test/pr/9${t}-" \
+    "task/never${t}staging${t}open${t}green${t}2026-11-14T09:00:00Z${t}-${t}https://forge.test/pr/5${t}mergeable${t}changes${t}-" \
+    > .ai/runtime/forge-cache
+  run jig status --json
+  assert_contains "$OUT" '"pull_request":{"branch":"task/never","base":"staging","state":"open","fetched_at":"2026-11-14T09:00:00Z","url":"https://forge.test/pr/5","ci":"green","mergeable":"mergeable","review":{"state":"changes","waiting_for":[]}}'
+
+  # Nobody has looked yet, or the cache cannot say: it still waits for review.
+  printf '%s\n' \
+    "task/never${t}staging${t}open${t}green${t}2026-11-14T09:00:00Z${t}-${t}https://forge.test/pr/5${t}mergeable${t}none${t}-" \
+    > .ai/runtime/forge-cache
+  run jig status --json
+  assert_contains "$OUT" '"title":"A pull request is waiting for review"'
+  assert_contains "$OUT" '"review":{"state":"none","waiting_for":[]}}'
+  : > .ai/runtime/forge-cache
+  run jig status --json
+  assert_contains "$OUT" '"title":"A pull request is waiting for review"'
+  assert_contains "$OUT" '"mergeable":null,"review":null},"actions"'
+
+  # Approved is the landing, and when the project asks for no review, so is
+  # every other state.
+  printf '%s\n' \
+    "task/never${t}staging${t}open${t}green${t}2026-11-14T09:00:00Z${t}-${t}https://forge.test/pr/5${t}mergeable${t}approved${t}-" \
+    > .ai/runtime/forge-cache
+  run jig status --json
+  assert_contains "$OUT" '"title":"A pull request is waiting for review and for you to land it"'
+  printf 'git.staging_review: none\n' >> .ai/config.yaml
+  : > .ai/runtime/forge-cache
+  run jig status --json
+  assert_contains "$OUT" '"title":"A pull request is waiting for review and for you to land it"'
 }
 
 # --- drafts: jig-idea conversations kept before there is a spec ---------------

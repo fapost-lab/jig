@@ -241,13 +241,16 @@ _prdo_claim() {
   esac
 }
 
-# _prdo_git_level <who> <id> <by> <levels...> — without `--by human`, the agent's
-# git level must be one of <levels>; a person's action reads none.
+# _prdo_git_level <who> <id> <by> <scope> <levels...> — without `--by human`,
+# the agent's git level must be one of <levels>; a person's action reads none.
+# <scope> `task`: the level of the task's own ship (_task_ship_git_v, which
+# answers agent.git_staging for a task whose pull request goes into the staging
+# branch); `base`: a pull request into the base branch, which agent.git governs.
 _prdo_git_level() {
-  local who="$1" id="$2" by="$3" line level key rc=0 want
-  shift 3
+  local who="$1" id="$2" by="$3" scope="$4" line level key rc=0 want
+  shift 4
   [ "$by" != human ] || return 0
-  _task_ship_git_v line "$id" || rc=$?
+  _task_ship_git_v line "$id" "$scope" || rc=$?
   level=${line%%$'\t'*}
   key=${line#*$'\t'}
   if [ "$rc" -ne 0 ]; then
@@ -256,7 +259,7 @@ _prdo_git_level() {
   for want in "$@"; do
     [ "$level" != "$want" ] || return 0
   done
-  jig_fail git-level "$who: this needs agent.git: $1${2:+ or $2} (git level $level ($key)); a person does it with --by human"
+  jig_fail git-level "$who: this needs $key: $1${2:+ or $2} (git level $level ($key)); a person does it with --by human"
 }
 
 # --- jig task request-review ---------------------------------------------------
@@ -316,7 +319,7 @@ _prdo_request_review_body() {
   _task_valid_id "$id" || jig_fail usage "invalid task id: $id"
   [ -f "$(task_dir "$id")/state" ] || jig_fail not-found "$who: unknown task: $id"
   _task_guard_write "$id" "$who"
-  _prdo_git_level "$who" "$id" "$by" pr merge
+  _prdo_git_level "$who" "$id" "$by" task pr merge
 
   # The table's own guard, in its words.
   local refusal url state why
@@ -437,7 +440,7 @@ _prdo_merge_pr_body() {
   dir=$(task_dir "$id")
   [ -f "$dir/state" ] || jig_fail not-found "$who: unknown task: $id"
   _task_guard_write "$id" "$who"
-  _prdo_git_level "$who" "$id" "$by" merge
+  _prdo_git_level "$who" "$id" "$by" base merge
 
   # 1. Locally: the table's own guard, in its words.
   local refusal url why

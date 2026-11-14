@@ -255,6 +255,10 @@ You can see which one decides: `jig status` prints `autopilot.git: merge (from a
 `task ship: git level merge (autopilot.git)`.
 </Accordion>
 
+On a project that uses the [staging flow](/staging-flow), `agent.git_staging` is a level of its own for
+a task whose pull request goes into the staging branch; see
+[Ship and land](/staging-flow#ship-and-land). Not set, `agent.git` answers there as everywhere.
+
 ## When a project takes several tasks
 
 You may want to collect several completed parts before releasing the whole feature. Tell the

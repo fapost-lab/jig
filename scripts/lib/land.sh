@@ -351,6 +351,13 @@ land_task() {
   [ -n "$branch" ] || _land_refuse not-shipped "$who: $id has not been started (no branch); run jig task start $id first"
   pr=$(task_state_get "$id" pr_url)
   [ -n "$pr" ] || _land_refuse no-pull-request "$who: $id has no pull request into $staging; run jig task ship $id first"
+  # A pull request a ship opened into another branch — the base, for a task
+  # that changes the flow itself — is not landed here, whoever asks
+  # (adr-20261114-landing-on-staging-has-its-own-git-level).
+  local into
+  into=$(task_state_get "$id" pr_into)
+  [ -z "$into" ] || [ "$into" = "$staging" ] \
+    || _land_refuse wrong-flow "$who: $pr goes into $into, not $staging; landing is for a pull request into the staging branch"
   if [ "$resolved" = 1 ]; then
     if [ -z "$note" ] || [ ! -s "$note" ] || ! grep -q '[^[:space:]]' "$note"; then
       jig_die "$who: --resolved needs --note-file with how each conflict was resolved; it goes into the merge commit and the pull request"

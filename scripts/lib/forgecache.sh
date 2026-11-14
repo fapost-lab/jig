@@ -9,14 +9,18 @@
 #
 #   .ai/runtime/forge-cache, one line per pull request, newest first as the
 #   forge listed them:
-#     <head><TAB><base><TAB><state><TAB><ci><TAB><fetched_at><TAB><head-commit><TAB><url><TAB><mergeable>
+#     <head><TAB><base><TAB><state><TAB><ci><TAB><fetched_at><TAB><head-commit><TAB><url><TAB><mergeable><TAB><review><TAB><waiting_for>
 #   <state> open|merged|closed; <ci> green|red|pending|none, `-` when it was
 #   not asked (a pull request that is not open, a forge that does not list it);
 #   <fetched_at> UTC, when the forge said so; <head-commit> and <url> the pull
 #   request's head and address, `-` when the forge did not say; <mergeable>
 #   conflicting|mergeable for an open pull request the forge judged against
 #   its base, `-` otherwise (read by the staging drift report,
-#   jig_staging_drift). A line written before a column existed ends before it
+#   jig_staging_drift); <review> approved|changes|waiting|none for an open pull
+#   request whose review the forge was asked about (jig_pr_approval_v's words,
+#   adr-20261113-reviewers-are-read-from-the-forge), `-` otherwise and when it
+#   could not say; <waiting_for> who is still requested as a reviewer, logins
+#   comma-separated, `-` when nobody or not known. A line written before a column existed ends before it
 #   and reads as if each missing one were `-`. Lines starting with `#` are
 #   comments.
 #
@@ -58,7 +62,7 @@ forgecache_write() {
   jig_cleanup_add "$tmp"
   mkdir -p "${file%/*}" 2>/dev/null || return 0
   {
-    printf '# jig forge cache: <head> <base> <state> <ci> <fetched_at> <head-commit> <url> <mergeable>, written by jig housekeeping\n'
+    printf '# jig forge cache: <head> <base> <state> <ci> <fetched_at> <head-commit> <url> <mergeable> <review> <waiting_for>, written by jig housekeeping\n'
     [ -z "$rows" ] || printf '%s\n' "$rows"
   } > "$tmp" 2>/dev/null || return 0
   mv "$tmp" "$file" 2>/dev/null || return 0
@@ -74,7 +78,7 @@ forgecache_write() {
 # request a command has just heard of at the top of the cache, in place of any
 # line for the same <head> and <base>, every other line kept as it was: the
 # newest is first, as the forge lists them. <ci> and <mergeable> are `-`, not
-# asked; <fetched_at> is now; <head-commit> or <url> that is empty or does not
+# asked, and so are <review> and <waiting_for>; <fetched_at> is now; <head-commit> or <url> that is empty or does not
 # look like one is `-`. The next housekeeping run replaces the whole cache with
 # what the forge says. Never fails the caller (forgecache_write).
 forgecache_record() {
@@ -86,7 +90,7 @@ forgecache_record() {
   t=$(printf '\t')
   at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   rest=$(forgecache_read | awk -F '\t' -v h="$head" -v b="$base" '!($1 == h && $2 == b)')
-  forgecache_write "$head$t$base$t$state$t-$t$at$t$sha$t$url$t-${rest:+
+  forgecache_write "$head$t$base$t$state$t-$t$at$t$sha$t$url$t-$t-$t-${rest:+
 $rest}"
 }
 
@@ -100,22 +104,52 @@ forgecache_read() {
 }
 
 # forgecache_entry <cache> <head> <base> — sets _FORGECACHE_STATE, _FORGECACHE_CI,
-# _FORGECACHE_AT, _FORGECACHE_URL and _FORGECACHE_MERGEABLE from the first line of <cache> (forgecache_read's output)
+# _FORGECACHE_AT, _FORGECACHE_URL, _FORGECACHE_MERGEABLE, _FORGECACHE_REVIEW and
+# _FORGECACHE_WAITING from the first line of <cache> (forgecache_read's output)
 # for a pull request from <head> into <base>: the newest, as the forge lists
 # them and as housekeeping's own remote state takes it. Each is empty when the
-# cache does not say. In the caller's shell, without a process per lookup.
+# cache does not say. When a line was found _FORGECACHE_HEAD and _FORGECACHE_BASE
+# are set to its branches (empty otherwise), so a caller can tell a line that
+# says nothing from no line. In the caller's shell, without a process per lookup.
 _FORGECACHE_STATE=""
 _FORGECACHE_CI=""
 _FORGECACHE_AT=""
 _FORGECACHE_URL=""
 _FORGECACHE_MERGEABLE=""
-forgecache_entry() {
-  local cache="$1" head="$2" base="$3" t nl rest line
+_FORGECACHE_REVIEW=""
+_FORGECACHE_WAITING=""
+_FORGECACHE_HEAD=""
+_FORGECACHE_BASE=""
+_forgecache_clear() {
   _FORGECACHE_STATE=""
   _FORGECACHE_CI=""
   _FORGECACHE_AT=""
   _FORGECACHE_URL=""
   _FORGECACHE_MERGEABLE=""
+  _FORGECACHE_REVIEW=""
+  _FORGECACHE_WAITING=""
+  _FORGECACHE_HEAD=""
+  _FORGECACHE_BASE=""
+}
+
+# _forgecache_parse <line> — the columns of one cache line into the globals
+# above, head and base included; a `-` is read as empty.
+_forgecache_parse() {
+  local t=$'\t'
+  IFS="$t" read -r _FORGECACHE_HEAD _FORGECACHE_BASE _FORGECACHE_STATE _FORGECACHE_CI _FORGECACHE_AT _ _FORGECACHE_URL _FORGECACHE_MERGEABLE _FORGECACHE_REVIEW _FORGECACHE_WAITING _ <<EOF
+$1
+EOF
+  [ "$_FORGECACHE_CI" != "-" ] || _FORGECACHE_CI=""
+  [ "$_FORGECACHE_URL" != "-" ] || _FORGECACHE_URL=""
+  [ "$_FORGECACHE_MERGEABLE" != "-" ] || _FORGECACHE_MERGEABLE=""
+  [ "$_FORGECACHE_REVIEW" != "-" ] || _FORGECACHE_REVIEW=""
+  [ "$_FORGECACHE_WAITING" != "-" ] || _FORGECACHE_WAITING=""
+  return 0
+}
+
+forgecache_entry() {
+  local cache="$1" head="$2" base="$3" t nl rest line
+  _forgecache_clear
   [ -n "$cache" ] && [ -n "$head" ] && [ -n "$base" ] || return 0
   t=$'\t'
   nl=$'\n'
@@ -126,43 +160,39 @@ forgecache_entry() {
   esac
   rest=${rest#*"$nl$head$t$base$t"}
   line=${rest%%"$nl"*}
-  IFS="$t" read -r _FORGECACHE_STATE _FORGECACHE_CI _FORGECACHE_AT _ _FORGECACHE_URL _FORGECACHE_MERGEABLE _ <<EOF
-$line
-EOF
-  [ "$_FORGECACHE_CI" != "-" ] || _FORGECACHE_CI=""
-  [ "$_FORGECACHE_URL" != "-" ] || _FORGECACHE_URL=""
-  [ "$_FORGECACHE_MERGEABLE" != "-" ] || _FORGECACHE_MERGEABLE=""
+  _forgecache_parse "$head$t$base$t$line"
   return 0
 }
 
-# forgecache_pr <cache> <url> <head> <into> — the same variables for the
-# pull request <url> names: the first (newest) line of <cache> whose <url>
-# column is <url>, whatever branch it goes into. A pull request with no line of
-# that url (an old line without the column, or `-`, or an empty <url>) is
-# looked up as forgecache_entry does, by <head> and <into>, the branch it goes
-# into. This is the one lookup of a task's own pull request: on the staging
-# flow the pull request `pr_url` names goes into the staging branch, which a
-# lookup by the task's base never finds. jig_parked_states (common.sh) picks the
-# same line, first by url. In the caller's shell, without a process.
-forgecache_pr() {
-  local cache="$1" url="$2" head="$3" into="$4" t s c a u m
-  if [ -n "$cache" ] && [ -n "$url" ] && [ "$url" != "-" ]; then
-    t=$'\t'
-    while IFS="$t" read -r _ _ s c a _ u m _; do
-      [ "$u" = "$url" ] || continue
-      _FORGECACHE_STATE=$s
-      _FORGECACHE_CI=$c
-      _FORGECACHE_AT=$a
-      _FORGECACHE_URL=$u
-      _FORGECACHE_MERGEABLE=$m
-      [ "$_FORGECACHE_CI" != "-" ] || _FORGECACHE_CI=""
-      [ "$_FORGECACHE_MERGEABLE" != "-" ] || _FORGECACHE_MERGEABLE=""
-      return 0
-    done <<EOF
-$cache
-EOF
+# forgecache_entry_url <cache> <url> — the same globals, from the first line of
+# <cache> whose url column is <url>: a pull request found by its address,
+# whatever branches it runs between; _FORGECACHE_HEAD and _FORGECACHE_BASE say
+# which. Everything is empty when the cache has no such line. In the caller's
+# shell, without a process per lookup.
+forgecache_entry_url() {
+  local cache="$1" url="$2" t nl rest before after
+  _forgecache_clear
+  if [ -z "$cache" ] || [ -z "$url" ] || [ "$url" = "-" ]; then
+    return 0
   fi
-  forgecache_entry "$cache" "$head" "$into"
+  t=$'\t'
+  nl=$'\n'
+  rest=${nl}${cache}${nl}
+  while :; do
+    case "$rest" in
+      *"$t$url$t"* | *"$t$url$nl"*) ;;
+      *) return 0 ;;
+    esac
+    before=${rest%%"$t$url"*}
+    after=${rest#"$before$t$url"}
+    case "$after" in
+      "$t"* | "$nl"*) break ;;
+    esac
+    # Only the front of a longer address (.../pull/1 of .../pull/12): go on.
+    rest=$after
+  done
+  _forgecache_parse "${before##*"$nl"}$t$url${after%%"$nl"*}"
+  return 0
 }
 
 # forgecache_upgrades <cache> <base> — the pull requests of Jig's own upgrade

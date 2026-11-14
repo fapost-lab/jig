@@ -212,6 +212,23 @@ test_housekeeping_decide_consolidated_is_never_archived() {
   assert_eq "purge" "$(hk_decide consolidated merged "" 99 14 60)"
 }
 
+test_housekeeping_decide_consolidated_never_started_is_purged() {
+  # Arguments: status remote paused age ttl stale released from reason started.
+  # A closed task that never had a branch has no change whose landing could be
+  # unknown: the person's close is the decision.
+  assert_eq "purge" "$(hk_decide consolidated unknown "" 1 14 60 true "" "" false)"
+  assert_eq "purge" "$(hk_decide consolidated unknown "" 99 14 60 true "" "" false)" "no stale flag"
+  assert_eq "preserve" "$(hk_decide consolidated unknown "" 1 14 60 true "" "" true)"
+  assert_eq "preserve" "$(hk_decide consolidated unknown "" 1 14 60)" "started omitted"
+  assert_eq "preserve STALE_CANDIDATE" "$(hk_decide consolidated unknown "" 99 14 60 true "" "" true)"
+  # Only a closed task with an unknown remote is affected.
+  assert_eq "$(hk_decide consolidated closed "" 1 14 60)" \
+    "$(hk_decide consolidated closed "" 1 14 60 true "" "" false)"
+  assert_eq "$(hk_decide active unknown "" 99 14 60)" "$(hk_decide active unknown "" 99 14 60 true "" "" false)"
+  assert_eq "$(hk_decide abandoned unknown "" 99 14 60)" "$(hk_decide abandoned unknown "" 99 14 60 true "" "" false)"
+  assert_eq "$(hk_decide archived unknown "" 99 14 60)" "$(hk_decide archived unknown "" 99 14 60 true "" "" false)"
+}
+
 test_housekeeping_decide_archive_carries_no_stale_flag() {
   # The task is set aside by this very decision; a "look at this" marker on it
   # would say the opposite.
@@ -337,6 +354,90 @@ test_housekeeping_deleted_branch_is_unknown_not_merged() {
   run jig housekeeping --verbose
   assert_contains "$OUT" "gone status=consolidated remote=unknown via=none action=preserve"
   assert_dir .ai/workspace/tasks/gone
+}
+
+test_housekeeping_closed_task_that_never_started_is_purged() {
+  hk_setup
+  fixture_task never "" consolidated
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "never status=consolidated remote=unknown via=none action=purge"
+  assert_no_file .ai/workspace/tasks/never
+  assert_file ".ai/runtime/trash/$(date +%Y-%m-%d)/never/state"
+  assert_contains "$OUT" "removed (1):"
+  assert_not_contains "$OUT" "kept, cannot tell"
+  assert_file_contains .ai/runtime/housekeeping.log "action=purge"
+}
+
+test_housekeeping_closed_task_with_a_template_branch_is_kept() {
+  # No `branch:` key, but a branch named by the template exists: something was
+  # started, so its landing is unknown and the workspace stays.
+  hk_setup
+  git branch task/started
+  fixture_task started "" consolidated
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "started status=consolidated remote=unknown via=none action=preserve"
+  assert_contains "$OUT" "  never started, but its branch task/started exists: started"
+  assert_dir .ai/workspace/tasks/started
+}
+
+test_housekeeping_closed_task_with_a_pull_request_from_its_template_branch_is_kept() {
+  # No ref anywhere, but the forge knows a pull request from the template
+  # branch: the work was started and shipped from elsewhere.
+  hk_setup
+  hk_cfg forge github
+  hk_stub_gh "task/shipped$(printf '\t')main$(printf '\t')OPEN"
+  fixture_task shipped "" consolidated
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "shipped status=consolidated remote=unknown via=none action=preserve"
+  assert_contains "$OUT" "  never started, but a pull request from task/shipped exists: shipped"
+  assert_dir .ai/workspace/tasks/shipped
+}
+
+test_housekeeping_closed_task_with_a_pull_request_into_another_base_is_kept() {
+  # A pull request from the template branch counts whatever its base and
+  # state: one closed into an epic is as much a sign of work as one into main.
+  hk_setup
+  hk_cfg forge github
+  hk_stub_gh "task/elsewhere$(printf '\t')epic/other$(printf '\t')CLOSED"
+  fixture_task elsewhere "" consolidated
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "elsewhere status=consolidated remote=unknown via=none action=preserve"
+  assert_contains "$OUT" "  never started, but a pull request from task/elsewhere exists: elsewhere"
+  assert_dir .ai/workspace/tasks/elsewhere
+}
+
+test_housekeeping_closed_task_never_started_is_kept_when_the_forge_does_not_answer() {
+  # A forge that failed has not said there is no pull request.
+  hk_setup
+  hk_cfg forge github
+  hk_stub_gh_failing
+  fixture_task never "" consolidated
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "never status=consolidated remote=unknown via=none action=preserve"
+  assert_contains "$OUT" "the forge did not answer whether task/never had a pull request: never"
+  assert_dir .ai/workspace/tasks/never
+}
+
+test_housekeeping_closed_triage_task_stays_while_its_source_is_here() {
+  # The source's next ship reads the triage workspace to hand its findings
+  # over only once (adr-20261029-a-ship-hands-open-findings-to-one-triage-task).
+  hk_setup
+  fixture_task src "no-such-branch" active
+  fixture_task src-findings "" consolidated "triage_of:src"
+  fixture_task gone-findings "" consolidated "triage_of:gone"
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "src-findings status=consolidated remote=unknown via=none action=preserve"
+  assert_contains "$OUT" "  triage of src, kept while src is here: src-findings"
+  assert_dir .ai/workspace/tasks/src-findings
+  assert_contains "$OUT" "gone-findings status=consolidated remote=unknown via=none action=purge"
+  assert_no_file .ai/workspace/tasks/gone-findings
 }
 
 test_housekeeping_detached_branch_is_unknown() {
@@ -2934,7 +3035,7 @@ test_housekeeping_report_says_why_a_branch_cannot_tell() {
   git checkout -q main
   fixture_task fresh "task/fresh" consolidated "base_commit:$fork"
   fixture_task op "task/open" consolidated "base_commit:$fork"
-  fixture_task never "" consolidated
+  fixture_task never "" consolidated "base_commit:$fork"
 
   run jig housekeeping
   assert_contains "$OUT" "  its branch has no commits since the task started: fresh"
@@ -3127,12 +3228,13 @@ test_housekeeping_forge_token_is_failed_when_the_forge_does_not_answer() {
 # --- the forge cache (lib/forgecache.sh; schemas/json.md) ---------------------
 #
 # What a run heard from the forge is kept for the reads that never ask it:
-# `<head> <base> <state> <ci> <fetched_at>` per pull request, CI only for the
-# open ones, asked in a second list call.
+# `<head> <base> <state> <ci> <fetched_at> ...` per pull request, CI and the
+# review only for the open ones, asked in a second list call.
 
 # hk_stub_gh_lists <all-rows> <open-rows> — a fake `gh` that answers the list of
 # every pull request with <all-rows> and the open ones' checks with
-# <open-rows> (already the `<head>\t<base>\t<ci>` the --jq makes of them); an
+# <open-rows> (already the `<head>\t<base>\t<ci>\t<mergeable>\t<head-commit>\t<url>\t<decision>\t<reviews>\t<pending>`
+# the --jq makes of them, a row may end after any of them); an
 # <open-rows> of `FAIL` makes that second call fail. Every call is logged.
 hk_stub_gh_lists() {
   mkdir -p stub-bin
@@ -3185,14 +3287,19 @@ task/d${t}main${t}weird${t}UNKNOWN"
   # does not know rather than whatever the forge said.
   # The head and the address follow, `-` where the forge said nothing; then
   # whether the forge can merge an open one, `-` where it did not say.
-  assert_eq "task/a${t}main${t}open${t}green${t}T${t}aaa${t}https://github.com/example/example/pull/1${t}conflicting
-task/b${t}epic/x${t}merged${t}-${t}T${t}bbb${t}-${t}-
-task/c${t}main${t}closed${t}-${t}T${t}ccc${t}-${t}-
-task/d${t}main${t}open${t}-${t}T${t}ddd${t}-${t}-" "$(hk_cache_rows)"
+  assert_eq "task/a${t}main${t}open${t}green${t}T${t}aaa${t}https://github.com/example/example/pull/1${t}conflicting${t}-${t}-
+task/b${t}epic/x${t}merged${t}-${t}T${t}bbb${t}-${t}-${t}-${t}-
+task/c${t}main${t}closed${t}-${t}T${t}ccc${t}-${t}-${t}-${t}-
+task/d${t}main${t}open${t}-${t}T${t}ddd${t}-${t}-${t}-${t}-" "$(hk_cache_rows)"
   # Two list calls for the run, whatever the number of tasks.
   assert_eq 2 "$(grep -c '^pr list' stub-bin/calls)"
   assert_contains "$(cat stub-bin/calls)" "--state open"
   assert_contains "$(cat stub-bin/calls)" "statusCheckRollup,mergeable"
+  # No `:` in either call: under Git Bash, MSYS rewrites an argument holding
+  # `/` with `:` (conventions/shell.md), and the --jq filters hold `/`.
+  assert_not_contains "$(cat stub-bin/calls)" ":"
+  # The review fields are asked in that same call, not in a third.
+  assert_contains "$(cat stub-bin/calls)" "reviewDecision,latestReviews,reviewRequests"
   assert_no_file .ai/runtime/forge-cache.tmp.*
 }
 
@@ -3204,7 +3311,7 @@ test_housekeeping_forge_cache_keeps_states_when_the_checks_do_not_answer() {
   hk_cfg forge github
   hk_stub_gh_lists "task/a${t}main${t}OPEN${t}aaa" FAIL
   run jig housekeeping
-  assert_eq "task/a${t}main${t}open${t}-${t}T${t}aaa${t}-${t}-" "$(hk_cache_rows)"
+  assert_eq "task/a${t}main${t}open${t}-${t}T${t}aaa${t}-${t}-${t}-${t}-" "$(hk_cache_rows)"
 }
 
 # A run that heard nothing — the forge failed, there is none, or the run is
@@ -3237,6 +3344,118 @@ test_housekeeping_dry_run_writes_no_forge_cache() {
   assert_not_contains "$(cat stub-bin/calls)" "--state open"
 }
 
+# The review of every open pull request comes from the open list, in the same
+# call as the checks: the decision is made once in the shell
+# (jig_pr_approval_github_v), so a change request wins, a requested reviewer
+# is waited for, and an approval needs nobody waited for. A merged pull request
+# has none; an open one whose row carries no review fields has none either.
+test_housekeeping_forge_cache_keeps_the_review_of_an_open_pull_request() {
+  local t u
+  t=$(printf '\t')
+  u=https://github.com/example/example/pull
+  hk_setup
+  hk_cfg forge github
+  hk_stub_gh_lists "task/a${t}staging${t}OPEN${t}aaa${t}$u/1
+task/b${t}staging${t}OPEN${t}bbb${t}$u/2
+task/c${t}staging${t}OPEN${t}ccc${t}$u/3
+task/d${t}staging${t}OPEN${t}ddd${t}$u/4
+task/e${t}staging${t}OPEN${t}eee${t}$u/5
+task/f${t}staging${t}MERGED${t}fff${t}$u/6
+task/g${t}staging${t}OPEN${t}1ab${t}$u/7" "task/a${t}staging${t}green${t}MERGEABLE${t}aaa${t}$u/1${t}APPROVED${t}APPROVED${t}-
+task/b${t}staging${t}green${t}MERGEABLE${t}bbb${t}$u/2${t}-${t}CHANGES_REQUESTED,APPROVED${t}al
+task/c${t}staging${t}pending${t}MERGEABLE${t}ccc${t}$u/3${t}REVIEW_REQUIRED${t}-${t}ann,bo
+task/d${t}staging${t}none${t}-${t}ddd${t}$u/4${t}REVIEW_REQUIRED${t}-${t}-
+task/e${t}staging${t}none${t}-${t}eee${t}$u/5${t}-${t}APPROVED${t}-
+task/g${t}staging${t}none${t}-${t}1ab${t}$u/7${t}SOMETHING_NEW${t}-${t}-"
+
+  run jig housekeeping
+  assert_eq "task/a${t}staging${t}open${t}green${t}T${t}aaa${t}$u/1${t}mergeable${t}approved${t}-
+task/b${t}staging${t}open${t}green${t}T${t}bbb${t}$u/2${t}mergeable${t}changes${t}-
+task/c${t}staging${t}open${t}pending${t}T${t}ccc${t}$u/3${t}mergeable${t}waiting${t}ann,bo
+task/d${t}staging${t}open${t}none${t}T${t}ddd${t}$u/4${t}-${t}none${t}-
+task/e${t}staging${t}open${t}none${t}T${t}eee${t}$u/5${t}-${t}approved${t}-
+task/f${t}staging${t}merged${t}-${t}T${t}fff${t}$u/6${t}-${t}-${t}-
+task/g${t}staging${t}open${t}none${t}T${t}1ab${t}$u/7${t}-${t}-${t}-" "$(hk_cache_rows)"
+  assert_eq 2 "$(grep -c '^pr list' stub-bin/calls)"
+}
+
+# A pull request open but older than the newest 200 is not in the list of all:
+# the open list still has it, and it gets its own row after the others.
+test_housekeeping_forge_cache_adds_an_open_pull_request_the_full_list_lacks() {
+  local t u
+  t=$(printf '\t')
+  u=https://github.com/example/example/pull
+  hk_setup
+  hk_cfg forge github
+  hk_stub_gh_lists "task/a${t}main${t}OPEN${t}aaa${t}$u/1" "task/a${t}main${t}green${t}-${t}aaa${t}$u/1${t}-${t}-${t}-
+task/old${t}staging${t}red${t}CONFLICTING${t}0a1d${t}$u/9${t}APPROVED${t}APPROVED${t}-"
+  run jig housekeeping
+  assert_eq "task/a${t}main${t}open${t}green${t}T${t}aaa${t}$u/1${t}-${t}none${t}-
+task/old${t}staging${t}open${t}red${t}T${t}0a1d${t}$u/9${t}conflicting${t}approved${t}-" "$(hk_cache_rows)"
+}
+
+# GitLab's list has no approvals: on the staging flow each open merge request
+# into the staging branch is asked about once, and no other row is.
+test_housekeeping_forge_cache_asks_gitlab_for_the_review_of_staging_merge_requests() {
+  local t u
+  t=$(printf '\t')
+  u=https://gitlab.com/example/example/-/merge_requests
+  hk_staging_setup
+  hk_cfg forge gitlab
+  mkdir -p stub-bin
+  cat > stub-bin/glab <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$PWD/stub-bin/calls"
+case "\$1" in
+  auth) exit 0 ;;
+  mr)
+    if [ "\$2" = list ]; then
+      printf '[{"iid":1,"source_branch":"task/a","target_branch":"staging","state":"opened","sha":"aaa","web_url":"$u/1"},{"iid":2,"source_branch":"task/b","target_branch":"main","state":"opened","sha":"bbb","web_url":"$u/2"},{"iid":3,"source_branch":"task/c","target_branch":"staging","state":"merged","sha":"ccc","web_url":"$u/3"}]\n'
+    else
+      printf '{"iid":1,"reviewers":[]}\n'
+    fi ;;
+  api) printf '{"approved_by":[{"user":{"username":"ann"}}],"approvals_left":0}\n' ;;
+esac
+STUB
+  chmod +x stub-bin/glab
+  printf 'stub-bin/\n' >> .git/info/exclude
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+  
+  run jig housekeeping
+  assert_eq "task/a${t}staging${t}open${t}-${t}T${t}aaa${t}$u/1${t}-${t}approved${t}-
+task/b${t}main${t}open${t}-${t}T${t}bbb${t}$u/2${t}-${t}-${t}-
+task/c${t}staging${t}merged${t}-${t}T${t}ccc${t}$u/3${t}-${t}-${t}-" "$(hk_cache_rows)"
+  # One approvals call, for the one merge request that qualifies.
+  assert_eq 1 "$(grep -c '^api ' stub-bin/calls)"
+}
+
+# Off the staging flow GitLab is asked for no approval at all.
+test_housekeeping_forge_cache_asks_gitlab_for_no_review_off_the_staging_flow() {
+  local t
+  t=$(printf '\t')
+  hk_setup
+  hk_cfg forge gitlab
+  mkdir -p stub-bin
+  cat > stub-bin/glab <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$PWD/stub-bin/calls"
+case "\$1" in
+  auth) exit 0 ;;
+  mr) printf '[{"iid":1,"source_branch":"task/a","target_branch":"staging","state":"opened","sha":"aaa","web_url":"https://gitlab.com/example/example/-/merge_requests/1"}]\n' ;;
+esac
+STUB
+  chmod +x stub-bin/glab
+  printf 'stub-bin/\n' >> .git/info/exclude
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+  git remote add origin https://gitlab.com/example/example.git
+
+  run jig housekeeping
+  assert_eq "task/a${t}staging${t}open${t}-${t}T${t}aaa${t}https://gitlab.com/example/example/-/merge_requests/1${t}-${t}-${t}-" "$(hk_cache_rows)"
+  assert_eq 0 "$(grep -c '^api ' stub-bin/calls || true)"
+}
+
 # GitLab's list carries states and no pipeline: CI stays unknown, and no call
 # per merge request is made to learn it.
 test_housekeeping_forge_cache_from_gitlab_has_no_ci() {
@@ -3261,8 +3480,8 @@ STUB
 
   run jig housekeeping
   # The merge request's own address, not its author's, which comes first.
-  assert_eq "task/a${t}main${t}open${t}-${t}T${t}aaa${t}https://gitlab.com/example/example/-/merge_requests/1${t}conflicting
-task/b${t}main${t}merged${t}-${t}T${t}bbb${t}-${t}-" "$(hk_cache_rows)"
+  assert_eq "task/a${t}main${t}open${t}-${t}T${t}aaa${t}https://gitlab.com/example/example/-/merge_requests/1${t}conflicting${t}-${t}-
+task/b${t}main${t}merged${t}-${t}T${t}bbb${t}-${t}-${t}-${t}-" "$(hk_cache_rows)"
   assert_eq 1 "$(grep -c '^mr ' stub-bin/calls)"
 }
 
@@ -4006,6 +4225,26 @@ test_housekeeping_deletes_on_origin_when_autopilot_git_may_push() {
   assert_eq 0 "$RC"
   assert_contains "$OUT" "on origin"
   if git -C "$remote" show-ref --verify --quiet refs/heads/task/sq; then fail "origin's branch stayed with autopilot.git push"; fi
+  rm -rf "$remote"
+}
+
+# agent.git_staging is a push right as well: a task shipped under it leaves its
+# branch on origin.
+test_housekeeping_deletes_on_origin_when_agent_git_staging_may_push() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local remote tip
+  remote=$(hk_squash_origin task/sq)
+  hk_cfg_local agent.git none
+  hk_cfg_local agent.git_staging push
+  tip=$(git rev-parse task/sq)
+  hk_stub_gh_rows "task/sq$(printf '\t')main$(printf '\t')MERGED$(printf '\t')$tip"
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "on origin"
+  if git -C "$remote" show-ref --verify --quiet refs/heads/task/sq; then fail "origin's branch stayed with agent.git_staging push"; fi
   rm -rf "$remote"
 }
 

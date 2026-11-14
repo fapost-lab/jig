@@ -162,8 +162,9 @@ whose informal synonym is also "draft", and not a draft pull request.
 ## Purge
 
 Ending the life of a closed task's Workspace, in two stages: move to Trash, then permanent
-deletion once `trash_ttl` expires. Only a `consolidated` and merged task is purged; one nobody
-finished is Archived instead. "Purged" is not a State — the directory is simply gone (ADR-0005).
+deletion once `trash_ttl` expires. Only a `consolidated` task is purged — merged, or never started at
+all (adr-20261114-a-closed-task-never-started-goes-to-trash); one nobody finished is Archived
+instead. "Purged" is not a State — the directory is simply gone (ADR-0005).
 
 ## STALE_CANDIDATE
 
@@ -250,8 +251,9 @@ install (`jig status`'s `drift:` line).
 ## Parked
 
 A `ready` task in the `staging` Git Flow that waits at the Staging Branch: its pull request into
-the Staging Branch is open (reason `review`; `landing` in the owner's checkout when their
-`agent.git` is below `merge`), or it is On Staging and waits for "prepare for prod" (reason
+the Staging Branch is open (reason `review`, with the review state housekeeping last read; `landing` in the owner's
+checkout when their `agent.git` is below `merge` and the review is approved or
+`git.staging_review` is `none`), or it is On Staging and waits for "prepare for prod" (reason
 `signal`), and it has no pull request into its base yet. Derived from git and the forge cache,
 never stored; it is not the current task, not advised by the queue, and `jig task resume` takes it
 back to `active` for a fix, recording only that (`park_resumed_at`, until the next `jig task ship`) (adr-20261112-a-task-waiting-at-staging-is-parked-and-resuming-it-is-its-status).

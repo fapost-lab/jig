@@ -64,7 +64,9 @@ answer to "which housekeeping flags still stand" lived (`_status_flagged_ids`).
   `{"tasks": [...], "hidden": n, "housekeeping": {...}|null}`; schemas/json.md pins every field and
   `tests/task.t.sh` compares the whole shape. Its `pull_request` holds `url`, and `state`, `ci` and
   `fetched_at` from the forge cache housekeeping writes (task forge-cache, `lib/forgecache.sh`),
-  never from the forge on read.
+  never from the forge on read; since 2026-11-14 also `base`, `mergeable` and `review`, found by
+  the task's branch when no `pr_url` was recorded, and on the staging flow a `promotion` beside it
+  (task staging-review-state-for-ui).
 
 ## Alternatives
 

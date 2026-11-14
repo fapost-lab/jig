@@ -98,11 +98,21 @@ pr https://github.com/acme/app/pull/42
 landed https://github.com/acme/app/pull/42 on staging (merged on the forge)
 ```
 
-How far that goes depends on `agent.git`, your own setting for what the agent may do with git. At
-`merge` the ship also lands the task; below it, the ship stops at the pull request, and you (or your
-agent, when you ask) land it later with `jig task land <id>`.
+How far that goes depends on `agent.git`, your own setting for what the agent may do with git, or on
+`agent.git_staging` when you set it: the level for a task whose pull request goes into the staging
+branch. At `merge` the ship also lands the task; below it, the ship stops at the pull request, and
+you (or your agent, when you ask) land it later with `jig task land <id>`.
 
-`agent.git` limits only the agent. When you land the pull request yourself — a button in your
+`agent.git_staging` lets the agent land on the staging branch without merging anything into your
+main branch. With `agent.git: pr` and `agent.git_staging: merge`, your agent lands its own tasks on
+the staging branch once CI passed and the review rule allows, while Jig upgrades, specifications,
+epics, releases and promotion still stop at a pull request for you. Not set, `agent.git` answers
+everywhere, as before. A task of an epic and a task that changes the git flow itself go into their
+own base, and `agent.git` decides those. These settings limit what Jig does for your agent: an agent
+that bypasses Jig (`gh pr merge`) is held only by the "Jig first" rules in your project's
+instructions and by the forge's branch protection.
+
+`agent.git` and `agent.git_staging` limit only the agent. When you land the pull request yourself — a button in your
 dashboard, or `jig task land <id> --by human` in a terminal — Jig does not read it, whatever it is
 set to. You press it on what you saw, so Jig looks at the checks once and never waits for them; a
 conflict is refused (your agent lands those with `jig task land <id>`); and the forge's branch
@@ -163,8 +173,11 @@ task booking-message class=T2 status=active staging=behind
 parked: booking-form (signal), booking-report (review, landing)
 ```
 
-- `review` — its pull request into staging still waits for a review (`landing` when you land it
-  yourself).
+- `review` — its pull request into staging still waits for a review. `landing` is added once the
+  pull request is approved (or `git.staging_review` is `none`) and you land it yourself: while it
+  waits for a reviewer, has changes requested, or nobody has looked, `jig status` says so and a board
+  built on `jig task list --json` offers no landing. Jig reads the review from what the last
+  `jig housekeeping` heard from the forge, so run it to refresh.
 - `signal` — it is on staging, waiting for someone to say "prepare for prod".
 - `staging=behind` — a task you took back for a fix: its branch has commits the staging branch does
   not have yet.

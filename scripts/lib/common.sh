@@ -3935,6 +3935,42 @@ jig_pr_approval() {
   printf '%s\n' "$__jpa_state"
 }
 
+# jig_pr_approval_github_v <state-var> <decision> <reviews-csv> <pending-csv> —
+# GitHub's word for one pull request into <state-var>, from what the forge
+# said: <decision> is `reviewDecision` (empty or `null` when branch protection
+# asks for no reviews), <reviews-csv> the states of each reviewer's latest
+# review, <pending-csv> the reviewers still requested. A pure function, no
+# process: jig_pr_approval_v asks the forge for one pull request, housekeeping
+# for every open one in its list call, and both decide the same way here.
+# `changes` when the decision or any latest review asks for changes; `waiting`
+# when somebody is still requested; `approved` under an APPROVED decision, or
+# with no decision when a latest review approved; `none` under REVIEW_REQUIRED
+# or when nobody approved; `unknown` for any decision this does not know.
+jig_pr_approval_github_v() {
+  local __jpag_dec="$2" __jpag_reviews="$3" __jpag_p="$4" __jpag_s="unknown"
+  case "$__jpag_dec" in
+    APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED | '' | null)
+      # A change request wins under any decision: branch protection's
+      # leaves out reviewers without write access.
+      if [ "$__jpag_dec" = CHANGES_REQUESTED ] \
+        || case ",$__jpag_reviews," in *,CHANGES_REQUESTED,*) true ;; *) false ;; esac; then
+        __jpag_s=changes
+      elif [ -n "$__jpag_p" ]; then
+        __jpag_s=waiting
+      elif [ "$__jpag_dec" = APPROVED ]; then
+        __jpag_s=approved
+      elif [ "$__jpag_dec" = REVIEW_REQUIRED ]; then
+        __jpag_s=none
+      else
+        case ",$__jpag_reviews," in
+          *,APPROVED,*) __jpag_s=approved ;;
+          *) __jpag_s=none ;;
+        esac
+      fi ;;
+  esac
+  printf -v "$1" '%s' "$__jpag_s"
+}
+
 # jig_pr_approval_v <state-var> <pending-var> <url> — whether the pull request
 # is approved, into <state-var>: `changes` when anybody's latest review asks for
 # changes, whatever else holds; `waiting` when a reviewer the forge records as
@@ -3970,26 +4006,7 @@ jig_pr_approval_v() {
           __jpav_reviews=${__jpav_rest%%|*}
           __jpav_p=""
           [ "$__jpav_rest" = "$__jpav_reviews" ] || __jpav_p=${__jpav_rest#*|}
-          case "$__jpav_dec" in
-            APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED | '' | null)
-              # A change request wins under any decision: branch protection's
-              # leaves out reviewers without write access.
-              if [ "$__jpav_dec" = CHANGES_REQUESTED ] \
-                || case ",$__jpav_reviews," in *,CHANGES_REQUESTED,*) true ;; *) false ;; esac; then
-                __jpav_s=changes
-              elif [ -n "$__jpav_p" ]; then
-                __jpav_s=waiting
-              elif [ "$__jpav_dec" = APPROVED ]; then
-                __jpav_s=approved
-              elif [ "$__jpav_dec" = REVIEW_REQUIRED ]; then
-                __jpav_s=none
-              else
-                case ",$__jpav_reviews," in
-                  *,APPROVED,*) __jpav_s=approved ;;
-                  *) __jpav_s=none ;;
-                esac
-              fi ;;
-          esac
+          jig_pr_approval_github_v __jpav_s "$__jpav_dec" "$__jpav_reviews" "$__jpav_p"
         fi ;;
       gitlab)
         __jpav_iid=$(_jig_ship_glab_mr "$__jpav_url")

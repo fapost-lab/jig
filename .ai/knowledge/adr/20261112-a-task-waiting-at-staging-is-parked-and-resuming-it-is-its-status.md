@@ -95,9 +95,9 @@ again before it ships, so resuming has to take the task out of `ready` whatever 
   `needs-consolidation` flag). The reason says
   so in words: `task set: <id> is on <staging> and not in <base> yet: prepare for prod, then close
   it once the promotion merged`. A task that never reached staging and opened no pull request
-  closes as before. `pull_request.state` and `ci` in `task list --json` read the pull request
-  `pr_url` names by its url, else by branch and the branch it goes into (`forgecache_pr`,
-  `_task_pr_into_v`): before, a lookup by the task's base never found a staging one.
+  closes as before, and so does a task already closed. The table's `close` reads the state of the
+  pull request `pr_url` names as `pull_request` finds it (by its address, else by branch and the
+  staging branch), never the lookup by the task's base, which never found a staging one.
 
 ## Alternatives
 
@@ -135,3 +135,5 @@ again before it ships, so resuming has to take the task out of `ready` whatever 
 - `review` is as fresh as the last housekeeping run, except for the owner's own links.
 - A CI runner has no forge cache and reads only `signal`; the readers here all run in the owner's
   workspace.
+
+> **Amended 2026-11-14.** `landing` names only a pull request whose review is over: the forge cache's review column says `approved`, or `git.staging_review` is `none`. A review that is `waiting`, `none`, has `changes`, or that no housekeeping run has read yet (a line `jig task ship` just recorded) leaves the hint `null`, so a board offers the landing only when it can succeed. The approval is in the cache after all, for both forges (adr-20261113-reviewers-are-read-from-the-forge as amended). `parked` gains a third key, `review`: `{"state", "waiting_for"}` for a task parked for `review`, `null` for `signal` and for a review the cache cannot say. `_TASK_PARKED` keeps its three fields; the review rides beside it in `_TASK_PARKED_REVIEW`. The Alternatives line "the approval in the forge cache" is no longer deferred.
