@@ -162,8 +162,9 @@ whose informal synonym is also "draft", and not a draft pull request.
 ## Purge
 
 Ending the life of a closed task's Workspace, in two stages: move to Trash, then permanent
-deletion once `trash_ttl` expires. Only a `consolidated` and merged task is purged; one nobody
-finished is Archived instead. "Purged" is not a State — the directory is simply gone (ADR-0005).
+deletion once `trash_ttl` expires. Only a `consolidated` task is purged — merged, or never started at
+all (adr-20261114-a-closed-task-never-started-goes-to-trash); one nobody finished is Archived
+instead. "Purged" is not a State — the directory is simply gone (ADR-0005).
 
 ## STALE_CANDIDATE
 

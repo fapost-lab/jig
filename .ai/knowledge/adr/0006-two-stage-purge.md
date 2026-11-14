@@ -6,8 +6,8 @@ date: 2026-09-08
 domains: [housekeeping, safety]
 paths:
   - "scripts/lib/housekeeping.sh"
-summary: Why workspace deletion happens in two stages and never on unknown remote state.
-reviewed_at: 2026-11-10
+summary: Why workspace deletion happens in two stages and never on unknown remote state, save a closed task that was never started.
+reviewed_at: 2026-11-14
 ---
 # ADR-0006: Housekeeping purges in two stages via a local trash directory
 
@@ -59,3 +59,7 @@ framework.
 > **Amendment (2026-11-10).** Trash also takes an idea draft, as `idea-<id>`: moved there by
 > `jig spec draft drop` or by the `jig spec ship` that committed its spec, and purged by the same
 > `trash_ttl` (adr-20261110-an-idea-draft-waits-outside-git).
+
+> **Amendment (2026-11-14).** Trash also takes the workspace of a `consolidated` task that was never
+> started — no branch, no fork point, nothing at its template branch name — whose remote state stays
+> `unknown` because there is nothing to ask (adr-20261114-a-closed-task-never-started-goes-to-trash).

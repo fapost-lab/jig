@@ -212,6 +212,23 @@ test_housekeeping_decide_consolidated_is_never_archived() {
   assert_eq "purge" "$(hk_decide consolidated merged "" 99 14 60)"
 }
 
+test_housekeeping_decide_consolidated_never_started_is_purged() {
+  # Arguments: status remote paused age ttl stale released from reason started.
+  # A closed task that never had a branch has no change whose landing could be
+  # unknown: the person's close is the decision.
+  assert_eq "purge" "$(hk_decide consolidated unknown "" 1 14 60 true "" "" false)"
+  assert_eq "purge" "$(hk_decide consolidated unknown "" 99 14 60 true "" "" false)" "no stale flag"
+  assert_eq "preserve" "$(hk_decide consolidated unknown "" 1 14 60 true "" "" true)"
+  assert_eq "preserve" "$(hk_decide consolidated unknown "" 1 14 60)" "started omitted"
+  assert_eq "preserve STALE_CANDIDATE" "$(hk_decide consolidated unknown "" 99 14 60 true "" "" true)"
+  # Only a closed task with an unknown remote is affected.
+  assert_eq "$(hk_decide consolidated closed "" 1 14 60)" \
+    "$(hk_decide consolidated closed "" 1 14 60 true "" "" false)"
+  assert_eq "$(hk_decide active unknown "" 99 14 60)" "$(hk_decide active unknown "" 99 14 60 true "" "" false)"
+  assert_eq "$(hk_decide abandoned unknown "" 99 14 60)" "$(hk_decide abandoned unknown "" 99 14 60 true "" "" false)"
+  assert_eq "$(hk_decide archived unknown "" 99 14 60)" "$(hk_decide archived unknown "" 99 14 60 true "" "" false)"
+}
+
 test_housekeeping_decide_archive_carries_no_stale_flag() {
   # The task is set aside by this very decision; a "look at this" marker on it
   # would say the opposite.
@@ -337,6 +354,90 @@ test_housekeeping_deleted_branch_is_unknown_not_merged() {
   run jig housekeeping --verbose
   assert_contains "$OUT" "gone status=consolidated remote=unknown via=none action=preserve"
   assert_dir .ai/workspace/tasks/gone
+}
+
+test_housekeeping_closed_task_that_never_started_is_purged() {
+  hk_setup
+  fixture_task never "" consolidated
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "never status=consolidated remote=unknown via=none action=purge"
+  assert_no_file .ai/workspace/tasks/never
+  assert_file ".ai/runtime/trash/$(date +%Y-%m-%d)/never/state"
+  assert_contains "$OUT" "removed (1):"
+  assert_not_contains "$OUT" "kept, cannot tell"
+  assert_file_contains .ai/runtime/housekeeping.log "action=purge"
+}
+
+test_housekeeping_closed_task_with_a_template_branch_is_kept() {
+  # No `branch:` key, but a branch named by the template exists: something was
+  # started, so its landing is unknown and the workspace stays.
+  hk_setup
+  git branch task/started
+  fixture_task started "" consolidated
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "started status=consolidated remote=unknown via=none action=preserve"
+  assert_contains "$OUT" "  never started, but its branch task/started exists: started"
+  assert_dir .ai/workspace/tasks/started
+}
+
+test_housekeeping_closed_task_with_a_pull_request_from_its_template_branch_is_kept() {
+  # No ref anywhere, but the forge knows a pull request from the template
+  # branch: the work was started and shipped from elsewhere.
+  hk_setup
+  hk_cfg forge github
+  hk_stub_gh "task/shipped$(printf '\t')main$(printf '\t')OPEN"
+  fixture_task shipped "" consolidated
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "shipped status=consolidated remote=unknown via=none action=preserve"
+  assert_contains "$OUT" "  never started, but a pull request from task/shipped exists: shipped"
+  assert_dir .ai/workspace/tasks/shipped
+}
+
+test_housekeeping_closed_task_with_a_pull_request_into_another_base_is_kept() {
+  # A pull request from the template branch counts whatever its base and
+  # state: one closed into an epic is as much a sign of work as one into main.
+  hk_setup
+  hk_cfg forge github
+  hk_stub_gh "task/elsewhere$(printf '\t')epic/other$(printf '\t')CLOSED"
+  fixture_task elsewhere "" consolidated
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "elsewhere status=consolidated remote=unknown via=none action=preserve"
+  assert_contains "$OUT" "  never started, but a pull request from task/elsewhere exists: elsewhere"
+  assert_dir .ai/workspace/tasks/elsewhere
+}
+
+test_housekeeping_closed_task_never_started_is_kept_when_the_forge_does_not_answer() {
+  # A forge that failed has not said there is no pull request.
+  hk_setup
+  hk_cfg forge github
+  hk_stub_gh_failing
+  fixture_task never "" consolidated
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "never status=consolidated remote=unknown via=none action=preserve"
+  assert_contains "$OUT" "the forge did not answer whether task/never had a pull request: never"
+  assert_dir .ai/workspace/tasks/never
+}
+
+test_housekeeping_closed_triage_task_stays_while_its_source_is_here() {
+  # The source's next ship reads the triage workspace to hand its findings
+  # over only once (adr-20261029-a-ship-hands-open-findings-to-one-triage-task).
+  hk_setup
+  fixture_task src "no-such-branch" active
+  fixture_task src-findings "" consolidated "triage_of:src"
+  fixture_task gone-findings "" consolidated "triage_of:gone"
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "src-findings status=consolidated remote=unknown via=none action=preserve"
+  assert_contains "$OUT" "  triage of src, kept while src is here: src-findings"
+  assert_dir .ai/workspace/tasks/src-findings
+  assert_contains "$OUT" "gone-findings status=consolidated remote=unknown via=none action=purge"
+  assert_no_file .ai/workspace/tasks/gone-findings
 }
 
 test_housekeeping_detached_branch_is_unknown() {
@@ -2934,7 +3035,7 @@ test_housekeeping_report_says_why_a_branch_cannot_tell() {
   git checkout -q main
   fixture_task fresh "task/fresh" consolidated "base_commit:$fork"
   fixture_task op "task/open" consolidated "base_commit:$fork"
-  fixture_task never "" consolidated
+  fixture_task never "" consolidated "base_commit:$fork"
 
   run jig housekeeping
   assert_contains "$OUT" "  its branch has no commits since the task started: fresh"

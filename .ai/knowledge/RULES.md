@@ -173,7 +173,11 @@
   `active` or `ready` task untouched for longer than `housekeeping.stale_after` (no worktree, no
   other flag, remote state not `open`, `merged` or `closed`), is **archived**: its `status` becomes
   `archived` and its workspace stays where it is, without a time limit. Only `consolidated` and
-  merged tasks are purged to trash (ADR-0006). The worktree of an abandoned task goes only by
+  merged tasks are purged to trash (ADR-0006), and `consolidated` tasks that were never started:
+  their `unknown` hides no change — no `branch`, no `base_commit`, no ref or pull request at the
+  template branch name (a forge that was asked and failed keeps it; with no forge in use, git's
+  refs alone decide), and no triage source still in the workspace
+  (adr-20261114-a-closed-task-never-started-goes-to-trash). The worktree of an abandoned task goes only by
   `git worktree remove` without `--force`; branch, commits and pull request are never touched, and
   `jig task unarchive` undoes the archive. (adr-20261027-a-task-nobody-finished-is-archived-not-purged,
   `domains/housekeeping`)
