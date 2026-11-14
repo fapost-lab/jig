@@ -2132,7 +2132,8 @@ _task_close_write() {
 # holds (the forge cache's: the promotion, when it squashed); the command
 # passes none and reads the forge cache itself.
 #
-# Forge-only, deliberately: housekeeping's own remote-state tier falls back
+# The `pr_url` check is forge-only, deliberately (the staging check above
+# reads git and the forge cache too): housekeeping's own remote-state tier falls back
 # from the forge to git ancestry/patch-id when the forge cannot answer
 # (ADR-0005), because a background sweep can afford to keep looking. This
 # gate cannot — it must answer now, synchronously, in the same call the
@@ -2141,7 +2142,7 @@ _task_close_write() {
 # ancestry check would have called the same pull request merged. That is
 # the safe side to be wrong on: closing early cannot be taken back for
 # free, and the refusal is retried by re-running this same command, not by
-# `jig housekeeping`, which never feeds this gate.
+# `jig housekeeping`, which never feeds that check.
 # When the forge could not be asked, the refusal names why (jig_pr_state_v)
 # and says the pull request may already be merged: "unknown" alone reads as a
 # verdict on the pull request, when it is only the forge that did not answer.
