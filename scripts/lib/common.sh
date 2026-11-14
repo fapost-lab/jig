@@ -1042,7 +1042,9 @@ jig_base_ref() {
 # for a command, never for a listing's every row.
 jig_branch_in_base() {
   local tip="$1" base="$2" mb combined c cherry
-  [ -n "$tip" ] && [ -n "$base" ] || return 1
+  if [ -z "$tip" ] || [ -z "$base" ]; then
+    return 1
+  fi
   if git -C "$JIG_PROJECT" merge-base --is-ancestor "$tip" "$base" 2>/dev/null; then
     return 0
   fi

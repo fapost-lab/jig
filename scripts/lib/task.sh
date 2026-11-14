@@ -2188,15 +2188,20 @@ _task_close_refusal() {
 # below for how far each mode asks).
 # <forge> asks the forge about the promotion now (jig_pr_state_v) and reads the
 # forge cache for the base state; <cache> never asks it, as the table never does.
+# Inside a listing the table asks git no question of its own: the base ref and
+# which branches are in it were read once (_task_list_staging_read) and each
+# row is a lookup in those lists, with the answers the commands below give.
 _task_close_staging_refusal() {
   local id="$1" mode="$2" base_state="$3" staging branch base defbase pr promote
   local pstate="" pwhy="" st="" tip baseref="" cache line flag msg pushed="" into="" t=$'\t'
+  local listing="" nl=$'\n'
   task_state_var branch "$id" branch
   [ -n "$branch" ] || return 0
   jig_task_base_v base "$id"
   cfg_v defbase git.base_branch main
   [ "$base" = "$defbase" ] || return 0
   if [ "$_TASK_LIST_STAGING_READ" = 1 ] && [ "$mode" = cache ]; then
+    listing=1
     staging=$_TASK_LIST_STAGING_BRANCH
     [ -n "$staging" ] || return 0
   else
@@ -2229,9 +2234,20 @@ EOF
   # until it has nothing else says it left the branch (decided by the
   # person, 2026-11-14).
   if [ -z "$pr" ] && [ -z "$st" ]; then
-    baseref=$(jig_base_ref "$base")
-    [ -n "$baseref" ] || return 0
-    [ -n "$(git -C "$JIG_PROJECT" rev-list -n 1 "$baseref..refs/remotes/origin/$branch" -- 2>/dev/null)" ] || return 0
+    if [ -n "$listing" ]; then
+      baseref=$_TASK_LIST_BASE_REF
+      [ -n "$baseref" ] || return 0
+      # `rev-list base..origin/<branch>` is not empty exactly when the ref
+      # exists and is not an ancestor of the base.
+      case "$_TASK_LIST_REFS_UNMERGED" in
+        *"$nl""refs/remotes/origin/$branch""$nl"*) ;;
+        *) return 0 ;;
+      esac
+    else
+      baseref=$(jig_base_ref "$base")
+      [ -n "$baseref" ] || return 0
+      [ -n "$(git -C "$JIG_PROJECT" rev-list -n 1 "$baseref..refs/remotes/origin/$branch" -- 2>/dev/null)" ] || return 0
+    fi
     pushed=1
   fi
   if ! declare -F forgecache_entry_url >/dev/null; then
@@ -2253,6 +2269,9 @@ EOF
     else
       forgecache_entry_url "$cache" "$promote"
       pstate=$_FORGECACHE_STATE
+      # A promotion the cache has not heard of is not merged as far as the
+      # table knows: the reason names it as open.
+      [ -n "$pstate" ] || pstate=open
     fi
     [ "$pstate" != merged ] || return 0
   fi
@@ -2266,13 +2285,28 @@ EOF
   # in as <base-state> `merged`, offers it then.
   if [ "$mode" = forge ] || [ -z "$st" ]; then
     tip=refs/heads/$branch
-    git -C "$JIG_PROJECT" rev-parse --verify --quiet "$tip^{commit}" >/dev/null 2>&1 || tip=refs/remotes/origin/$branch
-    [ -n "$baseref" ] || baseref=$(jig_base_ref "$base")
-    if [ -n "$baseref" ]; then
-      if [ "$mode" = forge ]; then
-        ! jig_branch_in_base "$tip" "$baseref" || return 0
-      elif git -C "$JIG_PROJECT" merge-base --is-ancestor "$tip" "$baseref" 2>/dev/null; then
-        return 0
+    if [ -n "$listing" ]; then
+      baseref=$_TASK_LIST_BASE_REF
+      # The tip is the local branch when it exists, else origin's; it is in the
+      # base when it is among the branches the base holds.
+      case "$_TASK_LIST_REFS_MERGED$_TASK_LIST_REFS_UNMERGED" in
+        *"$nl$tip$nl"*) ;;
+        *) tip=refs/remotes/origin/$branch ;;
+      esac
+      if [ -n "$baseref" ]; then
+        case "$_TASK_LIST_REFS_MERGED" in
+          *"$nl$tip$nl"*) return 0 ;;
+        esac
+      fi
+    else
+      git -C "$JIG_PROJECT" rev-parse --verify --quiet "$tip^{commit}" >/dev/null 2>&1 || tip=refs/remotes/origin/$branch
+      [ -n "$baseref" ] || baseref=$(jig_base_ref "$base")
+      if [ -n "$baseref" ]; then
+        if [ "$mode" = forge ]; then
+          ! jig_branch_in_base "$tip" "$baseref" || return 0
+        elif git -C "$JIG_PROJECT" merge-base --is-ancestor "$tip" "$baseref" 2>/dev/null; then
+          return 0
+        fi
       fi
     fi
   fi
@@ -5667,22 +5701,39 @@ _TASK_LIST_STAGING=""
 # The staging branch's name on that flow, read with it: where a task's pull
 # request goes (its `pull_request`), asked once per listing.
 _TASK_LIST_STAGING_BRANCH=""
+# What the close action asks of git, answered once per listing on that flow so
+# a row starts no process (_task_close_staging_refusal): the base ref of the
+# project's base branch, and the local and origin branches that are, and are
+# not, ancestors of it — each list newline-wrapped, one full refname per line.
+_TASK_LIST_BASE_REF=""
+_TASK_LIST_REFS_MERGED=""
+_TASK_LIST_REFS_UNMERGED=""
 
-# _task_list_staging_read <ids> — fill the two globals above for the tasks
+# _task_list_staging_read <ids> — fill the staging globals above for the tasks
 # <ids> names, one per line: their branch and base from the listing's snapshot,
-# and the answer from jig_staging_states (common.sh) in one call, so the
+# and the answer from jig_staging_states (common.sh) in one call, plus the base
+# ref and the branches in and not in it (two `git for-each-ref`), so the
 # processes it starts do not grow with the tasks. A project on any other flow
 # reads nothing and its objects keep their shape byte for byte.
 _TASK_LIST_STAGING_READ=""
 _task_list_staging_read() {
-  local ids="$1" staging id branch base rows="" t=$'\t'
+  local ids="$1" staging id branch base defbase rows="" t=$'\t' nl=$'\n'
   _TASK_LIST_STAGING_READ=1
   _TASK_LIST_STAGING_ON=""
   _TASK_LIST_STAGING=""
   _TASK_LIST_STAGING_BRANCH=""
+  _TASK_LIST_BASE_REF=""
+  _TASK_LIST_REFS_MERGED=""
+  _TASK_LIST_REFS_UNMERGED=""
   staging=$(jig_staging_in_use) || return 0
   _TASK_LIST_STAGING_ON=1
   _TASK_LIST_STAGING_BRANCH=$staging
+  cfg_v defbase git.base_branch main
+  _TASK_LIST_BASE_REF=$(jig_base_ref "$defbase")
+  if [ -n "$_TASK_LIST_BASE_REF" ]; then
+    _TASK_LIST_REFS_MERGED=$nl$(git -C "$JIG_PROJECT" for-each-ref --format='%(refname)' --merged="$_TASK_LIST_BASE_REF" refs/heads refs/remotes/origin 2>/dev/null)$nl
+    _TASK_LIST_REFS_UNMERGED=$nl$(git -C "$JIG_PROJECT" for-each-ref --format='%(refname)' --no-merged="$_TASK_LIST_BASE_REF" refs/heads refs/remotes/origin 2>/dev/null)$nl
+  fi
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     task_state_var branch "$id" branch
