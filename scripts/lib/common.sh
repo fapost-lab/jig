@@ -1031,6 +1031,54 @@ jig_base_ref() {
   return 0
 }
 
+# jig_branch_in_base <tip> <base-ref> — exit 0 when the work of <tip> is in
+# <base-ref> by git alone, however it was merged: <tip> is an ancestor (a
+# fast-forward or a merge commit); the branch's whole diff since the merge
+# base has the patch-id of one commit the base gained since (a squash); or
+# every commit of it is upstream by `git cherry` (a rebase). Exit 1 otherwise,
+# and whenever git cannot tell. Housekeeping's ancestry tier
+# (_hk_ancestry_state) and the staging close (_task_close_staging_refusal) ask
+# this one question; the squash check walks the base's new commits, so it is
+# for a command, never for a listing's every row.
+jig_branch_in_base() {
+  local tip="$1" base="$2" mb combined c cherry
+  if [ -z "$tip" ] || [ -z "$base" ]; then
+    return 1
+  fi
+  if git -C "$JIG_PROJECT" merge-base --is-ancestor "$tip" "$base" 2>/dev/null; then
+    return 0
+  fi
+  mb=$(git -C "$JIG_PROJECT" merge-base "$base" "$tip" 2>/dev/null || printf '')
+  [ -n "$mb" ] || return 1
+  # Squash: the branch's contribution collapses into one commit on the base,
+  # so its combined diff's patch-id matches that commit's, not any single
+  # commit of the branch. Guarded: an unguarded pipeline assignment under
+  # `set -e` + `pipefail` would abort the caller.
+  combined=$(git -C "$JIG_PROJECT" diff "$mb" "$tip" 2>/dev/null | git patch-id --stable 2>/dev/null | cut -d' ' -f1) || combined=""
+  if [ -n "$combined" ]; then
+    while IFS= read -r c; do
+      [ -n "$c" ] || continue
+      [ "$c" != "$combined" ] || return 0
+    done < <(_jig_base_patch_ids "$mb" "$base")
+  fi
+  # Rebase: every commit upstream individually; a single `+` did not land.
+  cherry=$(git -C "$JIG_PROJECT" cherry "$base" "$tip" 2>/dev/null || printf '')
+  case "$cherry" in
+    '' | '+'* | *$'\n+'*) return 1 ;;
+  esac
+  return 0
+}
+
+# _jig_base_patch_ids <merge-base> <base> — patch-id of every commit the base
+# gained since the merge base, one per line.
+_jig_base_patch_ids() {
+  local mb="$1" base="$2" sha
+  while IFS= read -r sha; do
+    [ -n "$sha" ] || continue
+    git -C "$JIG_PROJECT" show "$sha" 2>/dev/null | git patch-id --stable 2>/dev/null | cut -d' ' -f1
+  done < <(git -C "$JIG_PROJECT" rev-list "$mb..$base" 2>/dev/null)
+}
+
 # jig_staging_states <staging-branch> <rows> — "<id><TAB>on|behind" for each
 # task of <rows> ("<id><TAB><branch><TAB><base>" lines) whose own work reached
 # origin's <staging-branch>; nothing for any other task. Derived from git by

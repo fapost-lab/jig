@@ -482,10 +482,26 @@ _prdo_merge_pr_body() {
   if [ "$status" = consolidated ]; then
     closed=true
   else
-    close_why=$(_task_close_refusal "$id" merged) || exit 1
+    # A pull request into the task's own base puts its work there now: say so,
+    # as the forge cache would (<base-state> `merged`), so the staging flow's
+    # wait for the base does not refuse a close this merge just made true.
+    local own_base into_base=""
+    jig_task_base_v own_base "$id"
+    if [ -n "$_PRDO_BASE" ] && [ "$_PRDO_BASE" = "$own_base" ]; then
+      into_base=merged
+    fi
+    close_why=$(_task_close_refusal "$id" merged "$into_base") || exit 1
     if [ -n "$close_why" ]; then
-      blocked='"knowledge-not-recorded"'
       _prdo_say "$id stays open: $close_why"
+      # The code by the refusal's opening words, never by a copy of its
+      # condition; a test pins each, so a reworded guard fails a test.
+      case "$close_why" in
+        "task set: status consolidated requires knowledge_consolidated true"*)
+          blocked='"knowledge-not-recorded"' ;;
+        "task set: $id is on "*" and not in "*" yet: "* | "task set: $id is pushed and not in "*)
+          blocked='"not-in-base"' ;;
+        *) jig_die "$who: merged, but no close_blocked code for this refusal: $close_why" ;;
+      esac
     else
       if [ "$outcome" = already-merged ]; then
         _prdo_claim "$who" "$expected"

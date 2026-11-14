@@ -96,7 +96,7 @@ be reworded.
 | `not-on-base` | the knowledge document, or the change to the file a stub links, is in your checkout but not on the base the decision is judged on: not committed, or not pushed. Nothing was written — push it first |
 | `not-on-branch` | the knowledge document, or that change, reached the base after the branch the decisions wait on was cut. Nothing was written — decide it once the decisions waiting there have landed |
 | `source-missing` | the file a knowledge stub links is missing or not tracked. Nothing was written |
-| `not-closable` | the task you asked to close is not one Jig offers to close: its knowledge decision is not recorded, or its pull request is not merged. Nothing was written — show the person the message, which is the reason |
+| `not-closable` | the task you asked to close is not one Jig offers to close: its knowledge decision is not recorded, its pull request is not merged, or, on the staging flow, its work is not in the base yet. Nothing was written — show the person the message, which is the reason |
 | `not-paused` | the task you asked to resume is neither paused nor parked at the staging branch: somebody resumed it first. Nothing was written — read again |
 | `already-paused` | the task you asked to pause is paused already: somebody paused it first. Nothing was written — read again |
 | `wrong-checkout` | the task's pause put work aside in a stash, and the stash can only be applied where the task's branch is checked out. Nothing was written — show the person the message, which names that place |
@@ -766,8 +766,8 @@ The answer is the task as `jig task list --json` lists it, now with `"status":"c
 ```
 
 The command asks the forge about the pull request now, so it can refuse a close the page offered
-from a stale cache. A close that is not offered — the knowledge decision is not recorded, or the pull
-request is not merged — is refused with `not-closable`, and its `message` is the reason to show as
+from a stale cache. A close that is not offered — the knowledge decision is not recorded, the pull
+request is not merged, or, on the staging flow, the work is not in the base yet — is refused with `not-closable`, and its `message` is the reason to show as
 it is, the one the `close` action carries. A write somebody else made since your read is refused with
 `stale-revision`, an unknown task with `not-found`; nothing is written in any of them.
 `--revision` and `--json` belong to this close alone: `jig task set booking-message class T2

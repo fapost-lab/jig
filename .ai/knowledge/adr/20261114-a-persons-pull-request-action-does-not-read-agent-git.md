@@ -55,7 +55,7 @@ meant to limit the person.
 - **Writes are checked against the revision** the caller read, claimed after every local and forge
   check and before the first thing sent: `stale-revision` means nothing was sent. The one Jig record
   `merge-pr` writes under that claim is the close (`status consolidated`), only when the knowledge
-  decision is recorded; otherwise the answer says `close_blocked: knowledge-not-recorded`. It never
+  decision is recorded; otherwise the answer says `close_blocked: knowledge-not-recorded` (or `not-in-base`, when the staging flow's wait for the base refuses the close). It never
   moves a checkout or deletes a branch; housekeeping's sweep does that later.
 - **The direct-flow merge is `jig task merge-pr`**, its action id `merge`.
 - **`jig task pr-status <id> --json` is the second read that asks the forge**, after
