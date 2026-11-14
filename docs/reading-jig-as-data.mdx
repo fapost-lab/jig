@@ -174,7 +174,10 @@ Each task carries what Jig knows about it:
     "url": "https://github.com/me/shop/pull/42",
     "state": "open",
     "ci": "green",
-    "fetched_at": "2026-10-15T09:00:00Z"
+    "fetched_at": "2026-10-15T09:00:00Z",
+    "base": "main",
+    "mergeable": "mergeable",
+    "review": {"state": "approved", "waiting_for": []}
   },
   "shipping": null,
   "housekeeping_flags": [],
@@ -201,20 +204,34 @@ asks no forge, so a task your CI merged into the staging branch (`git.staging_la
 same as one merged through a pull request. On any other flow the field is not there at all, so nothing changes for such a project.
 
 Beside it, `parked` says whether the task waits at the staging branch: `null`, or
-`{"reason": "review" | "signal", "hint": "landing" | null}`. `review` is an open pull request into the
-staging branch, `signal` work on the staging branch waiting for "prepare for prod", and `landing` means
-the person lands the pull request themselves (their `agent.git` is below `merge`). Only a `ready` task
+`{"reason": "review" | "signal", "hint": "landing" | null, "review": {...} | null}`. `review` is an
+open pull request into the staging branch, `signal` work on the staging branch waiting for "prepare for
+prod", and `landing` means the pull request is approved (or `git.staging_review` is `none`) and the
+person lands it themselves (their `agent.git` is below `merge`): a pull request that still waits for a
+reviewer, has changes requested or has no review yet is parked for `review` with no `landing` hint, so
+a board offers the landing only when it can succeed. The `review` key holds
+`{"state": "approved" | "changes" | "waiting" | "none", "waiting_for": ["login", ...]}` for a task
+parked for `review` (who a `waiting` review waits for), and `null` for `signal` and when Jig has not
+read the review yet. Only a `ready` task
 is parked; `jig task resume <id>` takes one back for a fix (its status becomes `active`, and it is
 not parked again until the next `jig task ship`, at any `agent.git`), and the `resume` action is offered for it. Why it waits is
 read every time and never stored; `signal` follows the staging branch as last fetched, so under
 `git.staging_land: external` a shipped task reads `null` until a fetch shows that CI merged it.
 
-`pull_request` says whether the pull request is `open`, `merged` or `closed`, and how its checks
-went: `green`, `red`, `pending`, or `none` when no check ran. Both are what the last `jig
-housekeeping` heard from the forge, at `fetched_at`; the read itself never asks. When housekeeping
-has not run, or the forge did not answer, they are `null` or as old as `fetched_at` says — run
-`jig housekeeping` to refresh them. Checks are asked only for open pull requests, and GitLab's list
-carries none, so there `ci` is `null`.
+`pull_request` is the task's own pull request: the one `jig task ship` opened, or, when you opened it
+by hand, the newest one from the task's branch into where its pull request goes (the staging branch on
+the staging flow). It says whether it is `open`, `merged` or `closed`, how its checks went (`green`,
+`red`, `pending`, or `none` when no check ran), the `base` it goes into, whether it `mergeable` or
+`conflicting`, and its `review` — the same `{"state", "waiting_for"}` as in `parked`, `null` when
+Jig has not read one. All of it is what the last `jig housekeeping` heard from the forge, at
+`fetched_at`; the read itself never asks. When housekeeping has not run, or the forge did not
+answer, they are `null` or as old as `fetched_at` says — run `jig housekeeping` to refresh them.
+Checks and reviews are asked only for open pull requests, and GitLab's list carries none, so there
+`ci` is `null` and the review is read only for merge requests into the staging branch.
+
+On the staging flow a task also has `promotion`, right after `pull_request`: the pull request that
+carries it from the staging branch into the base, `{"url", "state", "ci", "mergeable",
+"fetched_at"}`, or `null` while there is none (and for a task of an epic, which is never promoted).
 
 `shipping` is `{"since": "<UTC time>"}` while a `jig task ship` of this task is waiting for CI to
 merge or land the pull request itself, and `null` otherwise. It tells "the agent will merge it when
@@ -366,7 +383,7 @@ what the forge cache says and what a person can do, so a card needs no second re
   "detail": "CI is green and it merges cleanly, as of 2026-11-14T09:00:00Z",
   "todo": "Merge it: jig task merge-pr booking-message --by human; see why it waits: jig task pr-status booking-message --json",
   "url": "https://github.com/me/shop/pull/42",
-  "pull_request": {"branch": "task/booking-message", "base": "main", "state": "open", "fetched_at": "2026-11-14T09:00:00Z", "url": "https://github.com/me/shop/pull/42", "ci": "green", "mergeable": "mergeable"},
+  "pull_request": {"branch": "task/booking-message", "base": "main", "state": "open", "fetched_at": "2026-11-14T09:00:00Z", "url": "https://github.com/me/shop/pull/42", "ci": "green", "mergeable": "mergeable", "review": {"state": "none", "waiting_for": []}},
   "actions": [
     {"id": "merge", "command": "jig task merge-pr booking-message --by human", "offered": true, "reason": null},
     {"id": "pr-status", "command": "jig task pr-status booking-message --json", "offered": true, "reason": null}
@@ -375,8 +392,10 @@ what the forge cache says and what a person can do, so a card needs no second re
 ```
 
 `pull_request.ci` is `green`, `red`, `pending`, `none` or `null`, and `mergeable` is `mergeable`,
-`conflicting` or `null`; `state` and `fetched_at` are `null` when housekeeping has no entry for the
-task's branch. `actions` holds the same objects `jig task list --json` prints for the task, only the
+`conflicting` or `null`, and `review` is the review object or `null`; `state` and `fetched_at` are
+`null` when housekeeping has no entry for the task's branch. A task parked at the staging branch whose
+pull request is not approved yet gets this item too, titled by its review: "A pull request is waiting
+for review" (`detail` names who, when the cache does) or "Changes were requested on a pull request". `actions` holds the same objects `jig task list --json` prints for the task, only the
 ones that fit: `merge` and `pr-status`, or `land` and `pr-status` for a task parked at the staging
 branch for review and landing. Because the item is as old as the cache, press `pr-status` before a
 merge when the decision matters.

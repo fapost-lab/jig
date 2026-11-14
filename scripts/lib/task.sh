@@ -1240,7 +1240,10 @@ _task_new_body() {
   if [ "$as_json" = 1 ]; then
     # The filed task as `task list --json` lists it: one producer of a task's
     # facts. A task just filed has no branch, so no worktree to look up, and
-    # no housekeeping flag can stand for it yet.
+    # no housekeeping flag can stand for it yet; nor has the forge cache a
+    # pull request of it, but the producer looks it up.
+    # shellcheck source=lib/forgecache.sh
+    . "$JIG_LIB/forgecache.sh"
     printf '{"task":%s}\n' "$(_task_list_json_task "$id" "" "")"
     return 0
   fi
@@ -5525,6 +5528,9 @@ _TASK_LIST_FORGE_CACHE=""
 # "<id><TAB>on|behind" for the tasks whose work reached the staging branch.
 _TASK_LIST_STAGING_ON=""
 _TASK_LIST_STAGING=""
+# The staging branch's name on that flow, read with it: where a task's pull
+# request goes (its `pull_request`), asked once per listing.
+_TASK_LIST_STAGING_BRANCH=""
 
 # _task_list_staging_read <ids> — fill the two globals above for the tasks
 # <ids> names, one per line: their branch and base from the listing's snapshot,
@@ -5537,8 +5543,10 @@ _task_list_staging_read() {
   _TASK_LIST_STAGING_READ=1
   _TASK_LIST_STAGING_ON=""
   _TASK_LIST_STAGING=""
+  _TASK_LIST_STAGING_BRANCH=""
   staging=$(jig_staging_in_use) || return 0
   _TASK_LIST_STAGING_ON=1
+  _TASK_LIST_STAGING_BRANCH=$staging
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     task_state_var branch "$id" branch
@@ -5567,8 +5575,23 @@ EOF
 #     that sends the fix to the staging branch, which drops the record. Only
 #     that the person took it back is written; why it waits never is;
 #   - `landing` when the reason is `review`, the flow lands by pull request,
-#     and this person's agent.git is below `merge`: they land it, not Jig.
+#     this person's agent.git is below `merge` (they land it, not Jig) and the
+#     review is over: the pull request is approved as housekeeping last read it
+#     from the forge (the forge cache's review column), or the project asks for
+#     no review (`git.staging_review: none`). Waiting for a reviewer, changes
+#     requested, no review and a review nobody has read yet are not a landing:
+#     the hint tells a board to offer the landing only when it can succeed.
 _TASK_PARKED=""
+
+# The review of each parked `review` task, beside _TASK_PARKED and never in it
+# (its lines are read by their three fields): "<id><TAB><review><TAB><waiting>"
+# lines, <review> approved|changes|waiting|none or `-` when the cache does not
+# say, <waiting> the reviewers still requested, comma-separated, or `-`.
+# Filled by _task_parked_read from the forge cache alone; a `signal` task has
+# no line. The pull request is the task's own: the one its `pr_url` names while
+# the cache has it and it goes into the staging branch, else the newest from
+# its branch into the staging branch, as jig_parked_states picks it.
+_TASK_PARKED_REVIEW=""
 
 # _task_parked_read <ids> [<staging-states>] — fill _TASK_PARKED for the tasks
 # <ids> names, one per line, in one jig_parked_states call: a fixed number of
@@ -5578,8 +5601,9 @@ _TASK_PARKED=""
 # plain command, never through $(...), so the global reaches the caller.
 _task_parked_read() {
   local ids="$1" staging land level default_base id st branch base pr pm rs rows="" t=$'\t'
-  local answer pid reason flow
+  local answer pid reason flow cache review waiting sreview found pbranch ppr
   _TASK_PARKED=""
+  _TASK_PARKED_REVIEW=""
   [ -n "$ids" ] || return 0
   # The direct flow answers with no process at all.
   cfg_v flow git.flow direct
@@ -5607,16 +5631,38 @@ EOF
   # shellcheck source=lib/forgecache.sh
   . "$JIG_LIB/forgecache.sh"
   cfg_v land git.staging_land pr
+  cache=$(forgecache_read)
   if [ $# -ge 2 ]; then
-    answer=$(jig_parked_states "$staging" "$land" "$rows" "$(forgecache_read)" "$2")
+    answer=$(jig_parked_states "$staging" "$land" "$rows" "$cache" "$2")
   else
-    answer=$(jig_parked_states "$staging" "$land" "$rows" "$(forgecache_read)")
+    answer=$(jig_parked_states "$staging" "$land" "$rows" "$cache")
   fi
   [ -n "$answer" ] || return 0
   cfg_v level agent.git none
+  cfg_v sreview git.staging_review ask
   while IFS="$t" read -r pid reason; do
     [ -n "$pid" ] || continue
-    if [ "$reason" = review ] && [ "$land" = pr ] && [ "$level" != merge ]; then
+    review="-"
+    waiting="-"
+    if [ "$reason" = review ]; then
+      # The review of this task's own pull request, from the cache alone.
+      found=""
+      task_state_var ppr "$pid" pr_url
+      if [ -n "$ppr" ]; then
+        forgecache_entry_url "$cache" "$ppr"
+        [ "$_FORGECACHE_BASE" != "$staging" ] || found=1
+      fi
+      if [ -z "$found" ]; then
+        task_state_var pbranch "$pid" branch
+        forgecache_entry "$cache" "$pbranch" "$staging"
+      fi
+      review=${_FORGECACHE_REVIEW:--}
+      waiting=${_FORGECACHE_WAITING:--}
+      _TASK_PARKED_REVIEW="$_TASK_PARKED_REVIEW$pid$t$review$t$waiting
+"
+    fi
+    if [ "$reason" = review ] && [ "$land" = pr ] && [ "$level" != merge ] \
+      && { [ "$review" = approved ] || [ "$sreview" = none ]; }; then
       _TASK_PARKED="$_TASK_PARKED$pid$t$reason${t}landing
 "
     else
@@ -5626,6 +5672,38 @@ EOF
   done <<EOF
 $answer
 EOF
+}
+
+# _task_parked_review_lookup_v <var> <id> — "<review><TAB><waiting>" from
+# _TASK_PARKED_REVIEW into <var>, each `-` when the cache does not say; empty
+# when the task is not parked for review. In the caller's shell, without a
+# process.
+_task_parked_review_lookup_v() {
+  local __tpr_nl=$'\n' __tpr_t=$'\t' __tpr_all __tpr_rest
+  __tpr_all="$__tpr_nl$_TASK_PARKED_REVIEW"
+  case "$__tpr_all" in
+    *"$__tpr_nl$2$__tpr_t"*)
+      __tpr_rest=${__tpr_all#*"$__tpr_nl$2$__tpr_t"}
+      printf -v "$1" '%s' "${__tpr_rest%%"$__tpr_nl"*}" ;;
+    *) printf -v "$1" '%s' "" ;;
+  esac
+}
+
+# _task_review_json_v <var> <review> <waiting> — a review as the task's JSON
+# carries it, into <var>: {"state":..,"waiting_for":[..]}, or null when the
+# review is unknown (empty or `-`: a cache line written before the column
+# existed, one `task ship` recorded, a forge that was not asked or could not
+# say). The same shape `task pr-status --json` prints as `review`. In the
+# caller's shell; <waiting> is comma-separated logins, `-` or empty for none.
+_task_review_json_v() {
+  local __trj_r="$2" __trj_w="$3"
+  case "$__trj_r" in
+    approved | changes | waiting | none) ;;
+    *) printf -v "$1" '%s' null; return 0 ;;
+  esac
+  [ "$__trj_w" != "-" ] || __trj_w=""
+  _task_json_ids "$__trj_w"
+  printf -v "$1" '{"state":"%s","waiting_for":%s}' "$__trj_r" "$_JSON"
 }
 
 # _task_parked_lookup_v <var> <id> — "<reason><TAB><hint>" from _TASK_PARKED
@@ -5798,6 +5876,7 @@ _task_list_json_task_v() {
   local __tlj_var="$1" id="$2" worktrees="$3" flagged="$4" line o t=$'\t' v
   local class status issue consolidated paused created updated branch base pr_url gate_by
   local wt n gate facts state repairs stage stage_at stop stop_at phase handover_at goal flag flags="" mode atext
+  local into defbase found pr_base rvl rvj promote_url
   task_state_var class "$id" class
   task_state_var status "$id" status
   task_state_var issue "$id" issue
@@ -5854,7 +5933,14 @@ EOF
     if [ -n "$v" ]; then
       json_quote "${v%%$'\t'*}"; line=$_JSON
       if [ "${v#*$'\t'}" = landing ]; then flag='"landing"'; else flag=null; fi
-      o="$o,\"parked\":{\"reason\":$line,\"hint\":$flag}"
+      # Whom a review waits for, as the forge cache holds it: null for a task
+      # parked for a signal, and for a review the cache cannot say.
+      rvj=null
+      if [ "${v%%$'\t'*}" = review ]; then
+        _task_parked_review_lookup_v rvl "$id"
+        _task_review_json_v rvj "${rvl%%"$t"*}" "${rvl#*"$t"}"
+      fi
+      o="$o,\"parked\":{\"reason\":$line,\"hint\":$flag,\"review\":$rvj}"
     else
       o="$o,\"parked\":null"
     fi
@@ -5911,18 +5997,88 @@ EOF
     o="$o,\"autopilot\":null"
   fi
 
-  # What `task ship` opened, with its state and checks as housekeeping last
-  # heard them from the forge (lib/forgecache.sh), joined by the task's branch
-  # and base as housekeeping's own remote state joins them. Reading never asks
-  # the forge: an old entry says how old it is, a missing one is null.
+  # The task's own pull request, with its state, checks and review as
+  # housekeeping last heard them from the forge (lib/forgecache.sh). Reading
+  # never asks the forge: an old entry says how old it is, a missing one is
+  # null. It is the one `task ship` recorded (`pr_url`), found by its address;
+  # failing that, or with none recorded (opened by hand), the newest from the
+  # task's branch into where its pull request goes: the staging branch on the
+  # staging flow for a task of the default base, else the task's base.
+  # `base` is where the pull request goes.
+  cfg_v defbase git.base_branch main
+  into=$base
+  if [ "$_TASK_LIST_STAGING_ON" = 1 ] && [ -n "$_TASK_LIST_STAGING_BRANCH" ] && [ "$base" = "$defbase" ]; then
+    into=$_TASK_LIST_STAGING_BRANCH
+  fi
+  # What the actions table is told of the pull request stays what it was: the
+  # entry from the task's branch into its base, and only with a recorded
+  # `pr_url` (below).
+  local pr_state="" pr_ci="" pr_mergeable=""
   if [ -n "$pr_url" ]; then
-    json_quote "$pr_url"; o="$o,\"pull_request\":{\"url\":$_JSON"
     forgecache_entry "$_TASK_LIST_FORGE_CACHE" "$branch" "$base"
+    pr_state=$_FORGECACHE_STATE
+    pr_ci=$_FORGECACHE_CI
+    pr_mergeable=$_FORGECACHE_MERGEABLE
+  fi
+  found=""
+  if [ -n "$pr_url" ]; then
+    forgecache_entry_url "$_TASK_LIST_FORGE_CACHE" "$pr_url"
+    if [ -n "$_FORGECACHE_HEAD" ]; then
+      found=1
+    else
+      forgecache_entry "$_TASK_LIST_FORGE_CACHE" "$branch" "$into"
+      # Another pull request of the same branch never lends its state to
+      # the one the task recorded; a line without an address may.
+      if [ -n "$_FORGECACHE_URL" ] && [ "$_FORGECACHE_URL" != "$pr_url" ]; then
+        _forgecache_clear
+      fi
+      [ -z "$_FORGECACHE_HEAD" ] || found=1
+    fi
+    v=$pr_url
+  else
+    forgecache_entry "$_TASK_LIST_FORGE_CACHE" "$branch" "$into"
+    [ -z "$_FORGECACHE_HEAD" ] || found=1
+    v=$_FORGECACHE_URL
+  fi
+  if [ -n "$pr_url" ] || [ -n "$found" ]; then
+    pr_base=$into
+    [ -z "$found" ] || pr_base=$_FORGECACHE_BASE
+    json_str_or_null "$v"; o="$o,\"pull_request\":{\"url\":$_JSON"
     json_str_or_null "$_FORGECACHE_STATE"; o="$o,\"state\":$_JSON"
     json_str_or_null "$_FORGECACHE_CI"; o="$o,\"ci\":$_JSON"
-    json_str_or_null "$_FORGECACHE_AT"; o="$o,\"fetched_at\":$_JSON}"
+    json_str_or_null "$_FORGECACHE_AT"; o="$o,\"fetched_at\":$_JSON"
+    json_quote "$pr_base"; o="$o,\"base\":$_JSON"
+    json_str_or_null "$_FORGECACHE_MERGEABLE"; o="$o,\"mergeable\":$_JSON"
+    _task_review_json_v rvj "$_FORGECACHE_REVIEW" "$_FORGECACHE_WAITING"
+    o="$o,\"review\":$rvj}"
   else
     o="$o,\"pull_request\":null"
+  fi
+
+  # The promotion pull request on the staging flow: from the task's branch
+  # into the default base, as the cache holds it, else the address `task
+  # promote` recorded. A task of an epic has none.
+  if [ "$_TASK_LIST_STAGING_ON" = 1 ]; then
+    found=""
+    task_state_var promote_url "$id" promote_url
+    if [ "$base" = "$defbase" ]; then
+      forgecache_entry "$_TASK_LIST_FORGE_CACHE" "$branch" "$base"
+      [ -z "$_FORGECACHE_HEAD" ] || found=1
+    else
+      promote_url=""
+      forgecache_entry "" "" ""
+    fi
+    if [ -n "$found" ] || [ -n "$promote_url" ]; then
+      v=$_FORGECACHE_URL
+      [ -n "$v" ] || v=$promote_url
+      json_str_or_null "$v"; o="$o,\"promotion\":{\"url\":$_JSON"
+      json_str_or_null "$_FORGECACHE_STATE"; o="$o,\"state\":$_JSON"
+      json_str_or_null "$_FORGECACHE_CI"; o="$o,\"ci\":$_JSON"
+      json_str_or_null "$_FORGECACHE_MERGEABLE"; o="$o,\"mergeable\":$_JSON"
+      json_str_or_null "$_FORGECACHE_AT"; o="$o,\"fetched_at\":$_JSON}"
+    else
+      o="$o,\"promotion\":null"
+    fi
   fi
 
   # A `jig task ship` of this task waiting for CI right now (jig_shipping_*,
@@ -5945,12 +6101,7 @@ EOF
 
   # What a person may do next (_task_actions): every row of the table, with
   # the pull request's state as the forge cache holds it, never the forge's.
-  local action offered command reason actions="" pr_state="" pr_ci="" pr_mergeable=""
-  if [ -n "$pr_url" ]; then
-    pr_state=$_FORGECACHE_STATE
-    pr_ci=$_FORGECACHE_CI
-    pr_mergeable=$_FORGECACHE_MERGEABLE
-  fi
+  local action offered command reason actions=""
   _task_actions_v atext "$id" "$pr_state" "$pr_ci" "$pr_mergeable"
   while IFS="$t" read -r action offered command reason; do
     [ -n "$action" ] || continue

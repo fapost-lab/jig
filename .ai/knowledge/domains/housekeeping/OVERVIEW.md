@@ -50,12 +50,15 @@ evidence it inferred itself.
   facts exist anywhere (ADR-0027).
 - The **forge cache**, `.ai/runtime/forge-cache` (`lib/forgecache.sh`, schemas/json.md): what
   the run heard from the forge about each pull request —
-  `<head> <base> <state> <ci> <fetched_at> <head_commit> <url>`, the last two `-` when unknown and
-  absent from a line an older run wrote — kept for `jig task list --json` and `jig status` (its
+  `<head> <base> <state> <ci> <fetched_at> <head_commit> <url> <mergeable> <review> <waiting_for>`,
+  each `-` when unknown and absent from a line an older run wrote — kept for `jig task list --json` and `jig status` (its
   `upgrade-pull-request-*` items), which never ask the forge themselves. States come from the list
   the forge tier already fetches; on GitHub a second list call asks the checks of the open pull
   requests only (about 1 s, where the check rollup for all 200 in the first call cost 13 s instead
-  of 2), so a run makes two calls whatever the number of tasks. Written atomically after a list the
+  of 2) — the same call carries each open one's review (decided by `jig_pr_approval_github_v`) and
+  adds an open pull request older than the newest 200 — so a run makes two calls whatever the
+  number of tasks. GitLab's list carries no approvals: on the staging flow a run asks each open
+  merge request into the staging branch for its review, two calls each. Written atomically after a list the
   forge answered, never on a dry run, never by a worktree that borrows the owner's task directory;
   a run without an answer leaves the last cache, whose entries keep their `fetched_at`. GitLab's
   list asks for 100 merge requests, its largest page. One other writer: `jig upgrade` puts the

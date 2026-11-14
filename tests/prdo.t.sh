@@ -590,3 +590,42 @@ test_prdo_pr_status_refusals_and_the_text_form() {
   pd_split jig task pr-status T-1 --json
   assert_eq no-pull-request "$(pd_code)"
 }
+
+# jig_pr_approval_github_v is the one place GitHub's words for a review become
+# jig's: `task pr-status`, `task land` and housekeeping's forge cache all read
+# them through it, so a change request wins, a requested reviewer is waited
+# for, and a decision this does not know is never an approval.
+test_prdo_github_review_words_are_decided_in_one_function() {
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"
+    for row in "APPROVED|APPROVED|" "APPROVED|APPROVED|ann" "CHANGES_REQUESTED|APPROVED|" \
+      "|CHANGES_REQUESTED,APPROVED|" "REVIEW_REQUIRED||" "REVIEW_REQUIRED|APPROVED|" "|APPROVED|" \
+      "null|APPROVED,COMMENTED|" "||" "||bo" "SOMETHING_NEW|APPROVED|" "CHANGES_REQUESTED||ann"; do
+      dec=${row%%|*}; rest=${row#*|}; reviews=${rest%%|*}; pending=${rest#*|}
+      jig_pr_approval_github_v w "$dec" "$reviews" "$pending"
+      printf "%s " "$w"
+    done'
+  assert_eq 0 "$RC"
+  assert_eq "approved waiting changes changes none none approved approved none waiting unknown changes " "$OUT"
+}
+
+# forgecache_entry_url finds a pull request by its whole address: pull/1 is
+# not the line of pull/12 written before it, and a line that ends at its url
+# (no <mergeable> column) is found too.
+test_prdo_forge_cache_finds_a_pull_request_by_its_whole_url() {
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/forgecache.sh"
+    t=$(printf "\t")
+    cache="task/b${t}staging${t}open${t}green${t}2026-11-14T00:00:00Z${t}bbb${t}https://f.test/pull/12${t}mergeable${t}approved${t}-
+task/a${t}staging${t}open${t}red${t}2026-11-14T00:00:00Z${t}aaa${t}https://f.test/pull/1"
+    forgecache_entry_url "$cache" https://f.test/pull/1
+    printf "%s|%s|%s|%s|%s\n" "$_FORGECACHE_HEAD" "$_FORGECACHE_BASE" "$_FORGECACHE_CI" "$_FORGECACHE_REVIEW" "$_FORGECACHE_MERGEABLE"
+    forgecache_entry_url "$cache" https://f.test/pull/12
+    printf "%s|%s|%s|%s\n" "$_FORGECACHE_HEAD" "$_FORGECACHE_CI" "$_FORGECACHE_REVIEW" "$_FORGECACHE_MERGEABLE"
+    forgecache_entry_url "$cache" https://f.test/pull/2
+    printf "[%s]\n" "$_FORGECACHE_HEAD$_FORGECACHE_STATE"'
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "task/a|staging|red||
+task/b|green|approved|mergeable
+[]" "$OUT"
+}

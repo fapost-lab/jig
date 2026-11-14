@@ -787,30 +787,41 @@ _hk_forge_init() {
   return 0
 }
 
-# _hk_forge_ci — `<head>\t<base>\t<ci>\t<mergeable>` for every open pull
-# request on GitHub, for the forge cache; nothing on another forge or when gh
+# _hk_forge_ci — one row per open pull request on GitHub, for the forge cache:
+#   `<head>\t<base>\t<ci>\t<mergeable>\t<head-commit>\t<url>\t<review>\t<waiting_for>`
+# `-` for a field the forge did not say; nothing on another forge or when gh
 # does not answer. <mergeable> is gh's word (MERGEABLE, CONFLICTING, UNKNOWN),
 # asked in the same call: the staging drift report names a promotion the forge
-# calls conflicting (jig_staging_drift).
+# calls conflicting (jig_staging_drift). <head-commit> and <url> let a pull
+# request older than the newest 200 the first list holds still get its row
+# (_hk_forge_cache_write). <review> is approved|changes|waiting|none, or `-`
+# when the forge's decision was not one jig_pr_approval_github_v knows;
+# <waiting_for> the reviewers still requested, comma-separated.
 #
 # A second list call, asked only when the cache is written. Asked in the first
 # call for all 200, the check rollup made it about six times slower (13 s and
 # 680 KB against 2 s, measured on this repository on 2026-10-15); for the open
-# ones alone it costs about 1 s. A merged or closed pull request's checks are
-# not asked. GitLab's list carries no pipeline, so its CI stays unknown rather
-# than cost a call per merge request.
+# ones alone it costs about 1 s, and the review fields (reviewDecision,
+# latestReviews, reviewRequests), asked in this same call, leave that as it was
+# (1.0 to 1.1 s, measured 2026-11-14). A merged or closed pull request's checks
+# and review are not asked. GitLab's list carries neither a pipeline nor an
+# approval, so its CI stays unknown rather than cost a call per merge request;
+# its reviews are asked one merge request at a time (_hk_forge_gitlab_reviews).
 #
 # The checks are read into one word the way `task ship` reads them
 # (_jig_ship_checks_github, common.sh, through `gh pr checks`): a check re-run
 # counts once, at its newest run, as gh keeps only that one per workflow and
 # name; a skipped or neutral check counts as neither, a cancelled one as
 # failed, anything unfinished as pending. red, pending, green, or none when no
-# check ran. gh's own --jq, not jq (ADR-0002).
+# check ran. gh's own --jq, not jq (ADR-0002); the filter hands over the
+# review's raw words and the decision is made in the shell, once, in
+# jig_pr_approval_github_v, where `task pr-status` and `task land` make it too.
 _hk_forge_ci() {
   [ "$_HK_FORGE_KIND" = github ] || return 0
+  local out h b c m oid url dec reviews pending rv w t=$'\t'
   # shellcheck disable=SC2016 # $c is the --jq expression's variable, not the shell's
-  jig_gh pr list --state open --limit 200 \
-    --json headRefName,baseRefName,statusCheckRollup,mergeable \
+  out=$(jig_gh pr list --state open --limit 200 \
+    --json headRefName,baseRefName,statusCheckRollup,mergeable,headRefOid,url,reviewDecision,latestReviews,reviewRequests \
     --jq '.[] | [.statusCheckRollup // []
           | group_by((.workflowName // "") + "/" + (.name // .context // ""))[]
           | max_by(.startedAt // .completedAt // "")
@@ -828,7 +839,56 @@ _hk_forge_ci() {
             if any($c[]; . == "fail") then "red"
             elif any($c[]; . == "pending") then "pending"
             elif any($c[]; . == "pass") then "green"
-            else "none" end)\t\(.mergeable // "")"' 2>/dev/null || true
+            else "none" end)\t\(.mergeable // "" | if . == "" then "-" else . end)\t\(.headRefOid // "" | if . == "" then "-" else . end)\t\(.url // "" | if . == "" then "-" else . end)\t\(.reviewDecision // "" | if . == "" then "-" else . end)\t\([.latestReviews[]?.state] | join(",") | if . == "" then "-" else . end)\t\([.reviewRequests[]? | (if .login then .login elif .slug then .slug else .name end) | select(. != null)] | join(",") | if . == "" then "-" else . end)"' 2>/dev/null) || return 0
+  # One row per line, read in this shell: no process per pull request. A row
+  # with no decision field (a shorter one) carries no review.
+  while IFS="$t" read -r h b c m oid url dec reviews pending; do
+    [ -n "$h" ] || continue
+    pending=${pending%$'\r'}
+    rv="-"
+    w="-"
+    if [ -n "$dec" ]; then
+      [ "$dec" != "-" ] || dec=""
+      [ "$reviews" != "-" ] || reviews=""
+      [ "$pending" != "-" ] || pending=""
+      jig_pr_approval_github_v rv "$dec" "$reviews" "$pending"
+      case "$rv" in
+        approved | changes | none) ;;
+        waiting) w=$pending ;;
+        *) rv="-" ;;
+      esac
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$h" "$b" "${c:--}" "${m:--}" "${oid:--}" "${url:--}" "$rv" "$w"
+  done <<EOF
+$out
+EOF
+  return 0
+}
+
+# _hk_forge_gitlab_reviews — `<head>\t<staging branch>\t<review>\t<waiting_for>` for every open
+# merge request into the staging branch, on a GitLab project on the staging
+# flow; nothing otherwise. GitLab's list carries no approvals, so each is one
+# call of jig_pr_approval_v (approvals and the merge request itself): asked only
+# for the merge requests a promotion waits behind, which are the ones whose
+# review the staging board shows, never for every open one.
+_hk_forge_gitlab_reviews() {
+  [ "$_HK_FORGE_KIND" = gitlab ] || return 0
+  local st rows h url rv pend t=$'\t'
+  st=$(jig_staging_in_use) || return 0
+  [ -n "$st" ] || return 0
+  rows=$(printf '%s\n' "$_HK_FORGE_PRS" | awk -F '\t' -v st="$st" "$_HK_PR_STATE_AWK"'
+    $1 != "" && $2 == st && prstate($3) == "open" && $5 != "" { print $1 "\t" $5 }')
+  while IFS="$t" read -r h url; do
+    [ -n "$h" ] || continue
+    jig_pr_approval_v rv pend "$url"
+    case "$rv" in
+      approved | changes | none) printf '%s\t%s\t%s\t-\n' "$h" "$st" "$rv" ;;
+      waiting) printf '%s\t%s\t%s\t%s\n' "$h" "$st" "$rv" "${pend:--}" ;;
+    esac
+  done <<EOF
+$rows
+EOF
+  return 0
 }
 
 # _HK_PR_STATE_AWK — the awk function that reads a forge's word for a pull
@@ -845,49 +905,83 @@ _HK_PR_STATE_AWK='
 
 # _hk_forge_cache_write — keep what this run heard from the forge in the forge
 # cache (lib/forgecache.sh) for the reads that never ask it: one line per pull
-# request, `<head>\t<base>\t<state>\t<ci>\t<fetched_at>\t<head-commit>\t<url>\t<mergeable>`,
+# request, `<head>\t<base>\t<state>\t<ci>\t<fetched_at>\t<head-commit>\t<url>\t<mergeable>\t<review>\t<waiting_for>`,
 # the state normalised
-# as _hk_forge_state normalises it. Only after a list the forge answered: a run
-# without a forge or with a failed one leaves the last cache as it is, every
-# entry still carrying the time it was heard. Never fails the run.
+# as _hk_forge_state normalises it. An open pull request the open list has and
+# the list of all lacks (older than its newest 200) gets its own row after the
+# others. <review> and <waiting_for> are kept for open pull requests only: all
+# of them on GitHub, the ones into the staging branch on GitLab
+# (_hk_forge_ci, _hk_forge_gitlab_reviews). Only after a list the forge
+# answered: a run without a forge or with a failed one leaves the last cache as
+# it is, every entry still carrying the time it was heard. Never fails the run.
 _hk_forge_cache_write() {
-  local at rows ci
+  local at rows ci reviews
   case "$_HK_FORGE_KIND" in
     github | gitlab) ;;
     *) return 0 ;;
   esac
   forgecache_owned || return 0
   ci=$(_hk_forge_ci)
+  reviews=$(_hk_forge_gitlab_reviews)
   at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  # One stream, each line tagged with the list it came from: the checks first,
-  # so every pull request row can be joined to them in one pass.
+  # One stream, each line tagged with the list it came from: the checks first
+  # (C, GitHub's open list), then the reviews GitLab was asked for (R), so
+  # every pull request row can be joined to them in one pass.
   rows=$({
     printf '%s\n' "$ci" | awk '$0 != "" { print "C\t" $0 }'
+    printf '%s\n' "$reviews" | awk '$0 != "" { print "R\t" $0 }'
     printf '%s\n' "$_HK_FORGE_PRS" | awk '$0 != "" { print "P\t" $0 }'
   } | awk -F '\t' -v at="$at" "$_HK_PR_STATE_AWK"'
+    function word(r) { return r == "approved" || r == "changes" || r == "waiting" || r == "none" }
+    function row(h, b, s, c, hc, u, m, key,    r, w) {
+      if (c != "green" && c != "red" && c != "pending" && c != "none") c = "-"
+      if (hc !~ /^[0-9a-f]+$/) hc = "-"
+      if (u == "" || u ~ /[[:space:]]/ || u == "null") u = "-"
+      r = "-"; w = "-"
+      if (s == "open" && (key in rv) && word(rv[key])) {
+        r = rv[key]
+        if (r == "waiting" && wf[key] != "" && wf[key] != "-") w = wf[key]
+      }
+      print h "\t" b "\t" s "\t" c "\t" at "\t" hc "\t" u "\t" m "\t" r "\t" w
+    }
+    function mword(w) {
+      w = tolower(w)
+      if (w == "conflicting" || w == "conflict") return "conflicting"
+      if (w == "mergeable") return "mergeable"
+      return "-"
+    }
     $1 == "C" {
-      if (NF >= 4 && !(($2 FS $3) in ci)) { ci[$2 FS $3] = $4; mg[$2 FS $3] = $5 }
+      if (NF >= 4 && !(($2 FS $3) in ci)) {
+        k = $2 FS $3
+        ci[k] = $4; mg[k] = $5; co[k] = $6; cu[k] = $7; rv[k] = $8; wf[k] = $9
+        order[++n] = k; ch[n] = $2; cb[n] = $3
+      }
+      next
+    }
+    $1 == "R" {
+      if (NF >= 4 && !(($2 FS $3) in rv)) { rv[$2 FS $3] = $4; wf[$2 FS $3] = $5 }
       next
     }
     $1 == "P" && NF >= 4 && $2 != "" && $3 != "" {
       s = prstate($4)
       if (s == "") next
+      k = $2 FS $3
       c = "-"
-      if (s == "open" && (($2 FS $3) in ci)) c = ci[$2 FS $3]
-      if (c != "green" && c != "red" && c != "pending" && c != "none") c = "-"
-      h = $5; u = $6
-      if (h !~ /^[0-9a-f]+$/) h = "-"
-      if (u == "" || u ~ /[[:space:]]/ || u == "null") u = "-"
+      if (s == "open" && (k in ci)) { c = ci[k]; seen[k] = 1 }
       # Whether the forge can merge it: GitHub'"'"'s word from the checks
       # call, GitLab'"'"'s detailed_merge_status from the list; `-` for a pull
       # request that is not open and a word that says neither.
       m = "-"
-      if (s == "open") {
-        w = tolower(($2 FS $3) in mg ? mg[$2 FS $3] : $7)
-        if (w == "conflicting" || w == "conflict") m = "conflicting"
-        else if (w == "mergeable") m = "mergeable"
+      if (s == "open") m = mword((k in mg) ? mg[k] : $7)
+      row($2, $3, s, c, $5, $6, m, k)
+      next
+    }
+    END {
+      for (i = 1; i <= n; i++) {
+        k = order[i]
+        if (k in seen) continue
+        row(ch[i], cb[i], "open", ci[k], co[k], cu[k], mword(mg[k]), k)
       }
-      print $2 "\t" $3 "\t" s "\t" c "\t" at "\t" h "\t" u "\t" m
     }') || return 0
   forgecache_write "$rows"
 }
