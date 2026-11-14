@@ -2212,7 +2212,7 @@ test_status_page_links_a_pull_request_jig_opened_and_one_housekeeping_saw() {
   # the first thing it asks for is a refresh, not a merge.
   assert_contains "$needs" "A pull request is waiting for review or merge</h3><p><code>shipped</code>"
   assert_contains "$needs" "A pull request was open at the last housekeeping run</h3><p><code>waiting</code>"
-  assert_contains "$needs" "Run jig housekeeping to refresh, then review and merge what is still open."
+  assert_contains "$needs" "Run jig housekeeping to refresh, or see it now: jig task pr-status waiting --json; then, if it is still open: jig task merge-pr waiting --by human"
   # Merged by housekeeping's last word: a task to close, not a pull request.
   assert_not_contains "$needs" "pull/8"
   assert_contains "$needs" "Merged: the task can be closed</h3><p><code>landed</code>"
@@ -3523,7 +3523,7 @@ test_status_json_pins_an_item_with_every_field() {
   } > .ai/runtime/housekeeping.log
   _st_json
   assert_eq 0 "$RC" "$ERR"
-  assert_eq '{"schema":1,"revision":R,"generated_at":"T","data":{"attention":[{"kind":"pull-request-waiting","subject":{"type":"task","id":"shipped"},"tasks":["shipped"],"title":"A pull request is waiting for review or merge","detail":"opened by jig task ship","todo":"Review it and merge it; jig merges one itself only at agent.git: merge, on green CI.","url":"https://example.com/o/r/pull/7"},{"kind":"pull-request-of-abandoned-task","subject":{"type":"task","id":"given-up"},"tasks":["given-up"],"title":"A pull request was open for a task you abandoned","detail":"open as of housekeeping at 2026-10-01 09:30 UTC","todo":"It may have been closed or merged since: jig last asked the forge then. Run jig housekeeping to refresh, then close on the forge what is still open, or reopen the task. Nothing here will merge it.","url":null},{"kind":"knowledge-proposed","subject":{"type":"project","id":null},"tasks":[],"title":"Knowledge is waiting for your decision","detail":"2 document(s) proposed","todo":"Ask the agent: what'"'"'s proposed? (jig-accept)","url":null}],"housekeeping":{"ran_at":"2026-10-01T09:30:00Z","forge":"github","stale":true},"knowledge_counts_at":"2026-10-15T08:00:00Z","origin":{"base":"main","fetched_at":null,"behind":null,"ahead":null}}}' "$OUT"
+  assert_eq '{"schema":1,"revision":R,"generated_at":"T","data":{"attention":[{"kind":"pull-request-waiting","subject":{"type":"task","id":"shipped"},"tasks":["shipped"],"title":"A pull request is waiting for review or merge","detail":"opened by jig task ship","todo":"Merge it: jig task merge-pr shipped --by human; see why it waits: jig task pr-status shipped --json","url":"https://example.com/o/r/pull/7","pull_request":{"branch":"task/shipped","base":"main","state":null,"fetched_at":null,"url":"https://example.com/o/r/pull/7","ci":null,"mergeable":null},"actions":[{"id":"merge","command":"jig task merge-pr shipped --by human","offered":true,"reason":null},{"id":"pr-status","command":"jig task pr-status shipped --json","offered":true,"reason":null}]},{"kind":"pull-request-of-abandoned-task","subject":{"type":"task","id":"given-up"},"tasks":["given-up"],"title":"A pull request was open for a task you abandoned","detail":"open as of housekeeping at 2026-10-01 09:30 UTC","todo":"It may have been closed or merged since: jig last asked the forge then. Run jig housekeeping to refresh, then close on the forge what is still open, or reopen the task. Nothing here will merge it.","url":null},{"kind":"knowledge-proposed","subject":{"type":"project","id":null},"tasks":[],"title":"Knowledge is waiting for your decision","detail":"2 document(s) proposed","todo":"Ask the agent: what'"'"'s proposed? (jig-accept)","url":null}],"housekeeping":{"ran_at":"2026-10-01T09:30:00Z","forge":"github","stale":true},"knowledge_counts_at":"2026-10-15T08:00:00Z","origin":{"base":"main","fetched_at":null,"behind":null,"ahead":null}}}' "$OUT"
 }
 
 # A task started against the queue's answer is shown wherever the task is: its
@@ -4601,6 +4601,50 @@ test_status_json_asks_nothing_of_a_task_parked_for_the_signal() {
   assert_eq 0 "$RC" "$OUT"
   assert_not_contains "$OUT" '"subject":{"type":"task","id":"on"},"tasks":["on"],"title":"A pull request'
   assert_contains "$OUT" '"kind":"pull-request-waiting","subject":{"type":"task","id":"never"},"tasks":["never"],"title":"A pull request is waiting for review and for you to land it"'
+}
+
+# An item about a task's open pull request says what the forge cache last said
+# and carries the task's own action rows (adr-20261114-a-persons-pull-request-
+# action-does-not-read-agent-git).
+test_status_json_pull_request_items_carry_the_cache_and_the_actions() {
+  local t
+  t=$(printf '\t')
+  _st_park never
+  printf 'pr_url: https://forge.test/pr/5\n' >> .ai/workspace/tasks/never/state
+  printf 'pr_url: https://forge.test/pr/6\n' >> .ai/workspace/tasks/behind/state
+  mkdir -p .ai/runtime
+  printf '%s\n' \
+    "task/never${t}staging${t}open${t}green${t}2026-11-14T09:00:00Z${t}-${t}https://forge.test/pr/5${t}mergeable" \
+    "task/behind${t}main${t}open${t}red${t}2026-11-14T09:05:00Z${t}-${t}https://forge.test/pr/6${t}-" > .ai/runtime/forge-cache
+  run jig status --json
+  assert_eq 0 "$RC" "$OUT"
+  # Parked for review and landing: the person's land, and the cache's words.
+  assert_contains "$OUT" '"title":"A pull request is waiting for review and for you to land it","detail":"CI is green and it merges cleanly, as of 2026-11-14T09:00:00Z","todo":"Land it: jig task land never --by human; see why it waits: jig task pr-status never --json","url":"https://forge.test/pr/5","pull_request":{"branch":"task/never","base":"staging","state":"open","fetched_at":"2026-11-14T09:00:00Z","url":"https://forge.test/pr/5","ci":"green","mergeable":"mergeable"},"actions":[{"id":"land","command":"jig task land never --by human","offered":'
+  assert_contains "$OUT" '{"id":"pr-status","command":"jig task pr-status never --json","offered":true,"reason":null}]'
+  assert_not_contains "$OUT" '"id":"merge","command":"jig task merge-pr never'
+  # The plain one: the direct flow's merge.
+  assert_contains "$OUT" '"detail":"CI is red, as of 2026-11-14T09:05:00Z","todo":"Merge it: jig task merge-pr behind --by human; see why it waits: jig task pr-status behind --json"'
+  assert_contains "$OUT" '"mergeable":null},"actions":[{"id":"merge","command":"jig task merge-pr behind --by human","offered":'
+  assert_not_contains "$OUT" "jig merges one itself"
+  assert_not_contains "$OUT" "jig lands it itself"
+  # The page renders the same words.
+  run jig status --html
+  assert_eq 0 "$RC"
+  assert_contains "$(cat .ai/runtime/status.html)" "CI is green and it merges cleanly, as of 2026-11-14T09:00:00Z"
+  assert_contains "$(cat .ai/runtime/status.html)" "Land it: jig task land never --by human"
+  # No entry in the cache: the words fall back, the fields are null.
+  : > .ai/runtime/forge-cache
+  run jig status --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"detail":"parked at the staging branch"'
+  assert_contains "$OUT" '"pull_request":{"branch":"task/never","base":"staging","state":null,"fetched_at":null,"url":"https://forge.test/pr/5","ci":null,"mergeable":null}'
+  # A conflict, and a running check, in their own words.
+  printf '%s\n' \
+    "task/never${t}staging${t}open${t}pending${t}2026-11-14T09:00:00Z${t}-${t}https://forge.test/pr/5${t}-" \
+    "task/behind${t}main${t}open${t}green${t}2026-11-14T09:05:00Z${t}-${t}https://forge.test/pr/6${t}conflicting" > .ai/runtime/forge-cache
+  run jig status --json
+  assert_contains "$OUT" '"detail":"CI is running, as of 2026-11-14T09:00:00Z"'
+  assert_contains "$OUT" '"detail":"it conflicts with main, as of 2026-11-14T09:05:00Z"'
 }
 
 # --- drafts: jig-idea conversations kept before there is a spec ---------------

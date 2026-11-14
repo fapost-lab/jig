@@ -46,7 +46,8 @@ with a single caller: `lib/bootstrap.sh` (carrying state into a new worktree, wi
 lifecycle; so is `lib/land.sh`, landing a task's pull request on the staging branch — the approval,
 the merge on the forge, the direct merge in a temporary tree, the unforced push
 (adr-20261111-a-task-lands-on-staging-through-its-pull-request), tested in `tests/task.t.sh` with the
-ship it ends. `lib/prgitlab.sh` is the same for `jig pr`: the GitLab half of it (glab and its
+ship it ends; so is `lib/prdo.sh`, a person's pull-request actions (`jig task request-review`,
+`merge-pr`, `pr-status`), beside land.sh and promote.sh, tested in `tests/prdo.t.sh`. `lib/prgitlab.sh` is the same for `jig pr`: the GitLab half of it (glab and its
 account, the merge request, its diff, the read-back and the post) is sourced by `lib/pr.sh` alone
 and tested through `tests/pr.t.sh`. `lib/reviewers.sh` is shared by two commands, `pr` and
 `task`: who may review a pull request this clone opens, read from the forge — `jig pr reviewers`

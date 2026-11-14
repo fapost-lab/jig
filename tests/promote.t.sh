@@ -1663,3 +1663,182 @@ test_promote_auto_on_gitlab_switches_a_major_release_off_and_drafts_it() {
   assert_eq "98 --draft" "$(cat glab-update.argv)"
   assert_no_file glab-merge.argv
 }
+
+# --- a person's promotion: jig task promote --by human
+# (adr-20261114-a-persons-pull-request-action-does-not-read-agent-git)
+
+# promote_json <command...> — run it with stdout in OUT, stderr in ERR.
+promote_json() {
+  local out err
+  out=$(_run_out)
+  err=$(_run_out .err)
+  set +e
+  ( "$@" ) >"$out" 2>"$err"
+  RC=$?
+  set -e
+  OUT=$(cat "$out")
+  ERR=$(cat "$err")
+  rm -f "$out" "$err"
+  export OUT RC ERR
+}
+
+# promote_code — the error.code of the envelope in OUT.
+promote_code() {
+  printf '%s\n' "$OUT" | sed -n 's/.*"error":{"code":"\([^"]*\)".*/\1/p'
+}
+
+# promote_by_human_setup — promote_setup with agent.git none and T-1 ready,
+# as the person's page finds it: waiting at staging for the test.
+promote_by_human_setup() {
+  promote_setup
+  sed "s|^agent.git:.*|agent.git: none|" .ai/config.local.yaml > .ai/config.local.yaml.tmp
+  mv .ai/config.local.yaml.tmp .ai/config.local.yaml
+  sed 's/^status: .*/status: ready/' .ai/workspace/tasks/T-1/state > state.tmp
+  mv state.tmp .ai/workspace/tasks/T-1/state
+}
+
+test_promote_by_human_opens_the_pull_request_at_agent_git_none() {
+  promote_by_human_setup
+
+  promote_json jig task promote T-1 --by human --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"task":{"id":"T-1"'
+  assert_contains "$OUT" "\"promote\":{\"pull_request\":\"https://github.com/example/example/pull/7\",\"already_open\":false,\"pushed\":false,\"tested_commit\":\"$(git rev-parse origin/staging)\",\"in_base\":false,\"merge\":{\"outcome\":\"person\",\"reason\":\"git.promote_merge: human\"}}}"
+  assert_contains "$ERR" "task promote: tested commit"
+  assert_not_contains "$OUT" "tested commit"
+  assert_contains "$(cat gh-create.argv)" "$(printf -- '--base\nmain')"
+  assert_file_contains .ai/workspace/tasks/T-1/state "promote_url: https://github.com/example/example/pull/7"
+}
+
+test_promote_by_human_text_form_needs_no_agent_git() {
+  promote_by_human_setup
+
+  run jig task promote T-1 --by human
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/7"
+}
+
+test_promote_by_human_says_the_pull_request_was_open_already() {
+  promote_by_human_setup
+  printf 'https://github.com/example/example/pull/5\n' > gh-open-main
+
+  promote_json jig task promote T-1 --by human --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"pull_request":"https://github.com/example/example/pull/5","already_open":true'
+  assert_no_file gh-create.argv
+}
+
+test_promote_by_human_switches_auto_merge_on_without_agent_git_merge() {
+  promote_by_human_setup
+  printf 'git.promote_merge: auto\n' >> .ai/config.yaml
+
+  promote_json jig task promote T-1 --by human --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"merge":{"outcome":"auto-merge-on","reason":"it merges with a merge commit once main'"'"'s required checks pass"}'
+  assert_contains "$(cat gh-merge.argv)" "--auto --merge --match-head-commit"
+
+  # Without --by human the level still decides: below merge it stays off.
+  sed "s|^agent.git:.*|agent.git: pr|" .ai/config.local.yaml > .ai/config.local.yaml.tmp
+  mv .ai/config.local.yaml.tmp .ai/config.local.yaml
+  rm -f gh-merge.argv gh-pr
+  promote_json jig task promote T-1 --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"outcome":"not-switched-on"'
+}
+
+test_promote_by_human_a_task_already_in_the_base_says_so() {
+  promote_by_human_setup
+  git checkout -q main
+  git merge -q --no-ff -m "Merge T-1" task/T-1
+  git push -q origin main
+  git checkout -q task/T-1
+  git fetch -q origin
+  sed "s|^agent.git:.*|agent.git: pr|" .ai/config.local.yaml > .ai/config.local.yaml.tmp
+  mv .ai/config.local.yaml.tmp .ai/config.local.yaml
+
+  promote_json jig task promote T-1 --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"promote":{"pull_request":null,"already_open":false,"pushed":false,'
+  assert_contains "$OUT" '"in_base":true,"merge":null}}'
+  assert_no_file gh-create.argv
+}
+
+test_promote_json_without_by_human_below_pr_is_refused_git_level() {
+  promote_by_human_setup
+
+  promote_json jig task promote T-1 --json
+  assert_eq 1 "$RC" "$ERR"
+  assert_eq git-level "$(promote_code)"
+  assert_no_file gh-create.argv
+
+  # The text form keeps its exit 3.
+  run jig task promote T-1
+  assert_eq 3 "$RC" "$OUT"
+}
+
+test_promote_json_takes_exactly_one_task() {
+  promote_by_human_setup
+
+  promote_json jig task promote T-1 T-2 --by human --json
+  assert_eq usage "$(promote_code)"
+  promote_json jig task promote --all --commit "$(git rev-parse origin/staging)" --by human --json
+  assert_eq usage "$(promote_code)"
+  promote_json jig task promote --by human --json
+  assert_eq usage "$(promote_code)"
+  promote_json jig task promote T-1 --by bob --json
+  assert_eq usage "$(promote_code)"
+  assert_no_file gh-create.argv
+}
+
+test_promote_by_human_refuses_while_autopilot_runs() {
+  promote_by_human_setup
+  printf 'autopilot: on\n' >> .ai/workspace/tasks/T-1/state
+
+  promote_json jig task promote T-1 --by human --json
+  assert_eq 1 "$RC" "$ERR"
+  assert_eq autopilot-running "$(promote_code)"
+
+  # Without --by human too, on the path that has always refused it.
+  promote_json jig task promote T-1 --json
+  assert_eq autopilot-running "$(promote_code)"
+  assert_no_file gh-create.argv
+}
+
+test_promote_by_human_refuses_a_task_not_waiting_at_staging() {
+  promote_by_human_setup
+  sed 's/^status: .*/status: active/' .ai/workspace/tasks/T-1/state > state.tmp
+  mv state.tmp .ai/workspace/tasks/T-1/state
+
+  promote_json jig task promote T-1 --by human --json
+  assert_eq 1 "$RC" "$ERR"
+  assert_contains "$OUT" "is not waiting at the staging branch for a test signal"
+  assert_no_file gh-create.argv
+}
+
+test_promote_by_human_conflict_is_refused_base_conflict() {
+  promote_by_human_setup
+  promote_conflict
+  local before
+  before=$(git rev-parse origin/task/T-1)
+
+  promote_json jig task promote T-1 --by human --json
+  assert_eq 1 "$RC" "$ERR"
+  assert_eq base-conflict "$(promote_code)"
+  assert_contains "$OUT" "shared.txt"
+  assert_nothing_sent "$before"
+}
+
+test_promote_by_human_with_a_stale_revision_sends_nothing() {
+  promote_by_human_setup
+  local rev before
+  rev=$(jig task list --json 2>/dev/null | sed -n 's/^{"schema":1,"revision":\([0-9][0-9]*\),.*/\1/p')
+  before=$(git rev-parse origin/task/T-1)
+
+  promote_json jig task promote T-1 --by human --revision "$((rev + 7))" --json
+  assert_eq 1 "$RC" "$ERR"
+  assert_eq stale-revision "$(promote_code)"
+  assert_nothing_sent "$before"
+
+  promote_json jig task promote T-1 --by human --revision "$rev" --json
+  assert_eq 0 "$RC" "$ERR"
+}

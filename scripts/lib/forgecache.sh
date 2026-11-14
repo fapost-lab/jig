@@ -99,19 +99,23 @@ forgecache_read() {
   sed '/^#/d;/^$/d' "$file" 2>/dev/null || true
 }
 
-# forgecache_entry <cache> <head> <base> — sets _FORGECACHE_STATE, _FORGECACHE_CI
-# and _FORGECACHE_AT from the first line of <cache> (forgecache_read's output)
+# forgecache_entry <cache> <head> <base> — sets _FORGECACHE_STATE, _FORGECACHE_CI,
+# _FORGECACHE_AT, _FORGECACHE_URL and _FORGECACHE_MERGEABLE from the first line of <cache> (forgecache_read's output)
 # for a pull request from <head> into <base>: the newest, as the forge lists
 # them and as housekeeping's own remote state takes it. Each is empty when the
 # cache does not say. In the caller's shell, without a process per lookup.
 _FORGECACHE_STATE=""
 _FORGECACHE_CI=""
 _FORGECACHE_AT=""
+_FORGECACHE_URL=""
+_FORGECACHE_MERGEABLE=""
 forgecache_entry() {
   local cache="$1" head="$2" base="$3" t nl rest line
   _FORGECACHE_STATE=""
   _FORGECACHE_CI=""
   _FORGECACHE_AT=""
+  _FORGECACHE_URL=""
+  _FORGECACHE_MERGEABLE=""
   [ -n "$cache" ] && [ -n "$head" ] && [ -n "$base" ] || return 0
   t=$'\t'
   nl=$'\n'
@@ -122,10 +126,12 @@ forgecache_entry() {
   esac
   rest=${rest#*"$nl$head$t$base$t"}
   line=${rest%%"$nl"*}
-  IFS="$t" read -r _FORGECACHE_STATE _FORGECACHE_CI _FORGECACHE_AT _ <<EOF
+  IFS="$t" read -r _FORGECACHE_STATE _FORGECACHE_CI _FORGECACHE_AT _ _FORGECACHE_URL _FORGECACHE_MERGEABLE _ <<EOF
 $line
 EOF
   [ "$_FORGECACHE_CI" != "-" ] || _FORGECACHE_CI=""
+  [ "$_FORGECACHE_URL" != "-" ] || _FORGECACHE_URL=""
+  [ "$_FORGECACHE_MERGEABLE" != "-" ] || _FORGECACHE_MERGEABLE=""
   return 0
 }
 
