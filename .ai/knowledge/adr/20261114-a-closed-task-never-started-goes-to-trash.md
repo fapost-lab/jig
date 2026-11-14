@@ -38,9 +38,17 @@ decision.
   `base_commit` (both written by `jig task start`), no ref exists locally or on origin at the
   task's `git.branch_template` name, and no pull request from that name — into any base, in any
   state — is in the list the forge gave this run. A forge that was asked and did not answer keeps
-  the task. Where no forge is in use (`none`: no remote on a known host, or its CLI missing or
+  the task, and so does a `git.branch_template` that names no branch for it. Where no forge is in use (`none`: no remote on a known host, or its CLI missing or
   signed out), git's refs are the whole check; the list holds a forge's newest pull requests only
   (200 on GitHub, 100 on GitLab), and an older one from a branch since deleted is not seen.
+- A task whose workspace holds `commit-message.md` stays: ADR-0030 closes a task whose landing
+  cannot be observed in consolidation, before its commit, and its change may not have landed.
+- A task a roadmap still waits on stays: `spec plan` reads a closed task's state as merged until
+  `jig spec done` checks its item, so the workspace is that item's only record. It stays while an
+  unchecked item of a spec in this checkout names it — read here, and for a spec with an open epic
+  not checked out here also from the epic's ref, as `spec plan` reads it — and while its `Spec:`
+  line names a spec whose current roadmap cannot be read here (no roadmap, an epic with no ref, or
+  a task.md linking to more than one spec). A checked item, or no link, lets it go.
 - A triage task (`triage_of`) stays while its source task's workspace is here: the source's next
   `task ship` reads it to hand its open findings over only once
   (adr-20261029-a-ship-hands-open-findings-to-one-triage-task). Once the source is purged, the
@@ -70,12 +78,11 @@ decision.
 
 - The trash keeps such a workspace for `housekeeping.trash_ttl` days, then it is gone; the purge
   line in the log keeps its facts as for any purged task.
-- A task worked on without `jig task start` and then closed loses its workspace notes after the
-  trash TTL; its code is in git either way. That includes the task ADR-0030 closes in consolidation,
-  before the commit, because its landing cannot be observed: when it recorded no branch at all, the
-  next housekeeping run moves its workspace — its commit message included — to trash, possibly
-  before the commit. A task recorded on the base branch (`branch: main`) is not affected. Whether
-  that close should wait, or the purge, is left to a follow-up task.
-- Amends the RULES.md rule that nothing is destroyed on `unknown`, ADR-0006's "only
+- A task worked on without `jig task start` and then closed without a commit message loses its
+  workspace notes after the trash TTL; its code is in git either way. The task ADR-0030 closes in
+  consolidation, before the commit, holds its commit message, so it is kept like any task whose
+  landing cannot be told — nothing removes that file, so it stays until a person removes it. A task
+  recorded on the base branch (`branch: main`) is not affected.
+- Amends the RULES.md rule that nothing is destroyed on `unknown`, ADR-0030, ADR-0006's "only
   `consolidated` and merged tasks are purged", and adr-20261029-a-ship-hands-open-findings-to-one-triage-task,
   whose closed triage task was kept and neither purged nor archived.

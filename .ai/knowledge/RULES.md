@@ -167,7 +167,8 @@
   protects is `irm … | iex`, where a warning scrolls past unread. Beside the deletion paragraph
   above, this is the other half of the same idea: what the installer may remove, and where it
   may write at all. (adr-20260926-the-installer-refuses-a-folder-it-must-not-own)
-- Housekeeping never destroys a workspace whose remote state is `unknown`, and it never deletes a task
+- Housekeeping never destroys a workspace whose remote state is `unknown`, save a closed task that was
+  never started (see below), and it never deletes a task
   nobody finished. A task a human ended with `jig task abandon` (directly, or through
   `jig spec remove --abandon-unstarted`), once older than `housekeeping.abandoned_ttl`, and an
   `active` or `ready` task untouched for longer than `housekeeping.stale_after` (no worktree, no
@@ -176,7 +177,9 @@
   merged tasks are purged to trash (ADR-0006), and `consolidated` tasks that were never started:
   their `unknown` hides no change — no `branch`, no `base_commit`, no ref or pull request at the
   template branch name (a forge that was asked and failed keeps it; with no forge in use, git's
-  refs alone decide), and no triage source still in the workspace
+  refs alone decide), a branch template that names one, no triage source still in the workspace,
+  no `commit-message.md` (a task ADR-0030 closed before its commit), and no roadmap still waiting
+  on it (an unchecked item naming it, or a `Spec:` link whose current roadmap cannot be read here)
   (adr-20261114-a-closed-task-never-started-goes-to-trash). The worktree of an abandoned task goes only by
   `git worktree remove` without `--force`; branch, commits and pull request are never touched, and
   `jig task unarchive` undoes the archive. (adr-20261027-a-task-nobody-finished-is-archived-not-purged,

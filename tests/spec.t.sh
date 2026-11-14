@@ -1924,7 +1924,7 @@ EOF
 }
 
 # --- spec remove: roadmap ids with an invalid leading character are skipped ----
-# spec_roadmap_ids applies the same grammar as jig_valid_id: an id starting
+# jig_roadmap_open_ids applies the same grammar as jig_valid_id: an id starting
 # with "." or "-" is not addressable by anything and must not be reported at
 # all, not even as "not-here".
 
@@ -1943,6 +1943,39 @@ EOF
   assert_not_contains "$OUT" "-bad"
   assert_not_contains "$OUT" ".bad"
   assert_contains "$OUT" "not-here       T-9 (named in the roadmap, no workspace in this checkout)"
+}
+
+# Housekeeping must not purge a never-started closed task while its roadmap
+# item is unchecked: `spec plan` reads the closed state as merged.
+test_spec_plan_still_merged_after_housekeeping_for_an_unchecked_never_started_task() {
+  fixture_jig_repo
+  sed 's|^forge:.*|forge: none|' .ai/config.yaml > .ai/config.yaml.tmp && mv .ai/config.yaml.tmp .ai/config.yaml
+  sed 's|^housekeeping.fetch:.*|housekeeping.fetch: false|' .ai/config.yaml > .ai/config.yaml.tmp && mv .ai/config.yaml.tmp .ai/config.yaml
+  plan_spec s <<'RM'
+## Phase 1 — First
+
+- [ ] `T-a` — Alpha — goal
+
+## Waves
+
+1. Alpha
+RM
+  jig task new T-a >/dev/null
+  task_route_class T-a
+  jig task set T-a status ready >/dev/null
+  task_route_done T-a
+  jig task set T-a knowledge_consolidated true >/dev/null
+  jig task set T-a status consolidated >/dev/null
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_dir .ai/workspace/tasks/T-a
+
+  local tab
+  tab=$(printf '\t')
+  run jig spec plan s --phase 1 --format tsv
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "item${tab}1${tab}T-a${tab}consolidated${tab}closed${tab}false${tab}-${tab}done${tab}Alpha"
 }
 
 # --- spec close (ADR-0035 as amended) ------------------------------------------

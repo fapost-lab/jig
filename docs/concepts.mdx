@@ -335,8 +335,8 @@ Task workspaces are temporary and are cleaned up without anyone remembering to:
 
 - a task whose change was merged is flagged until it is closed; once closed, its workspace moves to
   `.ai/runtime/trash/`, and is deleted from there after a retention period (7 days by default);
-- a task closed without ever being started (no branch, as a findings task closed by decision)
-  goes to the same trash: it has no change whose merge could be in doubt;
+- a task closed without ever being started (no branch, as a findings task closed by decision, once its source task's
+  workspace is gone) goes to the same trash: it has no change whose merge could be in doubt;
 - a task whose remote state cannot be determined keeps its workspace;
 - an abandoned task is archived after 14 days, whatever its remote state, and an active or ready
   one nobody touched for 60 days is archived too: its workspace stays, without a time limit, and

@@ -61,5 +61,6 @@ framework.
 > `trash_ttl` (adr-20261110-an-idea-draft-waits-outside-git).
 
 > **Amendment (2026-11-14).** Trash also takes the workspace of a `consolidated` task that was never
-> started — no branch, no fork point, nothing at its template branch name — whose remote state stays
-> `unknown` because there is nothing to ask (adr-20261114-a-closed-task-never-started-goes-to-trash).
+> started — no branch, no fork point, nothing at its template branch name, no commit message waiting
+> to land and no roadmap item waiting on it — whose remote state stays `unknown` because there is
+> nothing to ask (adr-20261114-a-closed-task-never-started-goes-to-trash).

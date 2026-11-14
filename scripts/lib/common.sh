@@ -4450,6 +4450,26 @@ jig_spec_link_v() {
   printf -v "$1" '%s' "$__jsl_found"
 }
 
+# jig_roadmap_open_ids <roadmap.md|-> — task ids named by the unchecked items
+# of a roadmap (`-` reads it from stdin), one per line, each once. An item is
+# "- [ ] `id` — text"; an id follows jig_valid_id (no leading dot or dash). Here because `spec` and
+# housekeeping both read it, and one command library never sources another.
+jig_roadmap_open_ids() {
+  awk '
+    /^[[:space:]]*[-*][[:space:]]+\[ \]/ {
+      text = $0
+      sub(/^[[:space:]]*[-*][[:space:]]+\[ \][[:space:]]*/, "", text)
+      if (text ~ /^`[A-Za-z0-9._-]+`[[:space:]]+(—|-|--)[[:space:]]/) {
+        id = substr(text, 2)
+        sub(/`.*$/, "", id)
+        # The same grammar as jig_valid_id: no leading dot or dash.
+        if (id ~ /^[.-]/) next
+        if (!(id in seen)) { seen[id] = 1; print id }
+      }
+    }
+  ' "$1"
+}
+
 # jig_spec_epic <roadmap.md|-> — "<branch> open" or "<branch> finished" when
 # the roadmap declares an epic branch, nothing when it does not (ADR-0040).
 #

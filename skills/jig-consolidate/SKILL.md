@@ -215,7 +215,7 @@ epic, and closes then like any other. Housekeeping keeps its workspace until the
 default branch, so the final review can still read it.
 
 A task whose landing cannot be observed closes now, in §6: `jig task list` shows no
-`branch` for it, or the base branch. Housekeeping never sees such a task land (ADR-0025).
+`branch` for it, or the base branch. Housekeeping never sees such a task land (ADR-0025); it keeps the workspace while it holds the commit message.
 
 ## 6. Close the task
 

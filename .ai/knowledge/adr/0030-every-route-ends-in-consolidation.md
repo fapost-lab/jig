@@ -61,6 +61,10 @@ both were written together at the end of `jig-consolidate`, before the commit.
   candidates on the base branch — the permanent ambiguity ADR-0012 excluded `consolidated`
   from candidates to prevent. A task sharing a branch other than the base branch is not
   exempt: that branch can still be seen to land.
+
+  > Amended by adr-20261114-a-closed-task-never-started-goes-to-trash: housekeeping keeps the
+  > workspace of such a task while it holds `commit-message.md`, so this close before the commit
+  > loses nothing.
 - **`jig task set` enforces the order.** `status consolidated` is refused while
   `knowledge_consolidated` is not `true`, and `knowledge_consolidated false` is refused on
   a consolidated task. Closing without a recorded knowledge decision becomes impossible.

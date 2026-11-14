@@ -370,6 +370,100 @@ test_housekeeping_closed_task_that_never_started_is_purged() {
   assert_file_contains .ai/runtime/housekeeping.log "action=purge"
 }
 
+test_housekeeping_closed_task_that_never_started_but_holds_a_commit_message_is_kept() {
+  # ADR-0030 closes a task that ran without `jig task start` before its commit:
+  # the commit message in the workspace says the change may not have landed.
+  hk_setup
+  fixture_task unshipped "" consolidated
+  printf 'Add a thing\n' > .ai/workspace/tasks/unshipped/commit-message.md
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "unshipped status=consolidated remote=unknown via=none action=preserve"
+  assert_contains "$OUT" "  never started, but it holds a commit message, so its change may not have landed: unshipped"
+  assert_dir .ai/workspace/tasks/unshipped
+}
+
+test_housekeeping_closed_task_named_by_an_unchecked_roadmap_item_is_kept() {
+  hk_setup
+  mkdir -p .ai/specs/s
+  # shellcheck disable=SC2016 # backticks are roadmap text
+  printf -- '- [ ] `rm-task` — text\n- [x] `done-task` — text\n' > .ai/specs/s/roadmap.md
+  fixture_task rm-task "" consolidated
+  fixture_task done-task "" consolidated
+  printf 'Spec: .ai/specs/s/\n' > .ai/workspace/tasks/rm-task/task.md
+  printf 'Spec: .ai/specs/s/\n' > .ai/workspace/tasks/done-task/task.md
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "  never started, but its roadmap item in s is not checked: rm-task"
+  assert_dir .ai/workspace/tasks/rm-task
+  assert_contains "$OUT" "done-task status=consolidated remote=unknown via=none action=purge"
+  assert_no_file .ai/workspace/tasks/done-task
+}
+
+test_housekeeping_closed_task_linked_to_a_spec_missing_here_is_kept() {
+  hk_setup
+  fixture_task linked "" consolidated
+  printf 'Spec: .ai/specs/elsewhere/\n' > .ai/workspace/tasks/linked/task.md
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "  never started, but its spec elsewhere is not in this checkout: linked"
+  assert_dir .ai/workspace/tasks/linked
+}
+
+test_housekeeping_closed_task_with_two_spec_links_is_kept() {
+  # Which roadmap names it would be a guess: a doubt, so it stays.
+  hk_setup
+  fixture_task twice "" consolidated
+  printf 'Spec: .ai/specs/a/\nSpec: .ai/specs/b/\n' > .ai/workspace/tasks/twice/task.md
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "  never started, but its task.md does not link to one readable spec: twice"
+  assert_dir .ai/workspace/tasks/twice
+}
+
+test_housekeeping_closed_task_named_only_on_an_open_epics_roadmap_is_kept() {
+  # `spec plan` reads a spec with an open epic from the epic's ref; the copy
+  # in this checkout may not name the task yet.
+  hk_setup
+  mkdir -p .ai/specs/s
+  git checkout -q -b epic/s
+  # shellcheck disable=SC2016 # backticks are roadmap text
+  printf 'Epic: epic/s\n\n- [ ] `ep-task` — text\n' > .ai/specs/s/roadmap.md
+  git add -f .ai/specs/s/roadmap.md
+  git commit -q -m "roadmap on the epic"
+  git checkout -q -
+  mkdir -p .ai/specs/s
+  printf 'Epic: epic/s\n\n- [ ] text\n' > .ai/specs/s/roadmap.md
+  fixture_task ep-task "" consolidated
+  printf 'Spec: .ai/specs/s/\n' > .ai/workspace/tasks/ep-task/task.md
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "  never started, but its roadmap item in s is not checked: ep-task"
+  assert_dir .ai/workspace/tasks/ep-task
+}
+
+test_housekeeping_closed_task_of_a_spec_whose_epic_is_not_here_is_kept() {
+  hk_setup
+  mkdir -p .ai/specs/s
+  printf 'Epic: epic/gone\n\n- [ ] text\n' > .ai/specs/s/roadmap.md
+  fixture_task far "" consolidated
+  printf 'Spec: .ai/specs/s/\n' > .ai/workspace/tasks/far/task.md
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "  never started, but the epic of its spec s is not here to read its roadmap from: far"
+  assert_dir .ai/workspace/tasks/far
+}
+
+test_housekeeping_closed_task_is_kept_when_the_branch_template_has_no_id() {
+  hk_setup
+  hk_cfg git.branch_template work
+  fixture_task nameless "" consolidated
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "  never started, but git.branch_template names no branch for it: nameless"
+  assert_dir .ai/workspace/tasks/nameless
+}
+
 test_housekeeping_closed_task_with_a_template_branch_is_kept() {
   # No `branch:` key, but a branch named by the template exists: something was
   # started, so its landing is unknown and the workspace stays.

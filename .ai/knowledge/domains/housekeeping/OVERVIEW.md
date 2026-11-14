@@ -135,7 +135,10 @@ Read these before changing anything here; each is a rule someone paid for.
   is why a stale `active` or `ready` task may be archived too, and why one with a worktree (or its
   branch checked out with changes) stays flagged `STALE_CANDIDATE`: a person may be working there. The other is a closed task that was never
   started (no `branch`, no `base_commit`, nothing at its template branch name, locally, on origin
-  or at a forge that answered, and no triage source still here): it has no change whose landing
+  or at a forge that answered, no pull request from that name, a branch template that names one,
+  no triage source still here, no `commit-message.md` in its workspace, no unchecked roadmap item
+  naming it — read here and from an open epic's ref, as `spec plan` reads it — and no `Spec:` link
+  whose current roadmap cannot be read here): it has no change whose landing
   could be unknown, so `started=false` makes `consolidated:unknown` a purge (`_hk_never_started`,
   adr-20261114-a-closed-task-never-started-goes-to-trash).
 - **No path is deleted or moved without validation** (RULES.md, ADR-0006). Use
