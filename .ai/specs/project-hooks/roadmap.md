@@ -25,7 +25,7 @@ output passes and shows it as a warning, a missing hook path refuses and is repo
 - [ ] `gate-hooks` — gate hooks — `hooks.ready|consolidate|ship` read from `.ai/config.yaml` only, run in
   `task set` and `task ship` after the findings and receipt checks, exit-code contract,
   environment, misconfiguration reporting, docs and an ADR
-- [ ] hook waivers — a per-task waiver with a reason, shown by `jig status` and in the pull
+- [ ] `hook-waivers` — hook waivers — a per-task waiver with a reason, shown by `jig status` and in the pull
   request body; autopilot treats a hook refusal as a stop and never waives (after: gate hooks —
   there is nothing to waive before a hook can refuse)
 - [ ] fog: hook timeout — whether a gate bounds a hook's run time depends on what bash 3.2 can
