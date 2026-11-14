@@ -46,8 +46,8 @@ need to tell it apart (`already-filed`, out of `already-exists`); the release no
 | `usage` | the command was given an argument it does not take, an option without its value, or a value outside the ones it accepts (`--status bogus`); `--json` beside an option it cannot be combined with too |
 | `not-a-repository` | it ran outside a git repository |
 | `not-initialised` | the repository has no Jig: no `.ai/config.yaml`; `jig init` installs it |
-| `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`, `jig task resume … --revision <n>`, `jig task pause … --revision <n>`, `jig task set … status consolidated --revision <n>`, `jig spec item … --revision <n>`, `jig knowledge accept … --revision <n>`). Read again and decide again; nothing was written |
-| `not-found` | a reference names no task or epic of this clone, an item, dependency or request that is not in the queue where the command needs it, a task document the task does not have (`jig task artifact read`), a knowledge document that does not exist (`jig knowledge read`) or links no source (`jig knowledge sources --diff`), or a spec, phase or item a roadmap write names that the roadmap on the write branch does not have, or a task it would file. Also `jig writes ship` with nothing waiting |
+| `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`, `jig task resume … --revision <n>`, `jig task pause … --revision <n>`, `jig task set … status consolidated --revision <n>`, `jig task gate … --revision <n>`, `jig task abandon … --revision <n>`, `jig task archive … --revision <n>`, `jig task unarchive … --revision <n>`, `jig spec item … --revision <n>`, `jig spec drop … --revision <n>`, `jig knowledge accept … --revision <n>`). Read again and decide again; nothing was written |
+| `not-found` | a reference names no task or epic of this clone, an item, dependency or request that is not in the queue where the command needs it, a task document the task does not have (`jig task artifact read`), a knowledge document that does not exist (`jig knowledge read`) or links no source (`jig knowledge sources --diff`), or a spec, phase or item a roadmap write names that the roadmap on the write branch does not have, or a task it would file. Also `jig writes ship` with nothing waiting, and the task a `jig task gate`, `abandon`, `archive`, `unarchive` or `jig spec drop` names; for `jig spec drop` also a task linked to no spec, a spec with no roadmap on the write branch, and a roadmap with no item that names the task |
 | `not-paused` | `jig task resume` was asked for a task that is neither paused nor parked at the staging branch: somebody resumed it first. Nothing was written |
 | `already-paused` | `jig task pause` was asked for a task that is paused already: somebody paused it first. Nothing was written |
 | `wrong-checkout` | `jig task resume` has a stash to apply, or `jig task pause --stash` has one to make, and this checkout is not on the task's branch; `message` names the worktree that has it checked out, or says to switch to it. Nothing was written |
@@ -99,7 +99,13 @@ need to tell it apart (`already-filed`, out of `already-exists`); the release no
 | `not-shipped` | the task's branch is not on origin as shipped: it has commits origin does not, or origin has no such branch |
 | `notes-stale` | a release's notes no longer reach the base's tip, found right before the merge (`jig task merge-pr` on a pull request that raises the version) |
 | `reviewer-unknown` | `jig task request-review`: a `--reviewer` names nobody the repository may ask, several people (`message` lists them), or a team. Only people are asked. Nobody was asked |
-| `autopilot-running` | the task's autopilot run is `on`: the agent is on it. Nothing was written |
+| `autopilot-running` | the task's autopilot run is `on`: the agent is on it. For `jig task gate`, a human approval of a task whose unattended run is `on`: the approval there is the agent's. Nothing was written |
+| `autopilot-stopped` | `jig task gate` without `--by agent` for a task whose unattended run is `stopped`, at its repair limit or before it: nobody answers there, and `message` names the way on (an answer to the stop, or a handover). Nothing was written |
+| `no-gate` | `jig task gate` was asked for a task that has no human gate: its class is not T3 or T4, or it has no `design.md` to approve. Nothing was written |
+| `already-archived` | `jig task archive` was asked for a task that is archived already: somebody archived it first. Nothing was written |
+| `not-archived` | `jig task unarchive` was asked for a task that is not archived: somebody unarchived it first. Nothing was written |
+| `wrong-status` | the task's status does not let the command run: `jig task archive` of a `consolidated` task (its work is in git and its workspace is purged, not kept), `jig task abandon` of an `archived` one (`jig task unarchive` first), `jig spec drop` of a task that is neither `abandoned` nor archived from `abandoned`. Nothing was written |
+| `already-closed` | `jig spec drop` found every item that names the task checked already: somebody closed it first. Nothing was written |
 | `ship-running` | a `jig task ship` of the task is waiting for CI and lands the pull request itself (`shipping` in `jig task list --json`). Nothing was written |
 | `git-level` | a command without `--by human` at an `agent.git` (`agent.git_staging` for a task whose pull request goes into the staging branch) below what it needs: `jig task promote --json` and `jig task request-review` below `pr`, `jig task merge-pr` below `merge`. The action is the person's |
 | `failed` | any other refusal: one that names no code of its own, a fault of the environment (a checkout that cannot be read, a failed command), or a producer that printed nothing |
@@ -227,8 +233,9 @@ What a person may do next with a task, as Jig decides it from the task's state
 | `archive` | `jig task archive <id>` | the task is `active`, `ready` or `abandoned` |
 | `unarchive` | `jig task unarchive <id>` | the task is `archived` |
 | `reopen` | `jig task set <id> status active` | the task is `abandoned` |
+| `drop-item` | `jig spec drop <id> --json` | the command's own guard finds nothing to refuse in this clone's local refs: the task is `abandoned`, or archived from `abandoned`; it is linked to one spec; `agent.git` is above `none`; an item that names it is unchecked in the roadmap on the base the write goes into (the default branch, or the open epic the roadmap declares) and on the spec's own branch `spec/<sid>` whenever this clone has it; and that branch holds no commits no write of Jig's made, is not checked out in a worktree, and holds no earlier write that still waits to go into another base (`write-still-waits`, judged from the write's record). `reason` is the command's own refusal, word for word. Read from local refs, never fetched, so a roadmap this clone has not got yet withholds the row. The command closes the item in Jig's own tree |
 
-A `consolidated` task offers nothing, an `abandoned` one only `reopen` and `archive`, an `archived` one only `unarchive` — except, for both,
+A `consolidated` task offers nothing, an `abandoned` one only `reopen`, `archive` and `drop-item`, an `archived` one only `unarchive` and, when it was archived from `abandoned`, `drop-item` — except, for both,
 `cancel-pause-request` while a pause of it is still requested.
 
 The rule is one-way. An action offered is one its command accepts on the task's state, because the
@@ -836,6 +843,142 @@ raises the revision.
 
 A bare triage task (one `jig task ship` filed for open findings) is closed in the same write, its
 knowledge decision recorded with it.
+
+## `jig task gate --json`
+
+`jig task gate <id> approved [--by human|agent] [--revision <n>] --json` records the approval of a
+T3/T4 design as it is now and answers with the task: what a board's approve button calls, without
+`--by`, so the approval is a human's (`gate_by: human`). The write is checked against a revision as
+a `jig queue` write is: with `--revision <n>`, the `revision` of the read the caller decided on;
+without it, the revision the command reads as it starts. A design rewritten since that read
+(`jig task artifact write` raises the revision) is refused with `stale-revision` and nothing is
+approved, so the design a person approved is the one they saw. The three keys the approval writes
+(`gate`, `gate_design`, `gate_by`) land as one write: a landed approval raises the revision by two
+(the claim and the write). `--json` may stand anywhere among the arguments; without it the command
+prints its report, as it always has, and `--revision` alone checks the write the same way.
+
+`--by agent` is the self-approval of an unattended run (`autopilot` journals it) and is refused
+anywhere else with the plain `failed`: outside such a run the gate is a person's, and no program
+acts on that.
+
+```json
+{"task": <task>, "gate": {"state": "approved", "by": "human", "design": "069789757ba120c7030986efcf80aeee2b2e7c26"}}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `task` | object | the task as `jig task list --json` lists it — the same object, every field and its `actions` — read after the write: `gate` is `approved` |
+| `gate.state` | string | `approved` |
+| `gate.by` | string | who the approval is recorded as: `human` or `agent` |
+| `gate.design` | string | the hash of the design documents that were approved, the value `gate_design` holds and a review receipt pins |
+
+Refusals: `usage` for an argument the command does not take, a decision other than `approved`, a
+`--by` other than `human` or `agent`, a `--revision` without a value or that is not a revision, and
+an id outside the grammar; `not-found` for no such task; `no-gate` for a class without a gate or a
+task with no `design.md`; `autopilot-running` and `autopilot-stopped` for a human approval inside the
+task's unattended run, as in the table above; `stale-revision` as above; `not-initialised` and
+`not-a-repository` as everywhere. Each of them happens before anything is written. The refusal
+the command makes is the one the `approve-gate` action carries as its `reason`.
+
+## `jig task abandon --json`
+
+`jig task abandon <id> [--reason <text>] [--moved-to <ref>] [--revision <n>] --json` gives a task up
+and answers with the task. The new state — `status`, `abandoned_at`, `abandoned_reason` and
+`moved_to`, each set or removed — lands as one write checked against a revision as `jig task pause`'s
+is (`--revision <n>`, else the revision the command reads as it starts), and raises it by two, plus
+one more when the task left the queue with it (`jig queue prune`). A task abandoned already is
+abandoned again, its reason and move replaced, and has nothing to leave the queue. `--json` may stand
+anywhere among the arguments.
+
+The command writes the task's state and nothing else: no checkout is touched and the roadmap is not
+edited. A task linked to a spec, whose roadmap item the text form closes by running `jig spec drop`,
+leaves that item open here: it waits, unchecked and visible, and the table's `drop-item` action
+closes it in Jig's own tree (`jig spec drop <id> --json`, below). The text form is as it was.
+
+```json
+{"task": <task>, "abandon": {"reason": "lives in monitoring", "moved_to": "../monitoring#sentry-errors", "note": null, "spec": "idea-x"}}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `task` | object | the task as `jig task list --json` lists it, read after the write: `status` is `abandoned` |
+| `abandon.reason` | string or null | the reason recorded; `null` for none |
+| `abandon.moved_to` | string or null | the move's target recorded (`<repo>#<task-id>` or `<repo>#spec/<spec-id>`); `null` for none |
+| `abandon.note` | string or null | what the text form prints about a target that is not there: the command that files the task there, or the word that nothing is written to a spec there; `null` when there is nothing to say. Nothing is ever written to the other repository |
+| `abandon.spec` | string or null | the spec the task is linked to, whose roadmap item is still open; `null` for a task linked to none (or to two) |
+
+Refusals: `usage` for an argument the command does not take, a `--reason` that is empty, has a line
+break or a tab, or is missing for a task linked to a spec, a `--moved-to` that is not a reference
+(an absolute path, no `#`), a `--revision` without a value or that is not a revision, and an id
+outside the grammar; `not-found` for no such task; `wrong-status` for an archived task
+(`jig task unarchive` first); `stale-revision` as above; `not-initialised` and `not-a-repository` as
+everywhere. Each of them happens before anything is written.
+
+## `jig task archive --json`, `jig task unarchive --json`
+
+`jig task archive <id> [--revision <n>] --json` puts an unfinished task (`active`, `ready` or
+`abandoned`) away and `jig task unarchive <id> [--revision <n>] --json` returns it to the status it
+had. Both answer with the task, and each lands the new state as one write checked against a revision
+as `jig task pause`'s is: `--revision <n>`, else the revision the command reads as it starts. A landed
+write raises the revision by two (the claim and the write); an archive raises it by one more when the
+task left the queue with it (`jig queue prune`: its entry goes, as for a close, and a warning on
+stderr says so). The queue is pruned after the state is moved, so a task never sits archived and
+queued for a refused prune. `--json` may stand anywhere among the arguments.
+
+An archive records `archived_from`, `archived_reason` (`manual`) and `archived_at`; an unarchive takes
+them away with `absorbed_into`, so a task absorbed into another is its own task again. A reminder that
+the task is not queued goes to stderr when it comes back to live work.
+
+```json
+{"task": <task>}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `task` | object | the task as `jig task list --json` lists it, read after the write: `status` is `archived`, or the status it had |
+
+Refusals: `usage` for an argument the command does not take, a `--revision` without a value or that
+is not a revision, and an id outside the grammar; `not-found` for no such task; for `archive`,
+`already-archived` and `wrong-status` (a `consolidated` task); for `unarchive`, `not-archived`;
+`stale-revision` as above; `not-initialised` and `not-a-repository` as everywhere. Each of them
+happens before anything is written. Housekeeping archives a stale task through the same state, once
+per run and not checked against a revision, and prints no JSON.
+
+## `jig spec drop --json`
+
+`jig spec drop <task-id> [--revision <n>] --json` closes the roadmap item that names an abandoned task,
+the one `jig task abandon --json` left open, and answers with the item. It is the same edit the text
+form makes — the item is checked and ends with ` — dropped (<day>)` or ` — moved to <ref> (<day>)` and
+the task's reason — but made in Jig's own tree on the spec's own branch, `spec/<sid>`, reaching the
+base (the default branch, or an open epic) through a pull request, like `jig spec item`
+(adr-20261104-a-write-goes-in-jigs-own-tree): nobody's checkout moves, so none of the text form's
+refusals about the checkout (the task's own branch, a phase run, the base not being checked out)
+apply. `--revision <n>` as the queue writes take it, and the same `stale-revision`; without it the
+write checks against the revision it reads once its tree stands. `--revision` alone, without `--json`,
+checks the same write and answers in text. The text form without either flag is unchanged: it edits the
+roadmap in this checkout.
+
+The task must be `abandoned` or archived from `abandoned`, and linked to one spec. When several items
+name the task, every unchecked one is closed in the one commit, and the answer holds the first.
+
+```json
+{"spec": "idea-x", "task": "export-page", "item": {"id": "i-62ba30755b17", "text": "`export-page` — Export a page — dropped (2026-11-14): superseded", "checked": true, "task": "export-page", "fog": false, "phase": 2}, "write": <write>}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `spec` | string | the spec the task is linked to |
+| `task` | string | the task |
+| `item` | object | the item as the roadmap on the branch now has it, as in `jig spec item`: `id` (its handle after the edit, which changes with the text), `text`, `checked`, `task`, `fog` and `phase` |
+| `write` | object | where the edit went, [below](#jig-writes---json) |
+
+Refusals: `usage`; `not-found` for no such task, a task linked to no spec, a spec with no roadmap on the
+branch or the base, and a roadmap with no item that names the task; `wrong-status` for a task that is
+not abandoned; `already-closed` for a roadmap whose every item that names the task is checked;
+`epic-missing` for an open epic neither here nor on origin; and the refusals of every write, below
+(`git-not-allowed` at `agent.git: none`, `write-busy`, `stale-revision`, …). A task linked to two
+specs is the plain `failed`. The table's `drop-item` offers the command only when it would find an
+open item.
 
 ## `jig task land --by human --json`
 

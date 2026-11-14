@@ -4498,6 +4498,55 @@ jig_spec_link_v() {
   printf -v "$1" '%s' "$__jsl_found"
 }
 
+# _spec_drop_rewrite <roadmap> <task-id> <suffix> <tmp> — write <roadmap> to
+# <tmp> with every unchecked item that names the task checked and <suffix>
+# after its last line, and print the rewritten lines. Exit 3: no item names
+# the task. Exit 4: every item that does is checked already. The id is
+# compared as a string, not a pattern: `.` is legal in an id. A matched item
+# is held until the line after its last continuation line, so the suffix ends
+# the item rather than its first line. Values reach awk through the
+# environment: a `-v` value has its escapes expanded.
+_spec_drop_rewrite() {
+  local roadmap="$1" tid="$2" suffix="$3" tmp="$4"
+  JIG_SD_ID="$tid" JIG_SD_SUFFIX="$suffix" awk -v tmp="$tmp" '
+    function flush() {
+      if (!held) return
+      hold[nh] = hold[nh] ENVIRON["JIG_SD_SUFFIX"]
+      for (k = 1; k <= nh; k++) { print hold[k] > tmp; print hold[k] }
+      held = 0; nh = 0
+    }
+    BEGIN { id = ENVIRON["JIG_SD_ID"]; head = "`" id "`" }
+    held && /^[[:space:]]+[^[:space:]]/ && !/^[[:space:]]*[-*][[:space:]]/ { hold[++nh] = $0; next }
+    {
+      flush()
+      line = $0
+      if (line ~ /^[[:space:]]*[-*][[:space:]]+\[[ xX]\]/) {
+        text = line
+        sub(/^[[:space:]]*[-*][[:space:]]+\[[ xX]\][[:space:]]*/, "", text)
+        if (substr(text, 1, length(head)) == head &&
+            substr(text, length(head) + 1) ~ /^[[:space:]]+(—|-|--)[[:space:]]/) {
+          matched++
+          if (line ~ /^[[:space:]]*[-*][[:space:]]+\[ \]/) {
+            sub(/\[ \]/, "[x]", line)
+            marked++
+            held = 1; nh = 1; hold[1] = line
+            next
+          }
+        }
+      }
+      print line > tmp
+    }
+    END {
+      flush()
+      close(tmp)
+      if (matched == 0) exit 3
+      if (marked == 0) exit 4
+    }
+  ' "$roadmap"
+}
+# Here, not in spec.sh, because the actions table (task.sh) asks it, through
+# ot_spec_drop_refusal, whether an item is there to close: one grammar.
+
 # jig_roadmap_open_ids <roadmap.md|-> — task ids named by the unchecked items
 # of a roadmap (`-` reads it from stdin), one per line, each once. An item is
 # "- [ ] `id` — text"; an id follows jig_valid_id (no leading dot or dash). Here because `spec` and

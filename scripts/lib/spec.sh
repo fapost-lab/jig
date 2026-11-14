@@ -19,7 +19,7 @@
 # there is a spec, in the gitignored workspace ("idea drafts", at the end).
 # shellcheck shell=bash
 
-SPEC_USAGE="usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec draft write <id> --from <file>|- | jig spec draft rename <id> <new-id> | jig spec draft list | jig spec draft drop <id> | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> | --new <task-id> [--goal <text>] (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+SPEC_USAGE="usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec draft write <id> --from <file>|- | jig spec draft rename <id> <new-id> | jig spec draft list | jig spec draft drop <id> | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> [--revision <n>] [--json] | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> | --new <task-id> [--goal <text>] (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 
 cmd_spec() {
   local sub="${1:-}"
@@ -2470,53 +2470,6 @@ _spec_drop_own_branch_refusal() {
     "$tid" "$tid" "$base"
 }
 
-# _spec_drop_rewrite <roadmap> <task-id> <suffix> <tmp> — write <roadmap> to
-# <tmp> with every unchecked item that names the task checked and <suffix>
-# after its last line, and print the rewritten lines. Exit 3: no item names
-# the task. Exit 4: every item that does is checked already. The id is
-# compared as a string, not a pattern: `.` is legal in an id. A matched item
-# is held until the line after its last continuation line, so the suffix ends
-# the item rather than its first line. Values reach awk through the
-# environment: a `-v` value has its escapes expanded.
-_spec_drop_rewrite() {
-  local roadmap="$1" tid="$2" suffix="$3" tmp="$4"
-  JIG_SD_ID="$tid" JIG_SD_SUFFIX="$suffix" awk -v tmp="$tmp" '
-    function flush() {
-      if (!held) return
-      hold[nh] = hold[nh] ENVIRON["JIG_SD_SUFFIX"]
-      for (k = 1; k <= nh; k++) { print hold[k] > tmp; print hold[k] }
-      held = 0; nh = 0
-    }
-    BEGIN { id = ENVIRON["JIG_SD_ID"]; head = "`" id "`" }
-    held && /^[[:space:]]+[^[:space:]]/ && !/^[[:space:]]*[-*][[:space:]]/ { hold[++nh] = $0; next }
-    {
-      flush()
-      line = $0
-      if (line ~ /^[[:space:]]*[-*][[:space:]]+\[[ xX]\]/) {
-        text = line
-        sub(/^[[:space:]]*[-*][[:space:]]+\[[ xX]\][[:space:]]*/, "", text)
-        if (substr(text, 1, length(head)) == head &&
-            substr(text, length(head) + 1) ~ /^[[:space:]]+(—|-|--)[[:space:]]/) {
-          matched++
-          if (line ~ /^[[:space:]]*[-*][[:space:]]+\[ \]/) {
-            sub(/\[ \]/, "[x]", line)
-            marked++
-            held = 1; nh = 1; hold[1] = line
-            next
-          }
-        }
-      }
-      print line > tmp
-    }
-    END {
-      flush()
-      close(tmp)
-      if (matched == 0) exit 3
-      if (marked == 0) exit 4
-    }
-  ' "$roadmap"
-}
-
 # _spec_drop_to_spec_branch <task-id> <spec-id> <roadmap> <suffix> <default>
 # — for a spec with no open epic, put HEAD on `spec/<sid>` the way
 # `spec resume` does, before the roadmap is edited: the edit is jig's, and
@@ -2559,6 +2512,25 @@ _spec_drop_to_spec_branch() {
     branch=$(_spec_cut_own_branch "$sid" "spec drop") || exit 1
   fi
   printf 'spec drop: switched to %s\n' "$branch"
+}
+
+# _spec_drop_suffix <task-dir> — what closes an item of an abandoned task, as
+# the task's `state` records it: ` — moved to <ref> (<day>)` or ` — dropped
+# (<day>)`, and `: <reason>` after it when a reason was given. Printed, for
+# both ways `spec drop` edits a roadmap.
+_spec_drop_suffix() {
+  local tdir="$1" day reason moved suffix
+  day=$(spec_task_state "$tdir" abandoned_at)
+  [ -n "$day" ] || day=$(jig_today)
+  reason=$(spec_task_state "$tdir" abandoned_reason)
+  moved=$(spec_task_state "$tdir" moved_to)
+  if [ -n "$moved" ]; then
+    suffix=" — moved to $moved ($day)"
+  else
+    suffix=" — dropped ($day)"
+  fi
+  [ -z "$reason" ] || suffix="$suffix: $reason"
+  printf '%s\n' "$suffix"
 }
 
 # _spec_drop_commit <task-id> <spec-id> <rel-roadmap> <was-clean> — land the
@@ -2628,9 +2600,28 @@ _spec_drop_commit() {
 # `spec remove` is taking away (JIG_INTERNAL_SPEC_REMOVING): its roadmap goes
 # with it, and switching branches under that command would split it in two.
 spec_drop() {
+  local arg own=0
+  for arg in "$@"; do
+    case "$arg" in
+      --json)
+        # shellcheck source=lib/owntree.sh
+        . "$JIG_LIB/owntree.sh"
+        # shellcheck source=lib/json.sh
+        . "$JIG_LIB/json.sh"
+        json_run _spec_drop_in_own_tree 1 "$@"
+        return ;;
+      --revision) own=1 ;;
+    esac
+  done
+  if [ "$own" -eq 1 ]; then
+    # shellcheck source=lib/owntree.sh
+    . "$JIG_LIB/owntree.sh"
+    _spec_drop_in_own_tree 0 "$@"
+    return
+  fi
   [ $# -ge 1 ] || jig_die "spec drop: missing task id (usage: jig spec drop <task-id>)"
   [ $# -eq 1 ] || jig_die "spec drop: unexpected argument: $2"
-  local tid="$1" tdir st from sid roadmap rel tmp out rc=0 refusal day reason moved suffix base
+  local tid="$1" tdir st from sid roadmap rel tmp out rc=0 refusal suffix base
   jig_require_init
   tdir=$(spec_task_dir "$tid") || jig_die "spec drop: invalid task id: $tid"
   [ -f "$tdir/task.md" ] || jig_die "spec drop: unknown task: $tid (no $JIG_AI_DIR/workspace/tasks/$tid/task.md)"
@@ -2666,16 +2657,7 @@ spec_drop() {
     return 0
   fi
 
-  day=$(spec_task_state "$tdir" abandoned_at)
-  [ -n "$day" ] || day=$(jig_today)
-  reason=$(spec_task_state "$tdir" abandoned_reason)
-  moved=$(spec_task_state "$tdir" moved_to)
-  if [ -n "$moved" ]; then
-    suffix=" — moved to $moved ($day)"
-  else
-    suffix=" — dropped ($day)"
-  fi
-  [ -z "$reason" ] || suffix="$suffix: $reason"
+  suffix=$(_spec_drop_suffix "$tdir")
 
   # Where the edit has to land. A spec with an open epic: the epic, whose copy
   # of the roadmap is the current one, whatever base the task recorded. A
@@ -2766,6 +2748,144 @@ spec_drop() {
       jig_die "spec drop: could not read $rel"
       ;;
   esac
+}
+
+# _spec_drop_in_own_tree <as_json> <task-id> [--revision <n>] [--json] — `spec drop`
+# for a caller that is not a person at a checkout, a board's button (the
+# table's `drop-item`): the edit is made in Jig's own tree, on `spec/<sid>`,
+# reaching the base through a pull request, and nobody's checkout moves
+# (adr-20261104-a-write-goes-in-jigs-own-tree). It is the same edit as the text
+# form's, through `_spec_drop_rewrite`, so what closes an item and what the
+# commit says do not differ; what it does not have are the refusals the text
+# form makes about a checkout — the task's own branch, a phase run, the base
+# not being checked out — since no checkout is used. A task abandoned by
+# `task abandon --json` is the case it exists for: that never touches the
+# roadmap, and the item waits for this.
+#
+# With `--json` it runs inside json_run and answers with the item it closed
+# and the write; without it, `--revision` alone checks the same write and the
+# answer is text.
+_spec_drop_in_own_tree() {
+  local as_json="$1" arg args=() tid rev="" rev_given="" sub_usage="usage: jig spec drop <task-id> [--revision <n>] [--json]"
+  shift
+  for arg in "$@"; do
+    [ "$arg" = --json ] || args+=("$arg")
+  done
+  set -- ${args[@]+"${args[@]}"}
+  [ $# -ge 1 ] || jig_fail usage "spec drop: missing task id ($sub_usage)"
+  case "$1" in -*) jig_fail usage "spec drop: missing task id before $1 ($sub_usage)" ;; esac
+  tid=$1
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --revision)
+        [ $# -ge 2 ] || jig_fail usage "spec drop: --revision requires a value"
+        rev=$2; rev_given=1; shift 2 ;;
+      *) jig_fail usage "spec drop: unexpected argument: $1" ;;
+    esac
+  done
+  [ -z "$rev_given" ] || [ -n "$rev" ] || jig_fail usage "spec drop: --revision is empty"
+  [ -z "$rev" ] || jig_revision_valid "$rev" || jig_fail usage "spec drop: --revision is not a revision: $rev"
+  jig_require_init
+  local tdir sid rc=0 suffix
+  tdir=$(spec_task_dir "$tid") || jig_fail usage "spec drop: invalid task id: $tid"
+  # The command's own guard, the one the table's `drop-item` row asks: what it asks of the
+  # task and of agent.git, before anything is fetched or opened.
+  ot_spec_drop_refusal "$tid" state
+  if [ -n "$OT_SD_MSG" ]; then
+    if [ -n "$OT_SD_CODE" ]; then
+      jig_fail "$OT_SD_CODE" "$OT_SD_MSG"
+    fi
+    jig_die "$OT_SD_MSG"
+  fi
+  sid=$(jig_spec_link "$tdir/task.md")
+  spec_valid_id "$sid" || jig_fail usage "spec drop: invalid spec id: $sid"
+  suffix=$(_spec_drop_suffix "$tdir")
+  _SPEC_ITEM_SPEC=$sid
+
+  ot_begin "spec drop" "spec:$sid" "$rev"
+  _spec_item_base "$sid"
+  ot_open "spec/$sid" "$_SPEC_ITEM_BASE"
+
+  local rel roadmap crlf=0 first_line norm new msg tmpd out i=0 first=-1 reason moved where
+  rel="$JIG_AI_DIR/specs/$sid/roadmap.md"
+  roadmap="$OT_TREE/$rel"
+  # Where the roadmap was read: the branch when it exists, else the base it was cut from.
+  where=$OT_BRANCH
+  [ -z "$_OT_CUT" ] || where=$OT_BASE
+  [ -f "$roadmap" ] || jig_fail not-found "$(_ot_sd_no_roadmap "$sid" "$where")"
+  # The ending is read by the shell, awk works on LF, and the ending goes back once on
+  # the whole stream (conventions/shell.md).
+  IFS= read -r first_line < "$roadmap" || true
+  case "$first_line" in *$'\r') crlf=1 ;; esac
+  tmpd=$(mktemp "${TMPDIR:-/tmp}/jig-spec-drop.XXXXXX")
+  norm="$tmpd.norm"
+  new="$tmpd.new"
+  msg="$tmpd.msg"
+  jig_cleanup_add "$tmpd"
+  jig_cleanup_add "$norm"
+  jig_cleanup_add "$new"
+  jig_cleanup_add "$msg"
+  tr -d '\r' < "$roadmap" > "$norm"
+  # The first item that names the task and is still open: the one the answer
+  # reports. The rewrite keeps the roadmap's structure, so its place stays.
+  _spec_map_load "$norm"
+  while [ "$i" -lt "${#M_ID[@]}" ]; do
+    if [ "${M_TID[$i]}" = "$tid" ] && [ "${M_CHECKED[$i]}" != 1 ]; then
+      first=$i
+      break
+    fi
+    i=$((i + 1))
+  done
+  ot_spec_drop_roadmap_check "$sid" "$tid" "$where" "$norm"
+  if [ -n "$OT_SD_MSG" ]; then
+    if [ -n "$OT_SD_CODE" ]; then
+      jig_fail "$OT_SD_CODE" "$OT_SD_MSG"
+    fi
+    jig_die "$OT_SD_MSG"
+  fi
+  out=$(_spec_drop_rewrite "$norm" "$tid" "$suffix" "$new") || rc=$?
+  [ "$rc" -eq 0 ] || jig_die "spec drop: could not read $rel on $where"
+  [ "$first" -ge 0 ] || jig_die "spec drop: could not find the item $tid closed in $rel"
+
+  reason=$(spec_task_state "$tdir" abandoned_reason)
+  moved=$(spec_task_state "$tdir" moved_to)
+  printf 'Close %s in the roadmap of %s\n\n%s%s\n' "$tid" "$sid" "${moved:+Moved to $moved. }" "${reason:-Abandoned.}" > "$msg"
+
+  ot_claim
+  if [ "$crlf" -eq 1 ]; then
+    awk '{ printf "%s\r\n", $0 }' "$new" > "$norm"
+    mv "$norm" "$roadmap"
+  else
+    mv "$new" "$roadmap"
+  fi
+  jig_record_changed
+  ot_commit "$msg" "$rel"
+  ot_ship "Roadmap edits: $sid" "Edits to the roadmap of \`$sid\`, made through Jig on a branch of its own: nobody's checkout moved. Each commit is one edit, and further edits land here."
+
+  # The item as the roadmap now has it, by its place.
+  tr -d '\r' < "$roadmap" > "$norm"
+  _spec_map_load "$norm"
+  local sec
+  sec=${S_PHASE[${M_SEC[$first]}]}
+  if [ "$as_json" = 1 ]; then
+    local rec w
+    ot_answer_json
+    w=$_JSON
+    json_quote "$sid"; rec="{\"spec\":$_JSON"
+    json_quote "$tid"; rec="$rec,\"task\":$_JSON"
+    rec="$rec,\"item\":{\"id\":\"${M_ID[$first]}\""
+    json_quote "${M_TEXT[$first]}"; rec="$rec,\"text\":$_JSON"
+    if [ "${M_CHECKED[$first]}" = 1 ]; then rec="$rec,\"checked\":true"; else rec="$rec,\"checked\":false"; fi
+    json_str_or_null "${M_TID[$first]}"; rec="$rec,\"task\":$_JSON"
+    if [ "${M_FOG[$first]}" = 1 ]; then rec="$rec,\"fog\":true"; else rec="$rec,\"fog\":false"; fi
+    json_int_or_null "$sec"; rec="$rec,\"phase\":$_JSON}"
+    printf '%s,"write":%s}\n' "$rec" "$w"
+  else
+    printf 'spec drop: %s closed in %s\n' "$tid" "$rel"
+    printf '%s\n' "$out" | sed 's/^/  /'
+    ot_answer_text
+  fi
 }
 
 # spec_done_complete_hint <spec-id> <roadmap> — say so when no planned item is

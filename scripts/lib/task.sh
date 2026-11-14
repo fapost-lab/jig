@@ -77,9 +77,9 @@ _task_usage() {
       printf '       jig task set <id> class <Tn> --reason <text>   (a lower class than the current one)\n'
       printf '       jig task set <id> status consolidated [--revision <n>] [--json]\n'
       ;;
-    abandon) printf 'usage: jig task abandon <id> [--reason <text>] [--moved-to <repo>#<task-id>|<repo>#spec/<spec-id>]\n' ;;
-    archive) printf 'usage: jig task archive <id>\n' ;;
-    unarchive) printf 'usage: jig task unarchive <id>\n' ;;
+    abandon) printf 'usage: jig task abandon <id> [--reason <text>] [--moved-to <repo>#<task-id>|<repo>#spec/<spec-id>] [--revision <n>] [--json]\n' ;;
+    archive) printf 'usage: jig task archive <id> [--revision <n>] [--json]\n' ;;
+    unarchive) printf 'usage: jig task unarchive <id> [--revision <n>] [--json]\n' ;;
     merge) printf 'usage: jig task merge <from> --into <to> [--partial]\n' ;;
     pause) printf 'usage: jig task pause <id> [--reason <text>] [--stash] [--revision <n>] [--json]\n       jig task pause <id> --if-requested --stage <name>\n' ;;
     resume) printf 'usage: jig task resume <id> [--revision <n>] [--json]\n' ;;
@@ -127,7 +127,7 @@ _task_usage() {
       printf '       jig task autopilot <id> end [--reason <how it ended>]\n'
       printf '       jig task autopilot <id> report\n'
       ;;
-    gate) printf 'usage: jig task gate <id> approved [--by human|agent]\n' ;;
+    gate) printf 'usage: jig task gate <id> approved [--by human|agent] [--revision <n>] [--json]\n' ;;
     route) printf 'usage: jig task route <id>\n' ;;
     *) return 1 ;;
   esac
@@ -841,10 +841,19 @@ _task_rewrite_state_remove() {
 # one — under one revision claim (`task resume`) — moves <tmp> into place
 # itself. Called as a plain command, never inside $(...): the guard dies.
 _task_state_without() {
-  local dir="$1" tmp="$2" file today
+  local dir="$1" tmp="$2"
   shift 2
   _task_guard_dir "$dir"
-  file="$dir/state"
+  _task_state_without_into "$dir/state" "$tmp" "$@"
+}
+
+# _task_state_without_into <src> <dst> <key>... — the state file <src> without
+# the lines of every <key>, `updated_at` refreshed, into <dst>; <src> is not
+# touched. What _task_state_without builds, for a chain of changes that began
+# with a key set (`task unarchive`). <dst> is never <src>.
+_task_state_without_into() {
+  local src="$1" tmp="$2" today
+  shift 2
   jig_cleanup_add "$tmp"
   today=$(jig_today)
   awk -v keys="$*" -v today="$today" '
@@ -861,7 +870,7 @@ _task_state_without() {
         print line
       }
     }
-  ' "$file" > "$tmp"
+  ' "$src" > "$tmp"
 }
 
 # _task_touch_state <dir> — refresh `updated_at` and mark the status page,
@@ -1898,7 +1907,7 @@ _task_set_body() {
     [ -n "$reason" ] || jig_fail usage "task set: --reason must not be empty"
     _task_finding_valid_field "$reason" || jig_fail usage "task set: --reason must be a single line with no tab"
   fi
-  local claim=0
+  local claim=0 refusal
   if [ "$rev_given" -eq 1 ] || [ "$as_json" -eq 1 ]; then
     [ "$key:$value" = status:consolidated ] \
       || jig_fail usage "task set: --revision and --json are only for closing a task: jig task set $id status consolidated"
@@ -1927,14 +1936,14 @@ _task_set_body() {
       # it was; a status written by hand would leave unarchive nothing to
       # return to, and an archived task changes status only by unarchive.
       [ "$value" != archived ] || jig_die "task set: a task is archived by jig task archive $id"
-      [ "$(task_state_get "$id" status)" != archived ] \
-        || jig_die "task set: task $id is archived; run jig task unarchive $id first"
+      refusal=$(_task_archived_refusal "$id")
+      [ -z "$refusal" ] || jig_die "task set: $refusal"
       # A spec-linked task is abandoned by its own command, which records why
       # and closes the roadmap item that names it
       # (adr-20261029-an-abandoned-task-says-why-and-its-roadmap-item-follows);
       # writing the status by hand would leave the roadmap saying the work is
       # still here.
-      if [ "$value" = abandoned ] && [ "$_TASK_ABANDONING" -eq 0 ] \
+      if [ "$value" = abandoned ] \
          && [ "$(task_state_get "$id" status)" != abandoned ] \
          && [ -n "$(_task_spec_id "$id")" ]; then
         jig_die "task set: $id is linked to a spec; abandon it with jig task abandon $id --reason <text>"
@@ -1985,7 +1994,6 @@ _task_set_body() {
   # And a merge alone never closes a task (AGENTS.md), nor does closing stand
   # in for one: _task_close_refusal asks the forge about the pull request now.
   if [ "$key" = status ] && [ "$value" = consolidated ]; then
-    local refusal
     refusal=$(_task_close_refusal "$id" forge) || exit 1
     [ -z "$refusal" ] || jig_fail not-closable "$refusal"
   fi
@@ -2395,77 +2403,156 @@ _task_set_class() {
   fi
 }
 
-# task_abandon <id> [--reason <text>] [--moved-to <ref>] — give a task up, and
-# say why where the next agent reads it
+# _task_archived_refusal <id> — why a task's status cannot be written because
+# it is archived, or nothing: an archived task changes status only by
+# `unarchive`. The one sentence `task set` and `task abandon` both refuse with,
+# each under its own name.
+_task_archived_refusal() {
+  [ "$(task_state_get "$1" status)" != archived ] \
+    || printf 'task %s is archived; run jig task unarchive %s first\n' "$1" "$1"
+}
+
+# task_abandon <id> [--reason <text>] [--moved-to <ref>] [--revision <n>]
+# [--json] — give a task up, and say why where the next agent reads it
 # (adr-20261029-an-abandoned-task-says-why-and-its-roadmap-item-follows). The
-# reason, the day and the move's target go into `state`; a task linked to a
-# spec must give a reason, and the roadmap item that names it is then closed by
-# `jig spec drop`, run through the dispatcher as `spec remove` runs this
-# command: task.sh does not source spec.sh. The target is parsed by
-# jig_task_ref, the one grammar of a reference, and never written to: when it
-# is not there yet, the command that files it there is printed.
-_TASK_ABANDONING=0
+# reason, the day and the move's target go into `state`, as one new file under
+# one revision claim (checked as `task pause`'s write is); a task linked to a
+# spec must give a reason. The target is parsed by jig_task_ref, the one
+# grammar of a reference, and never written to: when it is not there yet, the
+# command that files it there is printed (`note` in the answer).
+#
+# The roadmap item that names a linked task is closed by `jig spec drop`, which
+# the text form runs through the dispatcher as `spec remove` runs this command:
+# task.sh does not source spec.sh. `--json` does not: it never touches a
+# checkout or the roadmap, so the item waits, unchecked and visible, for
+# `jig spec drop <id> --json`, the table's `drop-item`, which edits it in Jig's
+# own tree. `--json` anywhere runs the whole command as the producer of
+# json_run (conventions/json-output.md).
 task_abandon() {
+  local arg
+  for arg in "$@"; do
+    if [ "$arg" = --json ]; then
+      # shellcheck source=lib/json.sh
+      . "$JIG_LIB/json.sh"
+      json_run _task_abandon_body 1 "$@"
+      return
+    fi
+  done
+  _task_abandon_body 0 "$@"
+}
+
+# _task_abandon_body <as_json> <id> [options] — the body of `task abandon`;
+# with <as_json> 1 it runs inside json_run and prints the abandoned task as
+# data, and runs no `spec drop`.
+_task_abandon_body() {
+  local as_json="$1" arg args=()
+  shift
+  for arg in "$@"; do
+    [ "$arg" = --json ] || args+=("$arg")
+  done
+  set -- ${args[@]+"${args[@]}"}
   jig_require_init
-  [ $# -ge 1 ] || jig_die "$(_task_usage abandon)"
-  local id="$1" reason="" has_reason=0 moved="" sid dir out rc
+  [ $# -ge 1 ] || jig_fail usage "$(_task_usage abandon)"
+  local id="$1" reason="" has_reason=0 moved="" sid dir out rc=0 rev="" rev_given=0 expected was refusal
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
       --reason)
-        [ $# -ge 2 ] || jig_die "task abandon: --reason requires a value"
+        [ $# -ge 2 ] || jig_fail usage "task abandon: --reason requires a value"
         reason="$2"; has_reason=1; shift 2 ;;
       --moved-to)
-        [ $# -ge 2 ] || jig_die "task abandon: --moved-to requires a value"
+        [ $# -ge 2 ] || jig_fail usage "task abandon: --moved-to requires a value"
         moved="$2"; shift 2 ;;
-      *) jig_die "task abandon: unknown argument: $1 ($(_task_usage abandon))" ;;
+      --revision)
+        [ $# -ge 2 ] || jig_fail usage "task abandon: --revision requires a value"
+        rev="$2"; rev_given=1; shift 2 ;;
+      *) jig_fail usage "task abandon: unknown argument: $1 ($(_task_usage abandon))" ;;
     esac
   done
+  [ "$rev_given" -eq 0 ] || [ -n "$rev" ] || jig_fail usage "task abandon: --revision is empty"
+  [ -z "$rev" ] || jig_revision_valid "$rev" || jig_fail usage "task abandon: --revision is not a revision: $rev"
+  _task_valid_id "$id" || jig_fail usage "invalid task id: $id"
+  # The revision this write is checked against: the caller's, or the one read
+  # here before the task is, so the state read below is never newer than it.
+  if [ -n "$rev" ]; then expected=$rev; else expected=$(jig_revision_read); fi
   dir=$(task_dir "$id")
-  [ -f "$dir/state" ] || jig_die "task abandon: unknown task: $id"
+  [ -f "$dir/state" ] || jig_fail not-found "task abandon: unknown task: $id"
   if [ "$has_reason" -eq 1 ]; then
-    [ -n "$reason" ] || jig_die "task abandon: --reason must not be empty"
-    _task_finding_valid_field "$reason" || jig_die "task abandon: --reason must be a single line with no tab"
+    [ -n "$reason" ] || jig_fail usage "task abandon: --reason must not be empty"
+    _task_finding_valid_field "$reason" || jig_fail usage "task abandon: --reason must be a single line with no tab"
   fi
   if [ -n "$moved" ]; then
-    jig_task_ref "$moved" || jig_die "task abandon: --moved-to $moved: $_JIG_REF_ERROR"
+    jig_task_ref "$moved" || jig_fail usage "task abandon: --moved-to $moved: $_JIG_REF_ERROR"
   fi
   sid=$(_task_spec_id "$id")
   if [ -n "$sid" ] && [ "$has_reason" -eq 0 ]; then
-    jig_die "task abandon: $id is linked to spec $sid; say why: jig task abandon $id --reason <text> [--moved-to <repo>#<task-id>]"
+    jig_fail usage "task abandon: $id is linked to spec $sid; say why: jig task abandon $id --reason <text> [--moved-to <repo>#<task-id>]"
   fi
+  # The refusals of a status write that concern this one (`task set` asks the
+  # same); the one for a task linked to a spec is for a status written by
+  # hand, and is the reason's check above.
+  _task_guard_write "$id" "task abandon"
+  refusal=$(_task_archived_refusal "$id")
+  [ -z "$refusal" ] || jig_fail wrong-status "task abandon: $refusal"
+  was=$(task_state_get "$id" status)
 
-  # The status goes through task_set, which keeps every refusal it has
-  # (archived, a planted link); the linked-task refusal there is for a
-  # status written by hand, so it is asked only when this is not a re-abandon.
-  if [ "$(task_state_get "$id" status)" != abandoned ]; then
-    _TASK_ABANDONING=1
-    task_set "$id" status abandoned
-    _TASK_ABANDONING=0
-  else
-    _task_guard_write "$id" "task abandon"
-  fi
-  _task_rewrite_state "$dir" abandoned_at "$(jig_today)"
+  # The new state, whole, before the claim: a refused claim leaves nothing.
+  local tmp="$dir/state.tmp.$$" tmp2="$dir/state.tmp2.$$"
+  jig_cleanup_add "$tmp"
+  jig_cleanup_add "$tmp2"
+  _task_state_set_into "$dir/state" "$tmp" status abandoned
+  _task_state_set_into "$tmp" "$tmp2" abandoned_at "$(jig_today)"
+  mv "$tmp2" "$tmp"
   if [ "$has_reason" -eq 1 ]; then
-    _task_rewrite_state "$dir" abandoned_reason "$reason"
+    _task_state_set_into "$tmp" "$tmp2" abandoned_reason "$reason"
   else
-    _task_rewrite_state_remove "$dir" abandoned_reason
+    _task_state_without_into "$tmp" "$tmp2" abandoned_reason
   fi
+  mv "$tmp2" "$tmp"
   if [ -n "$moved" ]; then
-    _task_rewrite_state "$dir" moved_to "$moved"
+    _task_state_set_into "$tmp" "$tmp2" moved_to "$moved"
   else
-    _task_rewrite_state_remove "$dir" moved_to
+    _task_state_without_into "$tmp" "$tmp2" moved_to
   fi
-  printf 'task abandon: %s abandoned%s\n' "$id" "${moved:+, moved to $moved}"
+  mv "$tmp2" "$tmp"
+  jig_revision_claim "$expected" || rc=$?
+  case "$rc" in
+    0) ;;
+    1)
+      rm -f "$tmp"
+      jig_fail stale-revision "task abandon: the clone changed since revision $expected; read again and retry" ;;
+    *)
+      rm -f "$tmp"
+      jig_die "task abandon: cannot claim the clone revision in $(jig_revision_dir)" ;;
+  esac
+  mv "$tmp" "$dir/state"
+  jig_task_state_forget
+  jig_record_changed
+  # A task that was live left the queue with its status; a re-abandon has
+  # nothing to take out.
+  [ "$was" = abandoned ] || _task_queue_prune "$id" "task set"
 
+  local note=""
   if [ -n "$moved" ] && ! jig_task_ref_dir; then
     if [ "$_JIG_REF_KIND" = spec ]; then
-      printf 'moved: %s is not there (%s); nothing is written there, so add it to that spec yourself\n' "$moved" "$_JIG_REF_ERROR"
+      note="moved: $moved is not there ($_JIG_REF_ERROR); nothing is written there, so add it to that spec yourself"
     else
-      printf 'moved: %s is not there (%s); file it there yourself: (cd %s && jig task new %s)\n' \
-        "$moved" "$_JIG_REF_ERROR" "$_JIG_REF_REPO" "$_JIG_REF_ID"
+      note="moved: $moved is not there ($_JIG_REF_ERROR); file it there yourself: (cd $_JIG_REF_REPO && jig task new $_JIG_REF_ID)"
     fi
   fi
+
+  if [ "$as_json" = 1 ]; then
+    local rec spec=""
+    case "$sid" in '(more than one)') ;; *) spec=$sid ;; esac
+    json_str_or_null "$reason"; rec="{\"reason\":$_JSON"
+    json_str_or_null "$moved"; rec="$rec,\"moved_to\":$_JSON"
+    json_str_or_null "$note"; rec="$rec,\"note\":$_JSON"
+    json_str_or_null "$spec"; rec="$rec,\"spec\":$_JSON}"
+    printf '{"task":%s,"abandon":%s}\n' "$(_task_json_one "$id")" "$rec"
+    return 0
+  fi
+  printf 'task abandon: %s abandoned%s\n' "$id" "${moved:+, moved to $moved}"
+  [ -z "$note" ] || printf '%s\n' "$note"
 
   [ -n "$sid" ] || return 0
   rc=0
@@ -2515,65 +2602,185 @@ _task_abandon_keys_clear() {
   fi
 }
 
-# task_archive <id> — a person's archive of a task nobody will finish now
+# task_archive <id> [--revision <n>] [--json] — a person's archive of a task
+# nobody will finish now
 # (adr-20261027-a-task-nobody-finished-is-archived-not-purged). The workspace
 # stays where it is, kept without a limit; only the status changes, and the
 # branch, worktree and pull request are left alone. Its queue entry goes
 # (adr-20261107-a-finished-task-leaves-the-queue).
+#
+# The write is checked against a revision as `task pause`'s is, and `--json`
+# anywhere runs the whole command as the producer of json_run
+# (conventions/json-output.md): see _task_archive_move, which `unarchive`
+# shares.
 task_archive() {
-  [ $# -eq 1 ] || jig_die "$(_task_usage archive)"
-  jig_require_init
-  _task_archive "$1" manual
+  _task_archive_move archive "$@"
 }
 
-# _task_archive <id> <reason> — the one writer of `archived`, shared with
-# housekeeping, which archives through it rather than writing state itself.
-# `archived_from` is what unarchive returns to. A consolidated task is refused:
-# its work is already in git, and its workspace is purged, not kept.
+# task_unarchive <id> [--revision <n>] [--json] — return an archived task to
+# the status it had. The write refreshes `updated_at`, so the next housekeeping
+# run does not find it stale and archives it again.
+task_unarchive() {
+  _task_archive_move unarchive "$@"
+}
+
+# _task_archive_move <archive|unarchive> <id> [options] — the wrapper both
+# commands share: `--json` among the arguments runs the body in json_run.
+_task_archive_move() {
+  local arg
+  for arg in "$@"; do
+    if [ "$arg" = --json ]; then
+      # shellcheck source=lib/json.sh
+      . "$JIG_LIB/json.sh"
+      json_run _task_archive_move_body 1 "$@"
+      return
+    fi
+  done
+  _task_archive_move_body 0 "$@"
+}
+
+# _task_archive_move_body <as_json> <archive|unarchive> <id> [--revision <n>]
+# [--json] — the body of both; with <as_json> 1 it prints the task, as `task
+# list --json` lists it after the write.
+#
+# The new state is built whole, the revision claimed and only then the file
+# moved into place: one write under one claim, and a stale caller writes
+# nothing. What follows the move — the queue entry that goes with an archive
+# (`jig queue prune`, the queue's own writer, which raises the revision once
+# more when it removed one) and the reminder that an unarchived task is not
+# queued — comes after it, as it does after `task set … status consolidated`,
+# and says what it says on stderr.
+_task_archive_move_body() {
+  local as_json="$1" verb="$2" arg args=()
+  shift 2
+  for arg in "$@"; do
+    [ "$arg" = --json ] || args+=("$arg")
+  done
+  set -- ${args[@]+"${args[@]}"}
+  jig_require_init
+  [ $# -ge 1 ] || jig_fail usage "$(_task_usage "$verb")"
+  case "$1" in
+    -*) jig_fail usage "$(_task_usage "$verb")" ;;
+  esac
+  local id="$1" rev="" rev_given=0 expected dir tmp rc=0 from=""
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --revision)
+        [ $# -ge 2 ] || jig_fail usage "task $verb: --revision requires a value"
+        rev="$2"; rev_given=1; shift 2 ;;
+      *) jig_fail usage "$(_task_usage "$verb")" ;;
+    esac
+  done
+  [ "$rev_given" -eq 0 ] || [ -n "$rev" ] || jig_fail usage "task $verb: --revision is empty"
+  [ -z "$rev" ] || jig_revision_valid "$rev" || jig_fail usage "task $verb: --revision is not a revision: $rev"
+  _task_valid_id "$id" || jig_fail usage "invalid task id: $id"
+  # The revision this write is checked against: the caller's, or the one read
+  # here before the task is, so the state read below is never newer than it.
+  if [ -n "$rev" ]; then expected=$rev; else expected=$(jig_revision_read); fi
+  dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_fail not-found "task $verb: unknown task: $id"
+  tmp="$dir/state.tmp.$$"
+  jig_cleanup_add "$tmp"
+  if [ "$verb" = archive ]; then
+    _task_archive_build "$id" manual "$tmp"
+  else
+    _task_unarchive_build "$id" "$tmp"
+  fi
+  jig_revision_claim "$expected" || rc=$?
+  case "$rc" in
+    0) ;;
+    1)
+      rm -f "$tmp"
+      jig_fail stale-revision "task $verb: the clone changed since revision $expected; read again and retry" ;;
+    *)
+      rm -f "$tmp"
+      jig_die "task $verb: cannot claim the clone revision in $(jig_revision_dir)" ;;
+  esac
+  [ "$verb" = archive ] || from=$(task_state_get "$id" archived_from)
+  mv "$tmp" "$dir/state"
+  jig_task_state_forget
+  jig_record_changed
+  if [ "$verb" = archive ]; then
+    _task_queue_prune "$id" "task archive"
+  else
+    _task_unarchive_hint "$id" "$from"
+  fi
+  if [ "$as_json" = 1 ]; then
+    printf '{"task":%s}\n' "$(_task_json_one "$id")"
+  fi
+}
+
+# _task_archive <id> <reason> — the one writer of `archived` outside the two
+# commands, shared with housekeeping, which archives through it rather than
+# writing state itself, and `task merge`. Not checked against a revision:
+# housekeeping raises it once, as it ends. It builds the state as the
+# commands do (_task_archive_build) and moves it into place.
 _task_archive() {
-  local id="$1" reason="$2" dir status
+  local id="$1" reason="$2" dir tmp
+  dir=$(task_dir "$id")
+  tmp="$dir/state.tmp.$$"
+  jig_cleanup_add "$tmp"
+  _task_archive_build "$id" "$reason" "$tmp"
+  mv "$tmp" "$dir/state"
+  jig_task_state_forget
+  jig_record_changed
+  _task_queue_prune "$id" "task archive"
+}
+
+# _task_archive_build <id> <reason> <tmp> — the state of <id> archived, whole,
+# into <tmp>, and the refusals of the move: an unfinished task is archived,
+# a consolidated one is not (its work is already in git, and its workspace is
+# purged, not kept: `wrong-status`) and an archived one already is
+# (`already-archived`). `archived_from` is what unarchive returns to. Writes
+# nothing but <tmp>. Called as a plain command, never inside $(...): it dies.
+_task_archive_build() {
+  local id="$1" reason="$2" tmp="$3" dir status tmp2
   _task_valid_archived_reason "$reason" || jig_die "task archive: invalid reason: $reason"
   dir=$(task_dir "$id")
   _task_guard_write "$id" "task archive"
   status=$(task_state_get "$id" status)
   case "$status" in
     active | ready | abandoned) ;;
-    archived) jig_die "task archive: task $id is already archived" ;;
-    *) jig_die "task archive: task $id is $status; only an unfinished task is archived" ;;
+    archived) jig_fail already-archived "task archive: task $id is already archived" ;;
+    *) jig_fail wrong-status "task archive: task $id is $status; only an unfinished task is archived" ;;
   esac
-  _task_rewrite_state "$dir" archived_from "$status"
-  _task_rewrite_state "$dir" archived_reason "$reason"
-  _task_rewrite_state "$dir" archived_at "$(jig_today)"
-  _task_rewrite_state "$dir" status archived
-  _task_queue_prune "$id" "task archive"
+  tmp2="$tmp.2"
+  jig_cleanup_add "$tmp2"
+  _task_state_set_into "$dir/state" "$tmp2" archived_from "$status"
+  _task_state_set_into "$tmp2" "$tmp" archived_reason "$reason"
+  _task_state_set_into "$tmp" "$tmp2" archived_at "$(jig_today)"
+  _task_state_set_into "$tmp2" "$tmp" status archived
+  rm -f "$tmp2"
 }
 
-# task_unarchive <id> — return an archived task to the status it had. The
-# write refreshes `updated_at`, so the next housekeeping run does not find it
-# stale and archive it again.
-task_unarchive() {
-  [ $# -eq 1 ] || jig_die "$(_task_usage unarchive)"
-  jig_require_init
-  local id="$1" dir from
+# _task_unarchive_build <id> <tmp> — the state of <id> back at the status it had
+# before it was archived, into <tmp>; `not-archived` for a task that is not.
+# An absorbed task that comes back is its own task again; the receiver keeps
+# `absorbs` as the record of the documents it took.
+_task_unarchive_build() {
+  local id="$1" tmp="$2" dir from tmp2
   dir=$(task_dir "$id")
   _task_guard_write "$id" "task unarchive"
-  [ "$(task_state_get "$id" status)" = archived ] || jig_die "task unarchive: task $id is not archived"
+  [ "$(task_state_get "$id" status)" = archived ] || jig_fail not-archived "task unarchive: task $id is not archived"
   from=$(task_state_get "$id" archived_from)
   case "$from" in
     active | ready | abandoned) ;;
     *) from=active ;;
   esac
-  _task_rewrite_state "$dir" status "$from"
-  _task_rewrite_state_remove "$dir" archived_from
-  _task_rewrite_state_remove "$dir" archived_reason
-  _task_rewrite_state_remove "$dir" archived_at
-  # An absorbed task that comes back is its own task again; the receiver
-  # keeps `absorbs` as the record of the documents it took.
-  _task_rewrite_state_remove "$dir" absorbed_into
-  # Back to live work, it is not queued any more: its entry went when it was
-  # archived. Back to abandoned, it is still finished, and a reminder to queue
-  # it would be undone by the next prune.
-  [ "$from" = abandoned ] || _task_not_queued_hint "$id"
+  tmp2="$tmp.2"
+  jig_cleanup_add "$tmp2"
+  _task_state_set_into "$dir/state" "$tmp2" status "$from"
+  _task_state_without_into "$tmp2" "$tmp" archived_from archived_reason archived_at absorbed_into
+  rm -f "$tmp2"
+}
+
+# _task_unarchive_hint <id> <from> — back to live work, a task is not queued
+# any more: its entry went when it was archived. Back to abandoned, it is still
+# finished, and a reminder to queue it would be undone by the next prune.
+_task_unarchive_hint() {
+  [ "$2" != abandoned ] || return 0
+  _task_not_queued_hint "$1"
 }
 
 # _task_list_add <list> <id> — <list>, comma-separated, with <id> added once.
@@ -4876,32 +5083,114 @@ _task_route_evidence_gate() {
 # script cannot tell who approved. What it adds is that a design changed after
 # its approval becomes visible without anyone rereading task.md.
 
-# task_gate <id> approved [--by human|agent] — record the approval of the
-# design as it is now, and who gave it (`gate_by`, human by default). Refused
-# for a class without a gate and for a task with no design.md, since there is
-# nothing to pin. `--by agent` is the self-approval of an unattended run
+# task_gate <id> approved [--by human|agent] [--revision <n>] [--json] —
+# record the approval of the design as it is now, and who gave it (`gate_by`,
+# human by default). Refused for a class without a gate and for a task with no
+# design.md, since there is nothing to pin. `--by agent` is the self-approval of
+# an unattended run
 # (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci), and is
 # refused anywhere else: outside such a run the gate is a human's.
+#
+# The three keys are one new state file under one revision claim, checked as
+# `task pause`'s write is: against the caller's `--revision`, or the one read
+# before the task is. A board's approve button sends the revision of the read
+# that showed the design, and `jig task artifact write` raises it, so a design
+# rewritten since is never approved unseen. `--json` anywhere runs the whole
+# command as the producer of json_run (conventions/json-output.md).
 task_gate() {
+  local arg
+  for arg in "$@"; do
+    if [ "$arg" = --json ]; then
+      # shellcheck source=lib/json.sh
+      . "$JIG_LIB/json.sh"
+      json_run _task_gate_body 1 "$@"
+      return
+    fi
+  done
+  _task_gate_body 0 "$@"
+}
+
+# _task_gate_body <as_json> <id> approved [--by human|agent] [--revision <n>]
+# [--json] — the body of `task gate`; with <as_json> 1 it runs inside json_run
+# and prints the approval as data.
+_task_gate_body() {
+  local as_json="$1" arg args=()
+  shift
+  for arg in "$@"; do
+    [ "$arg" = --json ] || args+=("$arg")
+  done
+  set -- ${args[@]+"${args[@]}"}
   jig_require_init
-  [ $# -eq 2 ] || [ $# -eq 4 ] || jig_die "$(_task_usage gate)"
-  local id="$1" decision="$2" by=human dir design refusal
-  if [ $# -eq 4 ]; then
-    [ "$3" = --by ] || jig_die "task gate: unknown argument: $3"
-    case "$4" in
-      human | agent) by="$4" ;;
-      *) jig_die "task gate: invalid --by: $4 (expected human|agent)" ;;
+  [ $# -ge 2 ] || jig_fail usage "$(_task_usage gate)"
+  local id="$1" decision="$2" by=human dir design rev="" rev_given=0 expected
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --by)
+        [ $# -ge 2 ] || jig_fail usage "$(_task_usage gate)"
+        case "$2" in
+          human | agent) by="$2" ;;
+          *) jig_fail usage "task gate: invalid --by: $2 (expected human|agent)" ;;
+        esac
+        shift 2 ;;
+      --revision)
+        [ $# -ge 2 ] || jig_fail usage "task gate: --revision requires a value"
+        rev="$2"; rev_given=1; shift 2 ;;
+      --*) jig_fail usage "task gate: unknown argument: $1" ;;
+      *) jig_fail usage "$(_task_usage gate)" ;;
     esac
-  fi
+  done
+  [ "$rev_given" -eq 0 ] || [ -n "$rev" ] || jig_fail usage "task gate: --revision is empty"
+  [ -z "$rev" ] || jig_revision_valid "$rev" || jig_fail usage "task gate: --revision is not a revision: $rev"
+  [ "$decision" = approved ] || jig_fail usage "task gate: unknown decision: $decision (expected approved)"
+  _task_valid_id "$id" || jig_fail usage "invalid task id: $id"
+  # The revision this write is checked against: the caller's, or the one read
+  # here before the task is, so the state read below is never newer than it.
+  if [ -n "$rev" ]; then expected=$rev; else expected=$(jig_revision_read); fi
   dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_fail not-found "task gate: unknown task: $id"
   _task_guard_write "$id" "task gate"
-  [ "$decision" = approved ] || jig_die "task gate: unknown decision: $decision (expected approved)"
-  refusal=$(_task_gate_refusal "$id" "$by") || exit 1
-  [ -z "$refusal" ] || jig_die "$refusal"
+  _task_gate_check "$id" "$by"
+  if [ -n "$_TASK_GATE_MSG" ]; then
+    # A code only where a program can act on it: the run's own answer to give,
+    # or a design to write. The agent's self-approval refused outside a run is
+    # the clone's setting and stays `failed`.
+    if [ -n "$_TASK_GATE_CODE" ]; then
+      jig_fail "$_TASK_GATE_CODE" "$_TASK_GATE_MSG"
+    fi
+    jig_die "$_TASK_GATE_MSG"
+  fi
   design=$(_task_receipt_design_hash "$id")
-  _task_rewrite_state "$dir" gate approved
-  _task_rewrite_state "$dir" gate_design "$design"
-  _task_rewrite_state "$dir" gate_by "$by"
+
+  # The new state, whole, before the claim: a refused claim leaves nothing.
+  local tmp="$dir/state.tmp.$$" tmp2="$dir/state.tmp2.$$" rc=0
+  jig_cleanup_add "$tmp"
+  jig_cleanup_add "$tmp2"
+  _task_state_set_into "$dir/state" "$tmp2" gate approved
+  _task_state_set_into "$tmp2" "$tmp" gate_design "$design"
+  _task_state_set_into "$tmp" "$tmp2" gate_by "$by"
+  rm -f "$tmp"
+  jig_revision_claim "$expected" || rc=$?
+  case "$rc" in
+    0) ;;
+    1)
+      rm -f "$tmp2"
+      jig_fail stale-revision "task gate: the clone changed since revision $expected; read again and retry" ;;
+    *)
+      rm -f "$tmp2"
+      jig_die "task gate: cannot claim the clone revision in $(jig_revision_dir)" ;;
+  esac
+  mv "$tmp2" "$dir/state"
+  jig_task_state_forget
+  jig_record_changed
+
+  if [ "$as_json" = 1 ]; then
+    local rec
+    json_quote "$by"; rec="{\"state\":\"approved\",\"by\":$_JSON"
+    json_quote "$design"; rec="$rec,\"design\":$_JSON}"
+    printf '{"task":%s,"gate":%s}\n' "$(_task_json_one "$id")" "$rec"
+    return 0
+  fi
   if [ "$by" = agent ]; then
     printf 'gate: approved by the agent\n'
   else
@@ -4909,17 +5198,23 @@ task_gate() {
   fi
 }
 
-# _task_gate_refusal <id> <by> — why `jig task gate <id> approved --by <by>`
-# refuses this task by its state, or nothing when it would record the
-# approval. Shared with the actions table (_task_actions), which asks it for
-# `--by human`: the approval a person gives.
-_task_gate_refusal() {
+# _task_gate_check <id> <by> — why `jig task gate <id> approved --by <by>`
+# refuses this task by its state, in _TASK_GATE_MSG, empty when it would record
+# the approval; and, in _TASK_GATE_CODE, the code a program acts on
+# (schemas/json.md), empty for a refusal that has none of its own. The one place
+# the conditions live: `task gate` and the actions table both ask it, through
+# _task_gate_refusal for the table. Sets variables rather than printing, so the
+# command gets the code and the message from one decision, in its own shell.
+_TASK_GATE_MSG=""
+_TASK_GATE_CODE=""
+_task_gate_check() {
   local id="$1" by="$2" class run mode design
+  _TASK_GATE_MSG="" _TASK_GATE_CODE=""
   task_state_var run "$id" autopilot
   if [ "$by" = agent ]; then
     _task_autopilot_mode_v mode "$id"
     if [ "$run" != on ] || [ "$mode" != unattended ]; then
-      printf "task gate: --by agent is an unattended run's self-approval; %s has no unattended autopilot run on, so the gate is the human's\n" "$id"
+      printf -v _TASK_GATE_MSG "task gate: --by agent is an unattended run's self-approval; %s has no unattended autopilot run on, so the gate is the human's" "$id"
       return 0
     fi
   elif _task_run_unattended "$id"; then
@@ -4929,26 +5224,38 @@ _task_gate_refusal() {
     # setting alone does not refuse it: without a run the person working the
     # task is the one approving.
     if [ "$run" = on ]; then
-      printf "task gate: %s's run is unattended, so this approval is the agent's: jig task gate %s approved --by agent\n" "$id" "$id"
+      _TASK_GATE_CODE=autopilot-running
+      printf -v _TASK_GATE_MSG "task gate: %s's run is unattended, so this approval is the agent's: jig task gate %s approved --by agent" "$id" "$id"
       return 0
     fi
     # Not on, so stopped.
+    _TASK_GATE_CODE=autopilot-stopped
     if _task_autopilot_at_limit "$id"; then
-      printf 'task gate: %s exhausted its unattended repair limit; %s\n' "$id" "$(_task_autopilot_limit_roads "$id")"
+      printf -v _TASK_GATE_MSG 'task gate: %s exhausted its unattended repair limit; %s' "$id" "$(_task_autopilot_limit_roads "$id")"
       return 0
     fi
-    printf 'task gate: %s is stopped; if a human answered, run: jig task autopilot %s resume --answer <text> --by human; then approve with --by agent; or, if a person takes the task on: jig task autopilot %s handover --by human --answer <text>\n' "$id" "$id" "$id"
+    printf -v _TASK_GATE_MSG 'task gate: %s is stopped; if a human answered, run: jig task autopilot %s resume --answer <text> --by human; then approve with --by agent; or, if a person takes the task on: jig task autopilot %s handover --by human --answer <text>' "$id" "$id" "$id"
     return 0
   fi
+  _TASK_GATE_CODE=no-gate
   task_state_var class "$id" class
   case "$class" in
     T3 | T4) ;;
     *)
-      printf 'task gate: %s is %s; only T3 and T4 tasks have a human gate\n' "$id" "${class:-unclassified}"
+      printf -v _TASK_GATE_MSG 'task gate: %s is %s; only T3 and T4 tasks have a human gate' "$id" "${class:-unclassified}"
       return 0 ;;
   esac
   _task_design_hash_v design "$id"
-  [ "$design" != "-" ] || printf 'task gate: %s has no design.md to approve\n' "$id"
+  [ "$design" != "-" ] || printf -v _TASK_GATE_MSG 'task gate: %s has no design.md to approve' "$id"
+}
+
+# _task_gate_refusal <id> <by> — _task_gate_check's message, printed: what the
+# actions table (_task_actions) asks for `--by human`, the approval a person
+# gives.
+_task_gate_refusal() {
+  _task_gate_check "$1" "$2"
+  [ -z "$_TASK_GATE_MSG" ] || printf '%s\n' "$_TASK_GATE_MSG"
+  return 0
 }
 
 # _task_gate_state <id> — where a T3/T4 task stands at its human gate:
@@ -6331,7 +6638,7 @@ EOF
 #
 # The rows, in their order; the ids are a contract. The pause request rows ask
 # the guards `jig queue request|cancel` asks (common.sh), which read the queue.
-_TASK_ACTIONS="start pause resume request-pause cancel-pause-request approve-gate answer-stop handover set-class ship land request-review merge promote pr-status close abandon archive unarchive reopen"
+_TASK_ACTIONS="start pause resume request-pause cancel-pause-request approve-gate answer-stop handover set-class ship land request-review merge promote pr-status close abandon archive unarchive reopen drop-item"
 
 # _task_actions <id> <pr-state> [<ci> [<mergeable> [<pr-url-state>
 # [<base-state>]]]] — one line per row of the table:
@@ -6395,9 +6702,15 @@ _task_actions_v() {
       archive) command="jig task archive $id" ;;
       unarchive) command="jig task unarchive $id" ;;
       reopen) command="jig task set $id status active" ;;
+      drop-item) command="jig spec drop $id --json" ;;
     esac
     case "$status:$action" in
       abandoned:reopen) ;;
+      # The roadmap item an abandon left open, which `task abandon --json`
+      # never touches (adr-20261029-an-abandoned-task-says-why-and-its-roadmap-item-follows):
+      # `spec drop --json` closes it in Jig's own tree, and its own guard
+      # answers for every status, an archived task that was abandoned included.
+      *:drop-item) _task_actions_ask_v reason "$id" "$action" _task_drop_item_refusal "$id" ;;
       # An abandoned task can be archived and an unfinished one too; a
       # consolidated task is not (its work is in git, its workspace is
       # purged) and an archived one already is
@@ -6472,6 +6785,19 @@ _task_actions_v() {
     fi
   done
   printf -v "$1" '%s' "$__ta_out"
+}
+
+# _task_drop_item_refusal <id> — why `jig spec drop <id> --json` would refuse, in
+# its own words, or nothing: the command's own guard (ot_spec_drop_refusal,
+# owntree.sh) asked of local refs only, no fetch and no network
+# (conventions/json-output.md). It may find less than the command, which asks
+# origin as it writes, never more. owntree.sh is sourced on first use.
+_task_drop_item_refusal() {
+  # shellcheck source=lib/owntree.sh
+  declare -F ot_spec_drop_refusal >/dev/null || . "$JIG_LIB/owntree.sh"
+  ot_spec_drop_refusal "$1" all
+  [ -z "$OT_SD_MSG" ] || printf '%s\n' "$OT_SD_MSG"
+  return 0
 }
 
 # _task_actions_guard <id> <action> <guard> [args] — what <guard> prints, or,

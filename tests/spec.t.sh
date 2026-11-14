@@ -462,7 +462,7 @@ test_spec_without_subcommand_fails() {
   fixture_repo
   run jig spec
   [ "$RC" -ne 0 ] || fail "expected non-zero exit, got 0"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec draft write <id> --from <file>|- | jig spec draft rename <id> <new-id> | jig spec draft list | jig spec draft drop <id> | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> | --new <task-id> [--goal <text>] (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec draft write <id> --from <file>|- | jig spec draft rename <id> <new-id> | jig spec draft list | jig spec draft drop <id> | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> [--revision <n>] [--json] | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> | --new <task-id> [--goal <text>] (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 test_spec_unknown_subcommand_fails_naming_it() {
@@ -476,7 +476,7 @@ test_spec_help_exits_zero() {
   fixture_repo
   run jig spec --help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec draft write <id> --from <file>|- | jig spec draft rename <id> <new-id> | jig spec draft list | jig spec draft drop <id> | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> | --new <task-id> [--goal <text>] (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec draft write <id> --from <file>|- | jig spec draft rename <id> <new-id> | jig spec draft list | jig spec draft drop <id> | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> [--revision <n>] [--json] | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> | --new <task-id> [--goal <text>] (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # `help` (no dashes) is the subcommand form, same as `--help`/`-h`.
@@ -484,7 +484,7 @@ test_spec_help_subcommand_exits_zero() {
   fixture_repo
   run jig spec help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec draft write <id> --from <file>|- | jig spec draft rename <id> <new-id> | jig spec draft list | jig spec draft drop <id> | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> | --new <task-id> [--goal <text>] (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec draft write <id> --from <file>|- | jig spec draft rename <id> <new-id> | jig spec draft list | jig spec draft drop <id> | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> [--revision <n>] [--json] | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> | --new <task-id> [--goal <text>] (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # --- specs are not knowledge --------------------------------------------------
@@ -5788,4 +5788,218 @@ test_spec_ship_warns_and_succeeds_when_the_draft_cannot_be_moved() {
   assert_contains "$OUT" "warning: spec ship: could not move the draft idea-x to trash"
   assert_not_contains "$OUT" "draft consumed"
   assert_eq "the conversation" "$(cat .ai/workspace/ideas/idea-x/draft.md)"
+}
+
+# --- spec drop --json: the item of an abandoned task, closed in Jig's own tree ----------
+#
+# The text form edits this checkout; this one never moves a checkout, so none of
+# its checkout refusals apply (adr-20261104-a-write-goes-in-jigs-own-tree).
+
+# _sd_repo <level> — an installed project at that `agent.git` whose roadmap on main
+# has an open item naming the task t-1, abandoned and linked to the spec.
+# shellcheck disable=SC2016 # the roadmap's backticks are literal
+_sd_repo() {
+  own_tree_repo "$1"
+  awk '{ print } /^- \[x\] Beta item/ { print "- [ ] `t-1` — the thing" }' .ai/specs/idea-x/roadmap.md > r.tmp
+  mv r.tmp .ai/specs/idea-x/roadmap.md
+  git add -A
+  git commit -q -m "an item for t-1"
+  git push -q origin main
+  git fetch -q origin
+  fixture_task t-1 "" abandoned "abandoned_at:2026-11-01" "abandoned_reason:superseded"
+  sed '/^branch:/d' .ai/workspace/tasks/t-1/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/t-1/state
+  printf 'Spec: .ai/specs/idea-x/ — Phase 1\n' >> .ai/workspace/tasks/t-1/task.md
+}
+
+# shellcheck disable=SC2016 # the roadmap's backticks are literal
+test_spec_drop_json_closes_the_item_on_the_spec_branch_and_moves_no_checkout() {
+  _sd_repo commit
+  local before after head
+  head=$(git rev-parse main)
+  before=$(own_tree_snapshot)
+  run jig spec drop t-1 --json
+  assert_eq 0 "$RC" "$OUT"
+  after=$(own_tree_snapshot)
+  assert_eq "$before" "$after" "a checkout moved"
+  assert_eq "$head" "$(git rev-parse main)" "main moved"
+  assert_eq 1 "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')"
+  assert_contains "$OUT" '"data":{"spec":"idea-x","task":"t-1","item":{"id":"i-'
+  assert_contains "$OUT" '"text":"`t-1` — the thing — dropped (2026-11-01): superseded","checked":true,"task":"t-1","fog":false,"phase":1},"write":{"target":"spec:idea-x","branch":"spec/idea-x","base":"main"'
+  assert_contains "$OUT" '"commits":1,"pushed":false,"pr":null,"merged":false,"committed":true,"level":"commit"'
+  assert_eq 1 "$(git rev-list --count main..spec/idea-x)"
+  assert_contains "$(_si_roadmap)" '- [x] `t-1` — the thing — dropped (2026-11-01): superseded'
+  assert_contains "$(cat .ai/specs/idea-x/roadmap.md)" '- [ ] `t-1` — the thing'
+  assert_eq "Close t-1 in the roadmap of idea-x" "$(git log -1 --format=%s spec/idea-x)"
+  assert_eq "superseded" "$(git log -1 --format=%b spec/idea-x | sed '/^$/d')"
+  assert_eq ".ai/specs/idea-x/roadmap.md" "$(git show --name-only --format= spec/idea-x)"
+  own_tree_gone
+}
+
+test_spec_drop_json_names_where_the_task_moved() {
+  _sd_repo commit
+  printf 'moved_to: pkg/mon#t-9\n' >> .ai/workspace/tasks/t-1/state
+  run jig spec drop t-1 --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$(_si_roadmap)" '— moved to pkg/mon#t-9 (2026-11-01): superseded'
+  assert_eq "Moved to pkg/mon#t-9. superseded" "$(git log -1 --format=%b spec/idea-x | sed '/^$/d')"
+}
+
+test_spec_drop_json_raises_the_revision_and_checks_a_stale_one() {
+  _sd_repo commit
+  local before old
+  before=$(own_tree_rev)
+  old=$((before + 5))
+  run jig spec drop t-1 --revision "$old" --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"stale-revision"'
+  assert_eq "$before" "$(own_tree_rev)" "a refused drop moved the revision"
+  assert_eq 0 "$(git rev-list --count main..spec/idea-x 2>/dev/null || printf 0)"
+  own_tree_gone
+  run jig spec drop t-1 --revision "$before" --json
+  assert_eq 0 "$RC" "$OUT"
+}
+
+test_spec_drop_json_a_second_drop_is_already_closed() {
+  _sd_repo commit
+  run jig spec drop t-1 --json
+  assert_eq 0 "$RC" "$OUT"
+  run jig spec drop t-1 --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"already-closed"'
+  assert_eq 1 "$(git rev-list --count main..spec/idea-x)"
+  own_tree_gone
+}
+
+test_spec_drop_json_refuses_with_codes_and_writes_nothing() {
+  _sd_repo commit
+  run jig spec drop --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec drop t-1 extra --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec drop t-1 --revision --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec drop t-1 --revision 08 --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec drop "bad!id" --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec drop nope --json
+  assert_contains "$OUT" '"code":"not-found"'
+  assert_contains "$OUT" "unknown task: nope"
+  # A live task is not abandoned.
+  fixture_task t-2 "" active
+  printf 'Spec: .ai/specs/idea-x/\n' >> .ai/workspace/tasks/t-2/task.md
+  run jig spec drop t-2 --json
+  assert_contains "$OUT" '"code":"wrong-status"'
+  # An abandoned task linked to no spec.
+  fixture_task t-3 "" abandoned
+  run jig spec drop t-3 --json
+  assert_contains "$OUT" '"code":"not-found"'
+  assert_contains "$OUT" "t-3 is not linked to a spec"
+  # Linked to two.
+  fixture_task t-4 "" abandoned
+  printf 'Spec: .ai/specs/idea-x/\nSpec: .ai/specs/other/\n' >> .ai/workspace/tasks/t-4/task.md
+  run jig spec drop t-4 --json
+  assert_contains "$OUT" '"code":"failed"'
+  assert_contains "$OUT" "links to more than one spec"
+  # Linked to a spec the base does not have.
+  fixture_task t-5 "" abandoned
+  printf 'Spec: .ai/specs/nope/\n' >> .ai/workspace/tasks/t-5/task.md
+  run jig spec drop t-5 --json
+  assert_contains "$OUT" '"code":"not-found"'
+  # An item that names no such task.
+  fixture_task t-6 "" abandoned
+  printf 'Spec: .ai/specs/idea-x/\n' >> .ai/workspace/tasks/t-6/task.md
+  run jig spec drop t-6 --json
+  assert_contains "$OUT" '"code":"not-found"'
+  assert_contains "$OUT" "no item in the roadmap of idea-x"
+  assert_eq 0 "$(git rev-list --count main..spec/idea-x 2>/dev/null || printf 0)"
+  own_tree_gone
+}
+
+test_spec_drop_json_takes_a_task_archived_from_abandoned_and_refuses_one_archived_from_active() {
+  _sd_repo commit
+  sed -e 's/^status: abandoned/status: archived/' .ai/workspace/tasks/t-1/state > s.tmp
+  printf 'archived_from: active\n' >> s.tmp
+  mv s.tmp .ai/workspace/tasks/t-1/state
+  run jig spec drop t-1 --json
+  assert_contains "$OUT" '"code":"wrong-status"'
+  sed -e 's/^archived_from: active/archived_from: abandoned/' .ai/workspace/tasks/t-1/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/t-1/state
+  run jig spec drop t-1 --json
+  assert_eq 0 "$RC" "$OUT"
+}
+
+test_spec_drop_json_at_none_refuses_and_writes_nothing() {
+  _sd_repo none
+  run jig spec drop t-1 --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"git-not-allowed"'
+  assert_eq 0 "$(git rev-list --count main..spec/idea-x 2>/dev/null || printf 0)"
+  assert_contains "$(cat .ai/specs/idea-x/roadmap.md)" '- [ ] `t-1` — the thing'
+  own_tree_gone
+}
+
+# It does not matter which branch this checkout is on, nor whether it is the task's
+# own: the text form refuses there and this one does not look.
+test_spec_drop_json_ignores_the_checkout_the_text_form_refuses_in() {
+  _sd_repo commit
+  sed 's/^base_commit:.*//' .ai/workspace/tasks/t-1/state > s.tmp
+  printf 'branch: task/t-1\nbase_commit: %s\n' "$(git rev-parse HEAD)" >> s.tmp
+  mv s.tmp .ai/workspace/tasks/t-1/state
+  git switch -q -c task/t-1
+  run jig spec drop t-1
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "is checked out here on its own branch"
+  local before after
+  before=$(own_tree_snapshot)
+  run jig spec drop t-1 --json
+  assert_eq 0 "$RC" "$OUT"
+  after=$(own_tree_snapshot)
+  assert_eq "$before" "$after"
+  assert_eq task/t-1 "$(git symbolic-ref --short HEAD)"
+}
+
+test_spec_drop_with_a_revision_and_no_json_answers_in_text() {
+  _sd_repo commit
+  local rev
+  rev=$(own_tree_rev)
+  run jig spec drop t-1 --revision "$rev"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" 'spec drop: t-1 closed in .ai/specs/idea-x/roadmap.md'
+  assert_contains "$OUT" 'branch: spec/idea-x (into main)'
+  assert_contains "$(_si_roadmap)" '- [x] `t-1` — the thing — dropped (2026-11-01): superseded'
+}
+
+test_spec_drop_json_keeps_a_crlf_roadmap_crlf_and_closes_every_open_item() {
+  _sd_repo commit
+  printf '# R\r\n\r\n## Phase 1 — One\r\n\r\n- [ ] `t-1` — first\r\n- [ ] `t-1` — second\r\n  continued\r\n' > .ai/specs/idea-x/roadmap.md
+  git add -A
+  git commit -q -m crlf
+  git push -q origin main
+  run jig spec drop t-1 --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"text":"`t-1` — first — dropped (2026-11-01): superseded","checked":true'
+  local lines crs
+  lines=$(_si_roadmap | wc -l | tr -d ' ')
+  crs=$(_si_roadmap | tr -cd '\r' | wc -c | tr -d ' ')
+  assert_eq 7 "$lines"
+  assert_eq "$lines" "$crs"
+  assert_eq 0 "$(_si_roadmap | tr -d '\r' | grep -c '^- \[ \]')"
+}
+
+# On an open epic the edit goes to the epic, through a pull request.
+test_spec_drop_json_on_an_epic_reaches_it_through_a_pull_request_and_never_a_push() {
+  _sd_repo pr
+  _si_epic
+  own_tree_stub_gh
+  git fetch -q origin
+  local epic
+  epic=$(git rev-parse epic/idea-x)
+  run jig spec drop t-1 --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"branch":"spec/idea-x","base":"epic/idea-x"'
+  assert_eq "$epic" "$(git rev-parse epic/idea-x)"
+  assert_eq "$epic" "$(git --git-dir=origin.git rev-parse epic/idea-x)"
+  assert_contains "$(cat stub-gh/create.argv)" "$(printf -- '--base\nepic/idea-x\n--head\nspec/idea-x')"
 }
