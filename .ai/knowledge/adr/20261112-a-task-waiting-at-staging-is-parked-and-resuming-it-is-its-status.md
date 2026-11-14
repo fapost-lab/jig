@@ -11,7 +11,7 @@ paths:
   - scripts/lib/status.sh
   - scripts/lib/checkout.sh
 summary: Why a task waiting at the staging branch is parked by a rule over git and the forge cache, why the owner's checkout lays only status, agent.git and park_resumed_at over it, and why a person taking it back for a fix is the one thing recorded.
-reviewed_at: 2026-11-12
+reviewed_at: 2026-11-14
 ---
 # A task waiting at the staging branch is parked by derivation, and only a person taking it back is recorded
 
@@ -83,6 +83,18 @@ again before it ships, so resuming has to take the task out of `ready` whatever 
   to a parked task. `jig status` names parked tasks on one `parked:` line instead of their task
   lines (the terminal form and the page show it apart too); a `signal` task makes no git-step or
   pull request item, and a `review, landing` one asks the reader to land it.
+- **It is not closed until its work is in the base** (amended 2026-11-14, fapost-lab/jig#509). On
+  the staging flow `pr_url` is the pull request into the staging branch, so its merge says nothing
+  about the base. `jig task set <id> status consolidated` and the `close` action
+  (`_task_close_refusal`) refuse, for a task of the base with a `pr_url` or its own work on staging,
+  until the fact housekeeping's `needs-consolidation` rests on holds: a pull request from the
+  branch into the base merged (the forge cache's, or `promote_url` — asked of the forge by the
+  command, of the cache by the table), or the branch is in the base by ancestry. The reason says
+  so in words: `task set: <id> is on <staging> and not in <base> yet: prepare for prod, then close
+  it once the promotion merged`. A task that never reached staging and opened no pull request
+  closes as before. `pull_request.state` and `ci` in `task list --json` read the pull request
+  `pr_url` names by its url, else by branch and the branch it goes into (`forgecache_pr`,
+  `_task_pr_into_v`): before, a lookup by the task's base never found a staging one.
 
 ## Alternatives
 

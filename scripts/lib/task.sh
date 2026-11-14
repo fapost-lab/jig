@@ -2091,7 +2091,7 @@ _task_close_write() {
   jig_record_changed
 }
 
-# _task_close_refusal <id> <pr-state> — why `jig task set <id> status
+# _task_close_refusal <id> <pr-state> [<base-state>] — why `jig task set <id> status
 # consolidated` refuses this task, or nothing when it would close it.
 # <pr-state> is `forge` for the command, which asks the forge now
 # (jig_pr_state), or the state a reader already holds — the forge cache's, for
@@ -2105,6 +2105,15 @@ _task_close_write() {
 # below pr, or the work never left this branch); once one was, `merged` is
 # the only answer that lets `consolidated` through, asked of the forge now,
 # never assumed from what wrote the request (autopilot-end-closes-unmerged-task).
+#
+# On the staging flow the pull request `pr_url` names goes into the staging
+# branch, and the base is reached only by the promotion, so a merged pull
+# request is not the whole answer there: once it passes, the close waits for
+# the fact housekeeping's needs-consolidation rests on, that the task's work is
+# in the base (_task_close_staging_refusal). <base-state> is the state of a
+# pull request from the task's branch into its base that the table's reader
+# holds (the forge cache's: the promotion, when it squashed); the command
+# passes none and reads the forge cache itself.
 #
 # Forge-only, deliberately: housekeeping's own remote-state tier falls back
 # from the forge to git ancestry/patch-id when the forge cannot answer
@@ -2120,7 +2129,7 @@ _task_close_write() {
 # and says the pull request may already be merged: "unknown" alone reads as a
 # verdict on the pull request, when it is only the forge that did not answer.
 _task_close_refusal() {
-  local id="$1" pr_state="$2" pr kc why=""
+  local id="$1" pr_state="$2" base_state="${3:-}" pr kc why="" mode=cache
   task_state_var kc "$id" knowledge_consolidated
   # A bare triage task's close records its knowledge decision too (task_set).
   if [ "$kc" != "true" ] && ! _task_is_bare_triage "$id"; then
@@ -2128,17 +2137,140 @@ _task_close_refusal() {
     return 0
   fi
   task_state_var pr "$id" pr_url
-  [ -n "$pr" ] || return 0
-  if [ "$pr_state" = forge ]; then
-    jig_pr_state_v pr_state why "$pr"
+  [ "$pr_state" != forge ] || mode=forge
+  if [ -n "$pr" ]; then
+    if [ "$mode" = forge ]; then
+      jig_pr_state_v pr_state why "$pr"
+    fi
+    [ -n "$pr_state" ] || pr_state=unknown
+    if [ "$pr_state" = unknown ] && [ -n "$why" ]; then
+      printf 'task set: status consolidated requires its pull request to be merged: %s is unknown, the forge could not be asked (%s); it may already be merged: run this same command again once the forge answers, and merge it first if it is not\n' "$pr" "$why"
+      return 0
+    elif [ "$pr_state" != merged ]; then
+      printf 'task set: status consolidated requires its pull request to be merged: %s is %s; merge it, then run this again\n' "$pr" "$pr_state"
+      return 0
+    fi
   fi
-  [ -n "$pr_state" ] || pr_state=unknown
-  if [ "$pr_state" = unknown ] && [ -n "$why" ]; then
-    printf 'task set: status consolidated requires its pull request to be merged: %s is unknown, the forge could not be asked (%s); it may already be merged: run this same command again once the forge answers, and merge it first if it is not\n' "$pr" "$why"
-  elif [ "$pr_state" != merged ]; then
-    printf 'task set: status consolidated requires its pull request to be merged: %s is %s; merge it, then run this again\n' "$pr" "$pr_state"
-  fi
+  _task_close_staging_refusal "$id" "$mode" "$base_state"
   return 0
+}
+
+# _task_close_staging_refusal <id> <forge|cache> <base-state> — what
+# _task_close_refusal adds on the staging flow: nothing when the task's work is
+# in the base, else why its close waits. It applies to a task of the project's
+# base, with a branch, that has a pull request or whose own work reached the
+# staging branch; any other task (direct flow, an epic's task, one that never
+# reached staging, a bare triage or no-code task) closes as before.
+# "In the base" is any of, cheapest first: <base-state> is `merged`; the
+# promotion (`promote_url`) is merged; its branch is in the base by git (see
+# below for how far each mode asks).
+# <forge> asks the forge about the promotion now (jig_pr_state_v) and reads the
+# forge cache for the base state; <cache> never asks it, as the table never does.
+_task_close_staging_refusal() {
+  local id="$1" mode="$2" base_state="$3" staging branch base defbase pr promote
+  local pstate="" pwhy="" st="" tip baseref cache line flag msg t=$'\t'
+  task_state_var branch "$id" branch
+  [ -n "$branch" ] || return 0
+  jig_task_base_v base "$id"
+  cfg_v defbase git.base_branch main
+  [ "$base" = "$defbase" ] || return 0
+  if [ "$_TASK_LIST_STAGING_READ" = 1 ] && [ "$mode" = cache ]; then
+    staging=$_TASK_LIST_STAGING_BRANCH
+    [ -n "$staging" ] || return 0
+  else
+    cfg_v staging git.flow direct
+    [ "$staging" = staging ] || return 0
+    staging=$(jig_staging_in_use) || return 0
+  fi
+  # In scope only with a pull request, or own work on the staging branch.
+  task_state_var pr "$id" pr_url
+  if [ "$_TASK_LIST_STAGING_ON" = 1 ] && [ "$mode" = cache ]; then
+    while IFS="$t" read -r line flag; do
+      [ "$line" != "$id" ] || st=$flag
+    done <<EOF
+$_TASK_LIST_STAGING
+EOF
+  else
+    st=$(jig_staging_states "$staging" "$id$t$branch$t$base")
+    st=${st#*"$t"}
+  fi
+  case "$st" in on | behind) ;; *) st="" ;; esac
+  [ -n "$pr" ] || [ -n "$st" ] || return 0
+  if ! declare -F forgecache_pr >/dev/null; then
+    # shellcheck source=lib/forgecache.sh
+    . "$JIG_LIB/forgecache.sh"
+  fi
+  if [ "$mode" = forge ]; then
+    cache=$(forgecache_read)
+    forgecache_entry "$cache" "$branch" "$base"
+    base_state=$_FORGECACHE_STATE
+  else
+    cache=$_TASK_LIST_FORGE_CACHE
+  fi
+  [ "$base_state" != merged ] || return 0
+  task_state_var promote "$id" promote_url
+  if [ -n "$promote" ]; then
+    if [ "$mode" = forge ]; then
+      jig_pr_state_v pstate pwhy "$promote"
+    else
+      forgecache_pr "$cache" "$promote" "$branch" "$base"
+      pstate=$_FORGECACHE_STATE
+    fi
+    [ "$pstate" != merged ] || return 0
+  fi
+  # Git last. The command asks every way housekeeping's ancestry tier does
+  # (jig_branch_in_base: a merge, a squash, a rebase), whatever the staging
+  # state, since a squash or rebase promotion leaves the task's own commits on
+  # staging. The table asks only whether the tip is an ancestor, and only of a
+  # task with no own work on staging: the squash check walks the base's new
+  # commits, too much for every row. It may withhold a close the command
+  # allows; the needs-consolidation flag of the last housekeeping run, passed
+  # in as <base-state> `merged`, offers it then.
+  if [ "$mode" = forge ] || [ -z "$st" ]; then
+    tip=refs/heads/$branch
+    git -C "$JIG_PROJECT" rev-parse --verify --quiet "$tip^{commit}" >/dev/null 2>&1 || tip=refs/remotes/origin/$branch
+    baseref=$(jig_base_ref "$base")
+    if [ -n "$baseref" ]; then
+      if [ "$mode" = forge ]; then
+        ! jig_branch_in_base "$tip" "$baseref" || return 0
+      elif git -C "$JIG_PROJECT" merge-base --is-ancestor "$tip" "$baseref" 2>/dev/null; then
+        return 0
+      fi
+    fi
+  fi
+  msg="prepare for prod, then close it once the promotion merged"
+  if [ -n "$promote" ]; then
+    case "$pstate" in
+      open | closed) msg="its promotion $promote is $pstate; close it once the promotion merged" ;;
+      unknown)
+        if [ -n "$pwhy" ]; then
+          msg="whether its promotion $promote merged is unknown, the forge could not be asked ($pwhy); run this same command again once the forge answers"
+        fi ;;
+    esac
+  fi
+  printf 'task set: %s is on %s and not in %s yet: %s\n' "$id" "$staging" "$base" "$msg"
+  return 0
+}
+
+# _task_pr_into_v <var> <id> — into <var>, the branch the pull request `pr_url`
+# names goes into: the staging branch on a sound staging flow for a task of the
+# project's base, else the task's base. Where a listing has read the staging
+# flow (_task_list_staging_read, on it or not) it answers from that, with no
+# process. The staging review state of a task, for a reader, is this branch plus
+# forgecache_pr.
+_task_pr_into_v() {
+  local __tpi_base __tpi_def __tpi_staging=""
+  jig_task_base_v __tpi_base "$2"
+  if [ "$_TASK_LIST_STAGING_READ" = 1 ]; then
+    __tpi_staging=$_TASK_LIST_STAGING_BRANCH
+  else
+    __tpi_staging=$(jig_staging_in_use) || __tpi_staging=""
+  fi
+  if [ -n "$__tpi_staging" ]; then
+    cfg_v __tpi_def git.base_branch main
+    [ "$__tpi_base" != "$__tpi_def" ] || __tpi_base=$__tpi_staging
+  fi
+  printf -v "$1" '%s' "$__tpi_base"
 }
 
 # _task_run_unattended <id> — exit 0 when the task's own run was started
@@ -5511,6 +5643,11 @@ _TASK_LIST_FORGE_CACHE=""
 # "<id><TAB>on|behind" for the tasks whose work reached the staging branch.
 _TASK_LIST_STAGING_ON=""
 _TASK_LIST_STAGING=""
+# The staging branch's name, when _TASK_LIST_STAGING_ON is 1; and
+# _TASK_LIST_STAGING_READ is 1 once a listing asked, whatever the answer, so a
+# per-task reader (_task_pr_into_v) answers from these without a process.
+_TASK_LIST_STAGING_BRANCH=""
+_TASK_LIST_STAGING_READ=""
 
 # _task_list_staging_read <ids> — fill the two globals above for the tasks
 # <ids> names, one per line: their branch and base from the listing's snapshot,
@@ -5521,8 +5658,11 @@ _task_list_staging_read() {
   local ids="$1" staging id branch base rows="" t=$'\t'
   _TASK_LIST_STAGING_ON=""
   _TASK_LIST_STAGING=""
+  _TASK_LIST_STAGING_BRANCH=""
+  _TASK_LIST_STAGING_READ=1
   staging=$(jig_staging_in_use) || return 0
   _TASK_LIST_STAGING_ON=1
+  _TASK_LIST_STAGING_BRANCH=$staging
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     task_state_var branch "$id" branch
@@ -5782,6 +5922,7 @@ _task_list_json_task_v() {
   local __tlj_var="$1" id="$2" worktrees="$3" flagged="$4" line o t=$'\t' v
   local class status issue consolidated paused created updated branch base pr_url gate_by
   local wt n gate facts state repairs stage stage_at stop stop_at phase handover_at goal flag flags="" mode atext
+  local into pr_url_state="" base_state=""
   task_state_var class "$id" class
   task_state_var status "$id" status
   task_state_var issue "$id" issue
@@ -5901,7 +6042,11 @@ EOF
   # the forge: an old entry says how old it is, a missing one is null.
   if [ -n "$pr_url" ]; then
     json_quote "$pr_url"; o="$o,\"pull_request\":{\"url\":$_JSON"
-    forgecache_entry "$_TASK_LIST_FORGE_CACHE" "$branch" "$base"
+    # On the staging flow that is the staging branch, not the task's base
+    # (_task_pr_into_v, answered from the listing's own read, no process).
+    _task_pr_into_v into "$id"
+    forgecache_pr "$_TASK_LIST_FORGE_CACHE" "$pr_url" "$branch" "$into"
+    pr_url_state=$_FORGECACHE_STATE
     json_str_or_null "$_FORGECACHE_STATE"; o="$o,\"state\":$_JSON"
     json_str_or_null "$_FORGECACHE_CI"; o="$o,\"ci\":$_JSON"
     json_str_or_null "$_FORGECACHE_AT"; o="$o,\"fetched_at\":$_JSON}"
@@ -5921,8 +6066,20 @@ EOF
   # What a person may do next (_task_actions): every row of the table, with
   # the pull request's state as the forge cache holds it, never the forge's.
   local action offered command reason actions="" pr_state=""
-  [ -z "$pr_url" ] || pr_state=$_FORGECACHE_STATE
-  _task_actions_v atext "$id" "$pr_state"
+  # What the cache says of a pull request from the branch into the task's base
+  # (on the staging flow, its promotion): `close` reads it for every task with
+  # a branch; `ship` and `land` read it only for a task with a pull request.
+  if [ -n "$branch" ]; then
+    forgecache_entry "$_TASK_LIST_FORGE_CACHE" "$branch" "$base"
+    base_state=$_FORGECACHE_STATE
+  fi
+  [ -z "$pr_url" ] || pr_state=$base_state
+  # Housekeeping found the work in the base (needs-consolidation, its own
+  # forge and git tiers): the close reads that as a merge into the base.
+  case ",$flags," in
+    *',"needs-consolidation",'*) base_state=merged ;;
+  esac
+  _task_actions_v atext "$id" "$pr_state" "$pr_url_state" "$base_state"
   while IFS="$t" read -r action offered command reason; do
     [ -n "$action" ] || continue
     json_quote "$action"; line="{\"id\":$_JSON"
@@ -5956,19 +6113,24 @@ _TASK_ACTIONS="start pause resume request-pause cancel-pause-request approve-gat
 # `<action><TAB><true|false><TAB><command><TAB><reason>`, the reason empty
 # when the action is offered. <pr-state> is what the reader knows of the
 # task's pull request without asking the forge (the forge cache's state, or
-# empty); `close` and `ship` read it. Local reads only.
+# empty); `close` and `ship` read it. <pr-url-state> and <base-state> are
+# _task_actions_v's. Local reads only.
 _task_actions() {
   local out
-  _task_actions_v out "$1" "$2"
+  _task_actions_v out "$@"
   printf '%s' "$out"
 }
 
-# _task_actions_v <var> <id> <pr-state> — the same lines into <var>, in the
-# caller's shell. A guard still runs in a subshell of its own, so a guard that
+# _task_actions_v <var> <id> <pr-state> [<pr-url-state> [<base-state>]] — the
+# same lines into <var>, in the caller's shell. <pr-url-state> is the state of
+# the pull request `pr_url` names (on the staging flow, the one into the
+# staging branch), <base-state> that of a pull request from the task's branch
+# into its base (its promotion); each defaults to <pr-state>, which `ship` and
+# `land` read. A guard still runs in a subshell of its own, so a guard that
 # fails withholds its row rather than ending the listing; it reads the task's
 # state from the snapshot it inherits.
 _task_actions_v() {
-  local __ta_out="" id="$2" pr_state="$3" status action command reason by="" mode spec gate parked ahead
+  local __ta_out="" id="$2" pr_state="$3" pr_url_state="${4-$3}" base_state="${5-$3}" status action command reason by="" mode spec gate parked ahead
   task_state_var status "$id" status
   for action in $_TASK_ACTIONS; do
     reason=""
@@ -6055,7 +6217,7 @@ _task_actions_v() {
           [ -n "$reason" ] || _task_actions_ask_v reason "$id" "$action" _task_ship_branch_refusal "$id"
         fi ;;
       *:land) _task_actions_ask_v reason "$id" "$action" _task_land_refusal "$id" "$pr_state" ;;
-      *:close) _task_actions_ask_v reason "$id" "$action" _task_close_refusal "$id" "${pr_state:-unknown}" ;;
+      *:close) _task_actions_ask_v reason "$id" "$action" _task_close_refusal "$id" "${pr_url_state:-unknown}" "$base_state" ;;
     esac
     if [ -n "$reason" ]; then
       __ta_out="$__ta_out$action"$'\t'"false"$'\t'"$command"$'\t'"$reason"$'\n'

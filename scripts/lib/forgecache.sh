@@ -129,6 +129,33 @@ EOF
   return 0
 }
 
+# forgecache_pr <cache> <url> <head> <into> — the same three variables for the
+# pull request <url> names: the first (newest) line of <cache> whose <url>
+# column is <url>, whatever branch it goes into. A pull request with no line of
+# that url (an old line without the column, or `-`, or an empty <url>) is
+# looked up as forgecache_entry does, by <head> and <into>, the branch it goes
+# into. This is the one lookup of a task's own pull request: on the staging
+# flow the pull request `pr_url` names goes into the staging branch, which a
+# lookup by the task's base never finds. jig_parked_states (common.sh) picks the
+# same line, first by url. In the caller's shell, without a process.
+forgecache_pr() {
+  local cache="$1" url="$2" head="$3" into="$4" t s c a u
+  if [ -n "$cache" ] && [ -n "$url" ] && [ "$url" != "-" ]; then
+    t=$'\t'
+    while IFS="$t" read -r _ _ s c a _ u _; do
+      [ "$u" = "$url" ] || continue
+      _FORGECACHE_STATE=$s
+      _FORGECACHE_CI=$c
+      _FORGECACHE_AT=$a
+      [ "$_FORGECACHE_CI" != "-" ] || _FORGECACHE_CI=""
+      return 0
+    done <<EOF
+$cache
+EOF
+  fi
+  forgecache_entry "$cache" "$head" "$into"
+}
+
 # forgecache_upgrades <cache> <base> — the pull requests of Jig's own upgrade
 # branches (`jig/upgrade-*`) into <base>, from <cache> (forgecache_read's
 # output), the newest of each branch only, one line each:
