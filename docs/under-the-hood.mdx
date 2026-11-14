@@ -191,7 +191,8 @@ installed itself.
 Everything a script deletes, it first proves is its own:
 
 - **Workspaces** are never deleted directly. Housekeeping moves one to `.ai/runtime/trash/` when its
-  task is closed after a confirmed merge, and trash entries are deleted after
+  task is closed after a confirmed merge, or closed without ever having been started (no branch, no
+  fork point, nothing at its branch name), and trash entries are deleted after
   `housekeeping.trash_ttl` (7 days). A task nobody finished is not deleted at all: once it was
   abandoned more than `housekeeping.abandoned_ttl` (14 days) ago — whatever its remote state — or
   has gone untouched for `housekeeping.stale_after` (60 days), housekeeping **archives** it. Its

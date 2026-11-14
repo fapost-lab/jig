@@ -13,7 +13,7 @@ paths:
   - "templates/scheduler/**"
   - scripts/lib/hklog.sh
   - scripts/lib/forgecache.sh
-reviewed_at: 2026-11-12
+reviewed_at: 2026-11-14
 ---
 # Housekeeping
 
@@ -26,8 +26,8 @@ evidence it inferred itself.
 - Deriving **Remote State** per task, in tiers: forge (`gh`/`glab`) → git ancestry →
   `unknown`. Derived every run, never written into a task's `state` (ADR-0005).
 - Applying the lifecycle policy — a pure function of `status`, remote state,
-  `paused`, age and, for an archived task, `archived_from` and `archived_reason`,
-  which is why the whole table is testable without a repository.
+  `paused`, age, for an archived task `archived_from` and `archived_reason`, and for a closed
+  task without a branch whether it was ever `started` (`_hk_never_started` derives it), which is why the whole table is testable without a repository.
 - The two-stage **Purge** of a closed task: move to **Trash**, delete only after `trash_ttl`
   (ADR-0006).
 - The **Archive** of a task nobody finished: an abandoned task older than `abandoned_ttl`, or an
@@ -129,11 +129,15 @@ evidence it inferred itself.
 Read these before changing anything here; each is a rule someone paid for.
 
 - **Nothing is destroyed on `unknown`** (RULES.md). Every uncertainty in this
-  domain must resolve *towards* `unknown`, never away from it. The one exception is a
+  domain must resolve *towards* `unknown`, never away from it. There are two exceptions. One is a
   task a human abandoned: `housekeeping_decide` archives it after `abandoned_ttl` whatever
   its remote state (ADR-0005 as amended), keeping the workspace. Archiving deletes nothing, which
   is why a stale `active` or `ready` task may be archived too, and why one with a worktree (or its
-  branch checked out with changes) stays flagged `STALE_CANDIDATE`: a person may be working there.
+  branch checked out with changes) stays flagged `STALE_CANDIDATE`: a person may be working there. The other is a closed task that was never
+  started (no `branch`, no `base_commit`, nothing at its template branch name, locally, on origin
+  or at a forge that answered, and no triage source still here): it has no change whose landing
+  could be unknown, so `started=false` makes `consolidated:unknown` a purge (`_hk_never_started`,
+  adr-20261114-a-closed-task-never-started-goes-to-trash).
 - **No path is deleted or moved without validation** (RULES.md, ADR-0006). Use
   `task_dir`/`_task_valid_id` — the single choke point — and never transcribe a regex.
   ADR-0006's own text carried a wrong pattern for two phases; the code was right.
@@ -267,7 +271,7 @@ an LLM (ADR-0001).
   `_hk_remote_state` and its tiers, `_hk_purge`, `_hk_trash_expire`, `_hk_task_facts`,
   `_hk_worktree_retire` (with `jig_worktree_leftover` in common.sh), `_hk_branch_sweep` (with
   `jig_branch_leave` and `jig_branch_is_jigs` in common.sh), `_hk_record` and `_hk_print_report` (the grouped report),
-  `_hk_unknown_reason`, `_hk_released`.
+  `_hk_unknown_reason`, `_hk_never_started`, `_hk_released`.
 - `scripts/jig-session-hook` — the trigger; always exits 0, by design.
 - `tests/housekeeping.t.sh`; `fixture_merge_repo` in `tests/lib/assert.sh` builds the six
   merge topologies (fast-forward, merge commit, squash, rebase, open, deleted branch).

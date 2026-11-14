@@ -23,6 +23,7 @@ _HK_WT_LINE=""      # what _hk_worktree_retire did, as a --verbose line
 _HK_WT_NOTE=""      # ... and as a note in the grouped report
 _HK_BASE_LOG=""     # "<base>\t<ref>\t<epoch>\t<sha>" reflog of every task base's refs, newest first, read once per run
 _HK_WRONG_NOTE=""   # why the last task was flagged wrong-base, as a note in the grouped report
+_HK_KEEP_NOTE=""    # why the last closed task without a branch counts as started, as a note in the grouped report
 _HK_DEFAULT_BASE="" # git.base_branch, read once per run
 _HK_STAGING_BRANCH="" # git.staging_branch on a sound staging flow, empty otherwise; read once per run
 _HK_STAGING=""      # "<task><TAB>on|behind" for the tasks on the staging branch (jig_staging_states), once per run
@@ -126,7 +127,7 @@ cmd_housekeeping() {
   fi
 
   local needs_consolidation=0 wrong_base=0 archive_refused=0 found=0 keep_branches="" archive_err
-  local reason state_file tid st paused archived_from archived_reason age branch base_commit task_base remote remote_pair via landed released decision action flags dest facts wt retire
+  local reason state_file tid st paused archived_from archived_reason age branch base_commit task_base remote remote_pair via landed released decision action flags dest facts wt retire started
 
   # Worktrees tasks were started in, from git's own list, read once per run.
   # A task's worktree goes when the task is closed and its branch landed on its
@@ -187,9 +188,21 @@ EOF
         archived_reason=$(task_state_get "$tid" archived_reason)
       fi
 
+      # A closed task is `started` unless nothing ever marked a branch for it:
+      # no recorded branch or base commit, no ref at the template name, and no
+      # pull request from it in the forge's list (a forge that failed keeps it;
+      # with none in use, the refs alone decide). Anything less
+      # certain counts as started, and _HK_KEEP_NOTE says why it stays.
+      # (adr-20261114-a-closed-task-never-started-goes-to-trash)
+      started=true
+      _HK_KEEP_NOTE=""
+      if [ "$st" = consolidated ] && [ -z "$branch" ] && [ -z "$base_commit" ]; then
+        _hk_never_started "$tid" "$task_base" && started=false
+      fi
+
       decision=$(housekeeping_decide \
         "$st" "$remote" "$paused" "$age" "$abandoned_ttl_days" "$stale_after_days" "$released" \
-        "$archived_from" "$archived_reason")
+        "$archived_from" "$archived_reason" "$started")
       action=${decision%% *}
       flags=${decision#* }
       [ "$flags" = "$decision" ] && flags=""
@@ -400,7 +413,7 @@ _hk_queue_prune() {
 # --- policy ------------------------------------------------------------------
 
 # housekeeping_decide <status> <remote> <paused> <age_days> <abandoned_ttl_days>
-#                     <stale_after_days> [released] [archived_from] [archived_reason]
+#                     <stale_after_days> [released] [archived_from] [archived_reason] [started]
 # Print "<action> [flags]" where action is purge|preserve|archive and flags is a
 # comma-separated subset of needs-consolidation, abandoned?, base-unreleased,
 # STALE_CANDIDATE. `released` (default true) is false for a task merged into a
@@ -408,6 +421,9 @@ _hk_queue_prune() {
 # closed and merged, it is kept rather than purged (ADR-0040).
 # `archived_from` and `archived_reason` are an archived task's state keys of
 # those names; they decide whether its merge still asks for consolidation.
+# `started` (default true) is false for a task that never had a branch: a
+# closed one has no change whose landing could be unknown, so the person's
+# close is the decision and its workspace is purged rather than kept forever.
 #
 # `archive` is for work nobody finished: an abandoned task past its TTL, or an
 # active/ready one untouched past stale_after with no flag and no pull request.
@@ -421,6 +437,7 @@ _hk_queue_prune() {
 housekeeping_decide() {
   local status="$1" remote="$2" paused="$3" age="$4" abandoned_ttl="$5" stale_after="$6"
   local released="${7:-true}" archived_from="${8:-}" archived_reason="${9:-}"
+  local started="${10:-true}"
   local action="preserve" flags="" settled=false
 
   # An archived task whose fate a person already decided — abandoned before it
@@ -437,6 +454,9 @@ housekeeping_decide() {
       else
         flags="base-unreleased"
       fi
+      ;;
+    consolidated:unknown)
+      if [ "$started" = false ]; then action="purge"; fi
       ;;
     active:merged|ready:merged)
       flags="needs-consolidation"
@@ -1860,7 +1880,7 @@ _hk_record() {
               group="waiting"
             else
               group="unknown"
-              note=$(_hk_unknown_reason "$branch" "$base_commit" "$base")
+              note=${_HK_KEEP_NOTE:-$(_hk_unknown_reason "$branch" "$base_commit" "$base")}
             fi
             ;;
           *)
@@ -1948,6 +1968,42 @@ _hk_staging_state_of() {
   done <<EOF
 $_HK_STAGING
 EOF
+}
+
+# _hk_never_started <task> <base> — exit 0 when a closed task without a
+# recorded branch or fork point shows no sign of ever having been started;
+# otherwise exit 1 with the reason it is kept in _HK_KEEP_NOTE. Kept: a ref or
+# a pull request at its template branch name, a forge that did not answer, and
+# a triage task whose source is still here — that source's next ship reads the
+# triage workspace to file its findings only once
+# (adr-20261029-a-ship-hands-open-findings-to-one-triage-task).
+_hk_never_started() {
+  local tid="$1" base="$2" tmpl src
+  tmpl=$(_hk_task_branch_name "$tid")
+  if [ -n "$tmpl" ]; then
+    if [ -n "$(_hk_resolve_ref "$tmpl")" ]; then
+      _HK_KEEP_NOTE="never started, but its branch $tmpl exists"
+      return 1
+    fi
+    if [ "$_HK_FORGE_TOKEN" = failed ]; then
+      _HK_KEEP_NOTE="never started, but the forge did not answer whether $tmpl had a pull request"
+      return 1
+    fi
+    # Any pull request from it, into whatever base and in whatever state:
+    # _hk_forge_state answers only for the task's own base and staging.
+    case $'\n'"$_HK_FORGE_PRS" in
+      *$'\n'"$tmpl"$'\t'*)
+        _HK_KEEP_NOTE="never started, but a pull request from $tmpl exists"
+        return 1
+        ;;
+    esac
+  fi
+  src=$(task_state_get "$tid" triage_of)
+  if [ -n "$src" ] && _task_valid_id "$src" && [ -f "$(task_dir "$src")/state" ]; then
+    _HK_KEEP_NOTE="triage of $src, kept while $src is here"
+    return 1
+  fi
+  return 0
 }
 
 # _hk_unknown_reason <branch> <base_commit> <base> — why the remote state of a
