@@ -2190,7 +2190,7 @@ _task_close_refusal() {
 # forge cache for the base state; <cache> never asks it, as the table never does.
 _task_close_staging_refusal() {
   local id="$1" mode="$2" base_state="$3" staging branch base defbase pr promote
-  local pstate="" pwhy="" st="" tip baseref="" cache line flag msg pushed="" t=$'\t'
+  local pstate="" pwhy="" st="" tip baseref="" cache line flag msg pushed="" into="" t=$'\t'
   task_state_var branch "$id" branch
   [ -n "$branch" ] || return 0
   jig_task_base_v base "$id"
@@ -2206,6 +2206,13 @@ _task_close_staging_refusal() {
   fi
   # In scope only with a pull request, or own work on the staging branch.
   task_state_var pr "$id" pr_url
+  # A pull request `task ship` recorded as going into the base itself
+  # (`pr_into`, a ship at a level below the staging flow's) is the landing:
+  # _task_close_refusal already found it merged.
+  task_state_var into "$id" pr_into
+  if [ -n "$pr" ] && [ -n "$into" ] && [ "$into" != "$staging" ]; then
+    return 0
+  fi
   if [ "$_TASK_LIST_STAGING_ON" = 1 ] && [ "$mode" = cache ]; then
     while IFS="$t" read -r line flag; do
       [ "$line" != "$id" ] || st=$flag

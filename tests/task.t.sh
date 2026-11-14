@@ -12781,6 +12781,19 @@ test_task_close_waits_for_a_task_pushed_but_not_landed() {
   assert_eq 0 "$RC" "$OUT"
 }
 
+# A pull request `task ship` recorded as going into the base itself
+# (`pr_into: main`) is the landing: once the forge says it merged, the close
+# goes through without waiting for staging.
+test_task_close_of_a_pull_request_into_the_base_needs_no_promotion() {
+  _park_repo
+  ship_cfg forge github
+  pr_check_stub_gh "" MERGED
+  _scl_ready never
+  printf 'pr_url: https://github.com/example/example/pull/7\npr_into: main\n' >> .ai/workspace/tasks/never/state
+  run jig task set never status consolidated
+  assert_eq 0 "$RC" "$OUT"
+}
+
 # A task that never reached the staging branch and opened no pull request has
 # nothing to wait for: it closes as it did.
 test_task_close_is_allowed_for_a_task_that_never_reached_staging() {
