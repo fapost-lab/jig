@@ -1215,8 +1215,15 @@ _queue_next_decide() {
     function rbetter(a, b,   x, y) {
       x = rpri(a); y = rpri(b)
       if (x != y) return x < y
-      x = (rst[a] == "-") ? "~" : rst[a]; y = (rst[b] == "-") ? "~" : rst[b]
-      if (x != y) return x < y
+      # A run with no stop goes last by an explicit test, never by a sentinel
+      # string: awk compares strings by the collation of the locale, and "~" sorts
+      # before the digits under some (macOS in a UTF-8 locale did).
+      x = rst[a]; y = rst[b]
+      if (x != y) {
+        if (x == "-") return 0
+        if (y == "-") return 1
+        return x < y
+      }
       return rr[a] < rr[b]
     }
     END {
