@@ -135,6 +135,11 @@ only when at least one check ran and every check passed (it waits up to `agent.c
 a draft and it is exactly the commit that was shipped. It merges the way your repository allows: a
 merge commit, else squash, else rebase.
 
+`agent.git` limits only what the agent does on its own. When you merge or land a pull request
+yourself, with `jig task merge-pr <id> --by human` or `jig task land <id> --by human` (or the same
+button in a dashboard), Jig does not read it: at `none` you can still merge from the card. Branch
+protection holds for you too.
+
 It never uses an administrator's override and never asks the host to "merge when ready" later. When
 your repository's branch protection refuses — a required review, for example — the pull request
 stays open and `ship` says why:

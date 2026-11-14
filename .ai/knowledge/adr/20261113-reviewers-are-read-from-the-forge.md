@@ -79,3 +79,5 @@ to keep, and who reviews changes from one landing to the next.
   names it, with its failure code.
 - Adding reviewers to a pull request already open, and offering it from a UI, are left to the task
   that builds those actions on `jig_pr_approval_v` and lib/reviewers.sh.
+
+> **Amendment (2026-11-14).** Adding reviewers to an open pull request is `jig task request-review <id> --reviewer <login|name>...`, resolved by the same functions as the ship; on GitLab each login is added with `+` (adr-20261114-a-persons-pull-request-action-does-not-read-agent-git).

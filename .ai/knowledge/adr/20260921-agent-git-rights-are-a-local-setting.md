@@ -136,3 +136,5 @@ contributor's agent starts committing.
 > `merge` does not merge it until landing on staging is built; `git.staging_land: external` stops
 > after the push. The levels themselves are unchanged
 > (adr-20261111-in-the-staging-flow-a-task-ships-into-the-staging-branch).
+
+> **Amendment (2026-11-14).** The level limits the agent, never a person: `jig task land`, `promote`, `request-review` and `merge-pr` with `--by human` do not read `agent.git` or `autopilot.git`, and the forge's protection still holds (adr-20261114-a-persons-pull-request-action-does-not-read-agent-git).

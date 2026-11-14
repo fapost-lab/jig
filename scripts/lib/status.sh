@@ -2138,6 +2138,74 @@ _status_attn() {
     "$5" "$us" "$6" "$us" "$7" "$us" "${8:-}" "$us" "${9:-}"
 }
 
+# _status_pr_item_v <id> <fallback-detail> <task-url> <move> — for an attention item about a
+# task's open pull request, from the forge cache housekeeping wrote (never the
+# forge): sets _STATUS_PR_DETAIL, the words for its state, and _STATUS_PR_EXTRA,
+# the item's data (tab-separated, `-` for none: branch, base, state,
+# fetched_at, url, ci, mergeable, move) read by `jig status --json`. <move> is
+# `land` or `merge`, the person's action on it: `land` when the caller says so,
+# or when the cache holds the pull request as going into the staging branch,
+# which is where a task of the staging flow's pull request goes. The cache and
+# the staging branch are read once per report; no process per item.
+_STATUS_PR_CACHE=""
+_STATUS_PR_CACHE_READ=""
+_STATUS_PR_STAGING=""
+_STATUS_PR_DETAIL=""
+_STATUS_PR_EXTRA=""
+_STATUS_PR_MOVE=""
+_STATUS_PR_CMD=""
+_status_pr_item_v() {
+  local id="$1" fallback="$2" task_url="$3" move="$4" branch base state at url ci mergeable t=$'\t' words flow
+  [ -n "$_STATUS_PR_CACHE_READ" ] || {
+    _STATUS_PR_CACHE=$(forgecache_read)
+    _STATUS_PR_CACHE_READ=1
+    cfg_v flow git.flow direct
+    [ "$flow" != staging ] || _STATUS_PR_STAGING=$(jig_staging_branch)
+  }
+  # An id out of the housekeeping log may be malformed (see the loop's own
+  # guard): such a task has no branch to look up, and reading it would die.
+  branch="" base=""
+  if jig_valid_id "$id"; then
+    task_state_var branch "$id" branch
+    jig_task_base_v base "$id"
+  fi
+  forgecache_entry "$_STATUS_PR_CACHE" "$branch" "$base"
+  if [ -z "$_FORGECACHE_STATE" ] && [ -n "$_STATUS_PR_STAGING" ] && [ -n "$branch" ]; then
+    forgecache_entry "$_STATUS_PR_CACHE" "$branch" "$_STATUS_PR_STAGING"
+    if [ -n "$_FORGECACHE_STATE" ]; then
+      base=$_STATUS_PR_STAGING
+      move=land
+    fi
+  fi
+  [ "$move" != land ] || [ -z "$_STATUS_PR_STAGING" ] || base=$_STATUS_PR_STAGING
+  state=$_FORGECACHE_STATE at=$_FORGECACHE_AT url=${_FORGECACHE_URL:-$task_url}
+  ci=$_FORGECACHE_CI mergeable=$_FORGECACHE_MERGEABLE
+  words=$fallback
+  if [ -n "$state" ] && [ -n "$at" ]; then
+    case "$state:$mergeable:$ci" in
+      open:conflicting:*) words="it conflicts with $base, as of $at" ;;
+      open:mergeable:green) words="CI is green and it merges cleanly, as of $at" ;;
+      open:*:green) words="CI is green, as of $at" ;;
+      open:*:red) words="CI is red, as of $at" ;;
+      open:*:pending) words="CI is running, as of $at" ;;
+      open:*) words="open as of $at" ;;
+      *) words="$state as of $at" ;;
+    esac
+  fi
+  _STATUS_PR_DETAIL=$words
+  _STATUS_PR_MOVE=$move
+  _STATUS_PR_EXTRA="${branch:--}$t${base:--}$t${state:--}$t${at:--}$t${url:--}$t${ci:--}$t${mergeable:--}$t$move"
+}
+
+# _status_pr_todo_v <var> <id> — the words that name the person's move on a waiting
+# pull request, after _status_pr_item_v.
+_status_pr_todo_v() {
+  local cmd="jig task merge-pr $2 --by human" verb=Merge
+  [ "$_STATUS_PR_MOVE" != land ] || { cmd="jig task land $2 --by human"; verb=Land; }
+  _STATUS_PR_CMD=$cmd
+  printf -v "$1" '%s it: %s; see why it waits: jig task pr-status %s --json' "$verb" "$cmd" "$2"
+}
+
 # _status_attention — what only the reader can do, one record (_status_attn)
 # per item, most urgent first: a new jig release, a stopped autopilot run, a
 # design at its gate, a finished task waiting for its git step, a pull request
@@ -2360,9 +2428,11 @@ OPEN
     case "$parked" in
       signal$'\t'*) continue ;;
       *$'\t'landing)
+        _status_pr_item_v "$id" "parked at the staging branch" "$url" land
+        _status_pr_todo_v todo "$id"
         _status_attn pull-request-waiting task "$id" "$id" \
-          "A pull request is waiting for review and for you to land it" "parked at the staging branch" \
-          "Once it is reviewed, land it on the staging branch: jig task land $id, or merge it on the forge. jig lands it itself only at agent.git: merge." "$url"
+          "A pull request is waiting for review and for you to land it" "$_STATUS_PR_DETAIL" \
+          "$todo" "$url" "$_STATUS_PR_EXTRA"
         continue ;;
     esac
     if [ "$live" = consolidated ] && [ -n "$url" ] && _status_in "$id" "$open" \
@@ -2392,13 +2462,17 @@ OPEN
       # one may have been merged since. Past tense, and the first thing asked
       # for is a refresh -- the imperative below it is the one the reader acts
       # on, so it must not tell them to merge what may already be merged.
+      _status_pr_item_v "$id" "open as of $hk_note" "$url" merge
+      _status_pr_todo_v todo "$id"
       _status_attn pull-request-was-open task "$id" "$id" \
-        "A pull request was open at the last housekeeping run" "open as of $hk_note" \
-        "It may have been merged since: jig last asked the forge then. Run jig housekeeping to refresh, then review and merge what is still open." "$url"
+        "A pull request was open at the last housekeeping run" "$_STATUS_PR_DETAIL" \
+        "It may have been merged since: jig last asked the forge then. Run jig housekeeping to refresh, or see it now: jig task pr-status $id --json; then, if it is still open: $_STATUS_PR_CMD" "$url" "$_STATUS_PR_EXTRA"
     else
+      _status_pr_item_v "$id" "opened by jig task ship" "$url" merge
+      _status_pr_todo_v todo "$id"
       _status_attn pull-request-waiting task "$id" "$id" \
-        "A pull request is waiting for review or merge" "opened by jig task ship" \
-        "Review it and merge it; jig merges one itself only at agent.git: merge, on green CI." "$url"
+        "A pull request is waiting for review or merge" "$_STATUS_PR_DETAIL" \
+        "$todo" "$url" "$_STATUS_PR_EXTRA"
     fi
   done <<PRS
 $pr_ids
@@ -2576,7 +2650,7 @@ _status_attention_phase_stops() {
 # _status_json [--json] — the producer json_run runs for `jig status --json`.
 _status_json() {
   local arg attn rec kind stype sid tasks title detail todo url extra objs="" o t tl hk stale root vers
-  local xb xbase xst xat xto xk xl extra0 xt=$'\t'
+  local xb xbase xst xat xto xk xl extra0 xt=$'\t' xurl xci xmg xa xo xc xr xmove xrows
   for arg in "$@"; do
     [ "$arg" = --json ] || jig_fail usage "status --json: unknown argument: $arg (usage: jig status --json)"
   done
@@ -2648,6 +2722,37 @@ X
         json_str_or_null "$xat"; o="$o,\"fetched_at\":$_JSON}"
         json_str_or_null "$xto"; o="$o,\"versions\":{\"to\":$_JSON}"
         ;;
+      # A task's open pull request: the forge cache's data and the task's own
+      # action rows, the objects `jig task list --json` prints (schemas/json.md).
+      pull-request-waiting | pull-request-was-open)
+        IFS="$xt" read -r xb xbase xst xat xurl xci xmg xmove <<X
+$extra
+X
+        [ "$xb" != - ] || xb=""
+        [ "$xbase" != - ] || xbase=""
+        [ "$xst" != - ] || xst=""
+        [ "$xat" != - ] || xat=""
+        [ "$xurl" != - ] || xurl=""
+        [ "$xci" != - ] || xci=""
+        [ "$xmg" != - ] || xmg=""
+        json_quote "$xb"; o="$o,\"pull_request\":{\"branch\":$_JSON"
+        json_quote "$xbase"; o="$o,\"base\":$_JSON"
+        json_str_or_null "$xst"; o="$o,\"state\":$_JSON"
+        json_str_or_null "$xat"; o="$o,\"fetched_at\":$_JSON"
+        json_str_or_null "$xurl"; o="$o,\"url\":$_JSON"
+        json_str_or_null "$xci"; o="$o,\"ci\":$_JSON"
+        json_str_or_null "$xmg"; o="$o,\"mergeable\":$_JSON}"
+        _task_actions_v xrows "$sid" "$xst" "$xci" "$xmg"
+        xl=""
+        while IFS="$xt" read -r xa xo xc xr; do
+          case "$xa" in "$xmove" | pr-status) ;; *) continue ;; esac
+          json_quote "$xa"; xl="$xl${xl:+,}{\"id\":$_JSON"
+          json_quote "$xc"; xl="$xl,\"command\":$_JSON,\"offered\":$xo"
+          json_str_or_null "$xr"; xl="$xl,\"reason\":$_JSON}"
+        done <<X
+$xrows
+X
+        o="$o,\"actions\":[$xl]" ;;
       # The staging drift report's data (schemas/json.md).
       promotion-conflicting)
         IFS="$(printf '\t')" read -r xb xbase xst xat <<X

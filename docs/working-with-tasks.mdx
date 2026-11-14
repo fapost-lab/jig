@@ -516,7 +516,7 @@ It answers four questions, in this order:
    | A design is waiting for your decision | Read the design the agent showed you, then approve it or say what to change |
    | A design changed after you approved it | Read what changed and approve it again |
    | Ready for your step in git | Commit, push or open the pull request — whichever step the agent may not take in your project |
-   | A pull request is waiting for review or merge | Review it and merge it; the link opens it. Jig merges one itself only at `agent.git: merge`, once CI passed |
+   | A pull request is waiting for review or merge | The card says what the forge last said (CI green, red or running, a conflict) and as of when. Review it and merge it: `jig task merge-pr <id> --by human`, or the same button; `jig task pr-status <id> --json` shows why it waits. Jig merges one itself only at `agent.git: merge`, once CI passed |
    | A pull request was open for a task you abandoned | Refresh, then close it on the forge or reopen the task — abandoning a task never touches GitHub or GitLab |
    | Merged: the task can be closed | Tell the agent to close the task — the card goes as soon as it is closed |
    | The pull request was closed without merging | Reopen it, or tell the agent to abandon the task — the card goes as soon as it is abandoned |

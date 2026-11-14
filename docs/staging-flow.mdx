@@ -102,6 +102,15 @@ How far that goes depends on `agent.git`, your own setting for what the agent ma
 `merge` the ship also lands the task; below it, the ship stops at the pull request, and you (or your
 agent, when you ask) land it later with `jig task land <id>`.
 
+`agent.git` limits only the agent. When you land the pull request yourself — a button in your
+dashboard, or `jig task land <id> --by human` in a terminal — Jig does not read it, whatever it is
+set to. You press it on what you saw, so Jig looks at the checks once and never waits for them; a
+conflict is refused (your agent lands those with `jig task land <id>`); and the forge's branch
+protection always holds: Jig never overrides it. `--without-review` lands a pull request nobody
+approved, under `ask`, and says so on the pull request. The same `--by human` is on
+`jig task promote <id>` ("prepare for prod"), `jig task request-review <id> --reviewer <login>` and,
+for a pull request that goes straight into your main branch, `jig task merge-pr <id>`.
+
 ### Landing
 
 - **Review first**, as `git.staging_review` says. With `ask`, a pull request nobody approved stops

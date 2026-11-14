@@ -576,6 +576,14 @@ when you allow `merge`: after an approval, on the forge, or by a direct merge wh
 staging branch refused — and 5 when a conflict waits in its temporary worktree for
 `jig task land <id> --resolved --note-file <file>`; `--abort` gives the landing up.
 
+These commands are the agent's, so they follow `agent.git`. Your own decisions do not:
+`jig task land <id> --by human` lands the pull request whatever `agent.git` says, and so do
+`jig task promote <id> --by human`, `jig task request-review <id> --reviewer <login> --by human`
+and, on the direct flow, `jig task merge-pr <id> --by human`, which merges the task's pull request
+on the forge. They look at CI once instead of waiting, refuse a conflict, and never override the
+forge's branch protection. `jig task pr-status <id> --json` shows why a pull request waits: its
+checks, its review and whether it merges cleanly. Your agent never passes `--by human`.
+
 <Tip>
   `jig help` lists the full command surface. Use [Skills](/skills) for the agent procedures,
   [Configuration](/configuration) for settings, and [Under the hood](/under-the-hood) for boundaries

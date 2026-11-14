@@ -99,3 +99,5 @@ merged, and a `--json` read never touches the network (adr-20261015-a-read-is-on
   run from another branch, now names the base before the current branch. It still refuses.
 
 > **Amendment (2026-11-08).** A row `handover` follows `answer-stop`: `jig task autopilot <id> handover --by human --answer <text>`, offered on a `stopped` run and asking `_task_autopilot_handover_refusal` (adr-20261108-a-person-takes-over-a-stopped-run).
+
+> **Amendment (2026-11-14).** Rows `request-review`, `merge` (`jig task merge-pr <id> --by human`), `promote` and `pr-status` follow `land`, whose command is now `jig task land <id> --by human`: a person's row carries `--by human` so that it is accepted at every `agent.git` (adr-20261114-a-persons-pull-request-action-does-not-read-agent-git). `jig task list --json` adds `shipping`.

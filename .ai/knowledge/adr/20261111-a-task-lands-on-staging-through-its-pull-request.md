@@ -150,3 +150,5 @@ base.
 - The agent's resolution of others' code reaches staging without CI (a conflicting pull request runs
   none); the skills ask for targeted tests in the tree before `--resolved`, and QA reads the comment.
 - rerere writes its cache to the clone's `rr-cache`; git prunes it on its own schedule.
+
+> **Amendment (2026-11-14).** "Below `merge` it refuses with exit 3" holds for the agent's form only. `jig task land <id> --by human` is a person's landing at any level: it answers JSON with codes, looks at CI once, is not refused as unattended, and refuses a conflict as `conflict` without starting the direct merge (adr-20261114-a-persons-pull-request-action-does-not-read-agent-git).
