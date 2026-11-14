@@ -4,9 +4,10 @@
 # (`jig task merge-pr`, the direct flow's counterpart of `jig task land`) and
 # read where it stands (`jig task pr-status`).
 #
-# Sourced by task.sh alone (ARCHITECTURE.md, Scripts layout: a subject large
-# enough to crowd out its commands); it only defines functions, and calls
-# task.sh's readers and the `jig_*` steps of common.sh. The guards the actions
+# Sourced by task.sh, and by land.sh for _prdo_view, the forge's word on where
+# a pull request goes when no ship recorded it (ARCHITECTURE.md, Scripts
+# layout: a subject large enough to crowd out its commands); it only defines
+# functions, and calls task.sh's readers and the `jig_*` steps of common.sh. The guards the actions
 # table asks (_task_request_review_refusal, _task_merge_pr_refusal,
 # _task_pr_status_refusal) stay in task.sh: a listing asks them without this
 # file. Each entry reads `--json` anywhere and runs as the producer of json_run.
@@ -457,6 +458,13 @@ _prdo_merge_pr_body() {
     merged) outcome=already-merged ;;
     closed) jig_fail pull-request-closed "$who: the pull request of $id is closed ($url); ship $id again to open a new one" ;;
   esac
+  # The local guard trusts `pr_into`; the forge is the last word: a pull request
+  # into the staging branch is landed, not merged.
+  local staging_now
+  if [ "$(cfg git.flow direct)" = staging ] && _task_staging_sound_v staging_now \
+    && [ "$_PRDO_BASE" = "$staging_now" ]; then
+    jig_fail wrong-flow "$who: the pull request of $id goes into $staging_now, which is landed, not merged; land it: jig task land $id --by human"
+  fi
   local sha=$_PRDO_HEAD
   if [ "$outcome" = merged ]; then
     _prdo_merge_checks "$who" "$id" "$url" "$sha"

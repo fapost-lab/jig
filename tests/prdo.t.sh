@@ -428,12 +428,49 @@ test_prdo_merge_pr_refuses_a_closed_pull_request() {
 }
 
 test_prdo_merge_pr_sends_a_staging_pull_request_to_land() {
-  pd_setup github
+  pd_setup github pr_into:staging
   printf 'git.flow: staging\ngit.staging_branch: staging\n' >> .ai/config.yaml
   git branch -q staging main
   pd_split jig task merge-pr T-1 --by human --json
   pd_refused wrong-flow
   assert_contains "$OUT" "jig task land T-1 --by human"
+  assert_no_file gh-merge.argv
+}
+
+# A pull request an older Jig opened, with no pr_into: the forge says where it
+# goes, and one into the base is merged.
+test_prdo_merge_pr_merges_a_legacy_pull_request_the_forge_puts_into_the_base() {
+  pd_setup github
+  printf 'git.flow: staging\ngit.staging_branch: staging\n' >> .ai/config.yaml
+  git branch -q staging main
+  pd_split jig task merge-pr T-1 --by human --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"outcome":"merged"'
+  assert_file gh-merge.argv
+}
+
+# A staging-flow task whose pull request went into the base (it changes the
+# flow itself) is merged, not landed: the local guard has nothing to say.
+test_prdo_merge_pr_accepts_a_staging_task_whose_pull_request_went_into_the_base() {
+  pd_setup github pr_into:main
+  printf 'git.flow: staging\ngit.staging_branch: staging\n' >> .ai/config.yaml
+  git branch -q staging main
+  pd_split jig task merge-pr T-1 --by human --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"outcome":"merged"'
+  assert_file gh-merge.argv
+}
+
+# The forge is the last word: a pull request into the staging branch is landed
+# whatever the recorded `pr_into` says.
+test_prdo_merge_pr_refuses_when_the_forge_says_the_base_is_staging() {
+  pd_setup github pr_into:main
+  printf 'git.flow: staging\ngit.staging_branch: staging\n' >> .ai/config.yaml
+  git branch -q staging main
+  printf 'OPEN|false|staging|%s|MERGEABLE|CLEAN\n' "$(git rev-parse HEAD)" > gh-view
+  pd_split jig task merge-pr T-1 --by human --json
+  pd_refused wrong-flow
+  assert_contains "$OUT$ERR" "jig task land T-1 --by human"
 }
 
 test_prdo_merge_pr_refuses_while_the_agent_is_on_the_task() {

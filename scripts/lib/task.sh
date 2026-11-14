@@ -6988,7 +6988,9 @@ _task_ship_unverified_notice() {
 # from there), ships at the run's level, jig_autopilot_git, when `autopilot.git`
 # is set: the run's explicit level, one for everything it ships. Otherwise a
 # task whose pull request goes into the staging branch (_task_ships_to_staging)
-# ships at `agent.git_staging` when this clone sets it, and every other ship —
+# ships at `agent.git_staging` when this clone sets it (the lower of it and
+# `agent.git` for a pull request of an older Jig whose base was not recorded,
+# which may go into the base branch), and every other ship —
 # a run without `autopilot.git`, a run a person took over (`handover`, which
 # ends it), anything into the base branch or an epic — at `agent.git`. An
 # attended run that stopped is waiting for its person, who may well finish the
@@ -7028,14 +7030,53 @@ _task_ship_git_v() {
     fi
   fi
   cfg_v __tsg_value agent.git_staging ""
-  if [ -n "$__tsg_value" ] && [ "${3:-}" != base ] && _task_ships_to_staging "$2"; then
-    printf -v "$1" '%s\tagent.git_staging' "$__tsg_value"
-    _cfg_agent_git_level "$__tsg_value"
-    return
+  if [ -n "$__tsg_value" ] && [ "${3:-}" != base ]; then
+    local __tsg_into=0
+    _task_ships_to_staging "$2" || __tsg_into=$?
+    case "$__tsg_into" in
+      0)
+        printf -v "$1" '%s\tagent.git_staging' "$__tsg_value"
+        _cfg_agent_git_level "$__tsg_value"
+        return ;;
+      2)
+        # A pull request of an older Jig, whose base nobody recorded: it may
+        # go into the base branch, so the lower of the two levels answers.
+        local __tsg_git __tsg_rank_s __tsg_rank_g
+        cfg_v __tsg_git agent.git none
+        _cfg_agent_git_level "$__tsg_value" || {
+          printf -v "$1" '%s\tagent.git_staging' "$__tsg_value"
+          return 1
+        }
+        _cfg_agent_git_level "$__tsg_git" || {
+          printf -v "$1" '%s\tagent.git' "$__tsg_git"
+          return 1
+        }
+        _task_git_level_rank_v __tsg_rank_s "$__tsg_value"
+        _task_git_level_rank_v __tsg_rank_g "$__tsg_git"
+        if [ "$__tsg_rank_g" -lt "$__tsg_rank_s" ]; then
+          printf -v "$1" '%s\tagent.git' "$__tsg_git"
+        else
+          printf -v "$1" '%s\tagent.git_staging' "$__tsg_value"
+        fi
+        return 0 ;;
+    esac
   fi
   cfg_v __tsg_value agent.git none
   printf -v "$1" '%s\tagent.git' "$__tsg_value"
   _cfg_agent_git_level "$__tsg_value"
+}
+
+# _task_git_level_rank_v <var> <level> — 0..4 for none|commit|push|pr|merge
+# into <var>, in the caller's shell: the resolver is asked per task of a listing.
+_task_git_level_rank_v() {
+  local __tgr=4
+  case "$2" in
+    none) __tgr=0 ;;
+    commit) __tgr=1 ;;
+    push) __tgr=2 ;;
+    pr) __tgr=3 ;;
+  esac
+  printf -v "$1" '%s' "$__tgr"
 }
 
 # _task_ships_to_staging <id> — exit 0 when <id>'s pull request goes into the
@@ -7043,10 +7084,12 @@ _task_ship_git_v() {
 # staging flow and the task is cut from the base branch. Whether the task
 # changes the flow itself is not known here before its first ship (task_ship
 # re-reads its level when it finds out); after it, the recorded `pr_into` says
-# where its pull request went. No process per task in a listing
-# (_task_staging_sound_v).
+# where its pull request went. Exit 2 when it is not known: the task has a
+# pull request (`pr_url`) a ship of an older Jig opened, which recorded no
+# `pr_into` — it may go into the base branch. Exit 1 when it does not. No
+# process per task in a listing (_task_staging_sound_v).
 _task_ships_to_staging() {
-  local __tst_flow __tst_staging __tst_base __tst_base_branch __tst_into
+  local __tst_flow __tst_staging __tst_base __tst_base_branch __tst_into __tst_url
   cfg_v __tst_flow git.flow direct
   [ "$__tst_flow" = staging ] || return 1
   _task_staging_sound_v __tst_staging || return 1
@@ -7056,7 +7099,12 @@ _task_ships_to_staging() {
   # Once a ship opened its pull request, where it went is known: one into the
   # base (a task that changes the flow) answers to agent.git.
   task_state_var __tst_into "$1" pr_into
-  [ -z "$__tst_into" ] || [ "$__tst_into" = "$__tst_staging" ]
+  if [ -z "$__tst_into" ]; then
+    task_state_var __tst_url "$1" pr_url
+    [ -z "$__tst_url" ] || return 2
+    return 0
+  fi
+  [ "$__tst_into" = "$__tst_staging" ]
 }
 
 # _task_ship_level_refusal <id> — why `jig task ship <id>` refuses at the git
@@ -7083,7 +7131,9 @@ EOF
 # <id> of a task whose pull request goes into the staging branch, a second
 # line `autopilot git on <staging>: <level> (<key>)` when agent.git_staging,
 # not the line above, answers there: only without `autopilot.git`, which
-# answers for everything a run ships (_task_ship_git_v).
+# answers for everything a run ships (_task_ship_git_v). For a pull request
+# whose branch was never recorded (pr_into), the line follows the resolver:
+# only when agent.git_staging is the lower level and so answers.
 _task_autopilot_git_line() {
   local line level key rc=0 staging value
   line=$(jig_autopilot_git) || rc=$?
@@ -7099,7 +7149,18 @@ EOF
   [ "$key" != autopilot.git ] || return 0
   cfg_v value agent.git_staging ""
   [ -n "$value" ] || return 0
-  _task_ships_to_staging "$1" || return 0
+  local to=0 resolved
+  _task_ships_to_staging "$1" || to=$?
+  case "$to" in
+    0) ;;
+    2)
+      # A pull request an older Jig opened, its branch not recorded: the
+      # resolver answers the lower of the two levels; the second line only
+      # when agent.git_staging is the one that answered.
+      _task_ship_git_v resolved "$1" || true
+      [ "${resolved#*$'\t'}" = agent.git_staging ] || return 0 ;;
+    *) return 0 ;;
+  esac
   cfg_v staging git.staging_branch ""
   if _cfg_agent_git_level "$value"; then
     printf 'autopilot git on %s: %s (agent.git_staging)\n' "$staging" "$value"
@@ -7878,7 +7939,9 @@ _task_land_refusal() {
   local into
   task_state_var into "$id" pr_into
   if [ -n "$into" ] && [ "$into" != "$staging" ]; then
-    printf 'task land: %s goes into %s, not %s; landing is for a pull request into the staging branch\n' "$pr" "$into" "$staging"
+    printf 'task land: %s goes into %s, not %s; landing is for a pull request into the staging branch' "$pr" "$into" "$staging"
+    [ "$into" != "$base_branch" ] || printf '; merge it: jig task merge-pr %s --by human' "$id"
+    printf '\n'
     return 0
   fi
   case "$pr_state" in
@@ -7978,8 +8041,18 @@ _task_merge_pr_refusal() {
     jig_task_base_v base "$id"
     cfg_v base_branch git.base_branch main
     if [ "$base" = "$base_branch" ]; then
-      printf 'task merge-pr: the pull request of %s goes into %s, which is landed, not merged; land it: jig task land %s --by human\n' "$id" "$staging" "$id"
-      return 0
+      # A pull request a ship opened into another branch (the base, for a task
+      # that changes the flow) is merged, not landed: this guard has nothing
+      # to say about it. Nor about one an older Jig opened without recording
+      # where (pr_url, no pr_into): the command asks the forge and refuses one
+      # into the staging branch.
+      local into opened
+      task_state_var into "$id" pr_into
+      task_state_var opened "$id" pr_url
+      if [ "$into" = "$staging" ] || { [ -z "$into" ] && [ -z "$opened" ]; }; then
+        printf 'task merge-pr: the pull request of %s goes into %s, which is landed, not merged; land it: jig task land %s --by human\n' "$id" "$staging" "$id"
+        return 0
+      fi
     fi
   fi
   task_state_var pr "$id" pr_url

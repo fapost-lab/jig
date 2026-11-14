@@ -15,7 +15,9 @@ paths:
   - scripts/lib/status.sh
   - scripts/lib/housekeeping.sh
   - scripts/lib/doctor.sh
+  - scripts/lib/land.sh
 summary: Why a task whose pull request goes into the staging branch has its own personal git level, agent.git_staging, resolved in the one ship resolver, and why autopilot.git, when set, still answers for a run.
+reviewed_at: 2026-11-14
 ---
 # A task landing on the staging branch has its own git level, agent.git_staging
 
@@ -85,6 +87,12 @@ key where they read the level of staging work. `jig-setup` asks about it only on
   the resolver reads it, so `jig task land` and `request-review` of a task whose pull request went
   into the base answer to `agent.git`, and `land_task` refuses (`wrong-flow`) to land a pull
   request that does not go into the staging branch, whoever asks.
+- A task an older Jig shipped has a pull request but no `pr_into`. Where it goes is then not
+  known locally, so the resolver answers the lower of `agent.git` and `agent.git_staging`, and
+  `land_task` asks the forge for the pull request's base before it merges anything: it records
+  the answer in `pr_into`, refuses (`wrong-flow`) a base that is not the staging branch, and
+  refuses when the forge cannot say. `jig task merge-pr` takes a staging-flow task whose
+  pull request went into the base, and refuses one the forge says goes into the staging branch.
 - Before a task's first ship, the actions table may offer `ship` for a task that changes the flow
   at `agent.git: none` with `agent.git_staging` at `commit` or above, and the command then exits 3:
   whether a task changes the flow is the command's to find out, like the other flow refusals.

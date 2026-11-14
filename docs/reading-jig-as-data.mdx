@@ -120,7 +120,7 @@ be reworded.
 | `forge-refused` | the forge refused the merge — branch protection, a required review, rights, no merge method the repository allows, or a pull request head that is not the commit that was shipped. `message` holds the forge's first line. Nothing was forced |
 | `no-pull-request` | the task has no pull request to act on |
 | `pull-request-closed` | the task's pull request is closed unmerged (for `jig task request-review`, merged too: nobody is asked to review any more) |
-| `wrong-flow` | the command does not apply to the task in this project: not on a sound `staging` flow, a task cut from another base than `git.base_branch`, `git.staging_land: external`, or `jig task merge-pr` on a pull request that goes into the staging branch (the message names `jig task land <id> --by human`) |
+| `wrong-flow` | the command does not apply to the task in this project: not on a sound `staging` flow, a task cut from another base than `git.base_branch`, `git.staging_land: external`, `jig task land` on a pull request that goes into another branch than the staging branch (into the base branch the message names `jig task merge-pr <id> --by human`), or `jig task merge-pr` on a pull request that goes into the staging branch (the message names `jig task land <id> --by human`) |
 | `not-ready` | `jig task land --by human`: the ship's gates do not pass (the knowledge decision, a blocking finding, the review receipt, the route's records); `message` is their text |
 | `not-shipped` | the task's branch is not on origin as it was shipped: it has commits origin does not, or origin has no such branch |
 | `notes-stale` | a release's notes no longer reach the base's tip, found right before `jig task merge-pr` merges a pull request that raises the version. Nothing was merged |
@@ -256,7 +256,7 @@ buttons without knowing Jig's rules. Every task carries the same twenty actions,
 | `ship` | Commit, push and open the pull request, as far as your settings let the agent |
 | `land` | On the staging flow, land the task's open pull request on the staging branch. The `command` ends in `--by human`: it is the person's own landing, which does not read `agent.git` |
 | `request-review` | Ask the forge to add reviewers to the task's open pull request; its `command` asks for `--reviewer <login>` |
-| `merge` | Merge the task's open pull request into its own base on the forge (the direct flow; on the staging flow the pull request goes into the staging branch and `land` is the action). Withheld while the forge cache says the checks are red or pending or that it conflicts |
+| `merge` | Merge the task's open pull request into its own base on the forge (the direct flow, and a staging-flow task whose pull request went into the base: one that changes the flow itself; a pull request into the staging branch is landed, and `land` is the action). Withheld while the forge cache says the checks are red or pending or that it conflicts |
 | `promote` | On the staging flow, open the pull request that takes a tested task into the main branch |
 | `pr-status` | Read where the task's pull request stands on the forge now (checks, review, mergeability, protection); the only action that asks the forge by itself |
 | `close` | Close a task whose work has landed |
