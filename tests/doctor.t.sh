@@ -667,6 +667,32 @@ test_doctor_agent_git_warns_on_invalid_value() {
   assert_contains "$OUT" "fix: set agent.git to none, commit, push, pr or merge in .ai/config.local.yaml"
 }
 
+test_doctor_agent_git_staging_warns_when_set_in_project_config() {
+  fixture_jig_repo
+  printf 'agent.git_staging: merge\n' >> .ai/config.yaml
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warn  agent.git_staging: set in .ai/config.yaml, ignored there"
+  assert_contains "$OUT" "fix: move it to .ai/config.local.yaml"
+}
+
+test_doctor_agent_git_staging_warns_on_invalid_value() {
+  fixture_jig_repo
+  printf 'agent.git_staging: yolo\n' > .ai/config.local.yaml
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warn  agent.git_staging: invalid value: yolo (expected none|commit|push|pr|merge)"
+}
+
+test_doctor_agent_git_staging_is_silent_when_unset_or_valid() {
+  fixture_jig_repo
+  run jig doctor
+  assert_not_contains "$OUT" "agent.git_staging"
+  printf 'agent.git_staging: merge\n' > .ai/config.local.yaml
+  run jig doctor
+  assert_not_contains "$OUT" "agent.git_staging"
+}
+
 test_doctor_agent_git_reports_both_an_ignored_project_value_and_an_invalid_local_one() {
   fixture_jig_repo
   printf 'agent.git: pr\n' >> .ai/config.yaml

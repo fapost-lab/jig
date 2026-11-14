@@ -1964,7 +1964,7 @@ _task_set_body() {
       fi
       ;;
     task_id | issue | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash | paused_stash_applied \
-      | autopilot | autopilot_repairs | autopilot_mode | autopilot_phase | autopilot_handover | gate | gate_design | gate_by | pr_url | promote_url | park_resumed_at \
+      | autopilot | autopilot_repairs | autopilot_mode | autopilot_phase | autopilot_handover | gate | gate_design | gate_by | pr_url | pr_into | promote_url | park_resumed_at \
       | archived_at | archived_reason | archived_from \
       | abandoned_at | abandoned_reason | moved_to | triage_task | triage_of \
       | absorbed_into | absorbs | partly_in | absorbs_partly \
@@ -2813,7 +2813,7 @@ _task_autopilot_start() {
   fi
   [ -z "$phase" ] || printf 'phase: %s\n' "$phase"
   _task_autopilot_depth_line "$id"
-  _task_autopilot_git_line
+  _task_autopilot_git_line "$id"
 }
 
 # _task_autopilot_parked_refusal <who> <id> <parked> — the refusal of a run on
@@ -4539,7 +4539,7 @@ EOF
     printf 'lean: %s\n' "$(_task_route_lean_note "$class")"
   fi
   printf 'never trimmed: tests on changed files, CI before a merge, consolidation\n'
-  _task_autopilot_git_line
+  _task_autopilot_git_line "$id"
   _task_route_delegates "$id" "$class"
   local from
   from=$(task_state_get "$id" class_lowered_from)
@@ -5638,7 +5638,7 @@ EOF
     answer=$(jig_parked_states "$staging" "$land" "$rows" "$cache")
   fi
   [ -n "$answer" ] || return 0
-  cfg_v level agent.git none
+  jig_staging_git_v level || true; level=${level%%"$t"*}
   cfg_v sreview git.staging_review ask
   while IFS="$t" read -r pid reason; do
     [ -n "$pid" ] || continue
@@ -6985,11 +6985,18 @@ _task_ship_unverified_notice() {
 # _task_ship_git <id> — `<level><TAB><key>`: the git level `task ship` uses
 # for <id>, and the key it came from. A task whose autopilot run is `on`, or
 # `stopped` in an unattended run (whose repairs ran out: it ships its draft
-# from there), ships at the run's level, jig_autopilot_git; every other ship
-# at `agent.git` — a run a person took over (`handover`, which ends it) too. An attended run that stopped is waiting for its person, who
-# may well finish the task by hand: that ship is theirs, at their level. Read when it ships, not recorded at `start`: a person
-# who lowers either key halfway through a run is obeyed at once. Exit 1 when
-# the level is invalid, like jig_agent_git.
+# from there), ships at the run's level, jig_autopilot_git, when `autopilot.git`
+# is set: the run's explicit level, one for everything it ships. Otherwise a
+# task whose pull request goes into the staging branch (_task_ships_to_staging)
+# ships at `agent.git_staging` when this clone sets it, and every other ship —
+# a run without `autopilot.git`, a run a person took over (`handover`, which
+# ends it), anything into the base branch or an epic — at `agent.git`. An
+# attended run that stopped is waiting for its person, who may well finish the
+# task by hand: that ship is theirs, at their level. Read when it ships, not
+# recorded at `start`: a person who lowers either key halfway through a run is
+# obeyed at once. Exit 1 when the level is invalid, like jig_agent_git; an
+# invalid `agent.git_staging` is named and never falls back to `agent.git`
+# (adr-20261114-landing-on-staging-has-its-own-git-level).
 _task_ship_git() {
   local line rc=0
   _task_ship_git_v line "$1" || rc=$?
@@ -6997,27 +7004,59 @@ _task_ship_git() {
   return "$rc"
 }
 
-# _task_ship_git_v <var> <id> — the same `<level><TAB><key>` into <var>, with
-# the same exit status, in the caller's shell.
+# _task_ship_git_v <var> <id> [base] — the same `<level><TAB><key>` into <var>,
+# with the same exit status, in the caller's shell. With `base` the pull
+# request is known to go into the base branch (`jig task merge-pr`): the
+# staging step is skipped.
 _task_ship_git_v() {
-  local __tsg_run __tsg_mode __tsg_value
+  local __tsg_run __tsg_mode __tsg_value __tsg_auto=""
   task_state_var __tsg_run "$2" autopilot
   case "$__tsg_run" in
     on)
-      jig_autopilot_git_v "$1"
-      return
+      __tsg_auto=1
       ;;
     stopped)
       _task_autopilot_mode_v __tsg_mode "$2"
-      if [ "$__tsg_mode" = unattended ]; then
-        jig_autopilot_git_v "$1"
-        return
-      fi
+      [ "$__tsg_mode" != unattended ] || __tsg_auto=1
       ;;
   esac
+  if [ -n "$__tsg_auto" ]; then
+    cfg_v __tsg_value autopilot.git ""
+    if [ -n "$__tsg_value" ]; then
+      jig_autopilot_git_v "$1"
+      return
+    fi
+  fi
+  cfg_v __tsg_value agent.git_staging ""
+  if [ -n "$__tsg_value" ] && [ "${3:-}" != base ] && _task_ships_to_staging "$2"; then
+    printf -v "$1" '%s\tagent.git_staging' "$__tsg_value"
+    _cfg_agent_git_level "$__tsg_value"
+    return
+  fi
   cfg_v __tsg_value agent.git none
   printf -v "$1" '%s\tagent.git' "$__tsg_value"
   _cfg_agent_git_level "$__tsg_value"
+}
+
+# _task_ships_to_staging <id> — exit 0 when <id>'s pull request goes into the
+# staging branch as far as local reads can tell: the project is on a sound
+# staging flow and the task is cut from the base branch. Whether the task
+# changes the flow itself is not known here before its first ship (task_ship
+# re-reads its level when it finds out); after it, the recorded `pr_into` says
+# where its pull request went. No process per task in a listing
+# (_task_staging_sound_v).
+_task_ships_to_staging() {
+  local __tst_flow __tst_staging __tst_base __tst_base_branch __tst_into
+  cfg_v __tst_flow git.flow direct
+  [ "$__tst_flow" = staging ] || return 1
+  _task_staging_sound_v __tst_staging || return 1
+  jig_task_base_v __tst_base "$1"
+  cfg_v __tst_base_branch git.base_branch main
+  [ "$__tst_base" = "$__tst_base_branch" ] || return 1
+  # Once a ship opened its pull request, where it went is known: one into the
+  # base (a task that changes the flow) answers to agent.git.
+  task_state_var __tst_into "$1" pr_into
+  [ -z "$__tst_into" ] || [ "$__tst_into" = "$__tst_staging" ]
 }
 
 # _task_ship_level_refusal <id> — why `jig task ship <id>` refuses at the git
@@ -7038,11 +7077,15 @@ EOF
   return 0
 }
 
-# _task_autopilot_git_line — `autopilot git: <level> (<key>)`, the level an
-# autopilot run ships at and where it comes from, as `task autopilot start`
-# and `task route` print it. An invalid value is named, never guessed.
+# _task_autopilot_git_line [<id>] — `autopilot git: <level> (<key>)`, the level
+# an autopilot run ships at and where it comes from, as `task autopilot start`
+# and `task route` print it. An invalid value is named, never guessed. With
+# <id> of a task whose pull request goes into the staging branch, a second
+# line `autopilot git on <staging>: <level> (<key>)` when agent.git_staging,
+# not the line above, answers there: only without `autopilot.git`, which
+# answers for everything a run ships (_task_ship_git_v).
 _task_autopilot_git_line() {
-  local line level key rc=0
+  local line level key rc=0 staging value
   line=$(jig_autopilot_git) || rc=$?
   IFS=$'\t' read -r level key <<EOF
 $line
@@ -7051,6 +7094,17 @@ EOF
     printf 'autopilot git: %s (%s)\n' "$level" "$key"
   else
     printf 'autopilot git: invalid %s %s (expected none|commit|push|pr|merge)\n' "$key" "$level"
+  fi
+  [ -n "${1:-}" ] || return 0
+  [ "$key" != autopilot.git ] || return 0
+  cfg_v value agent.git_staging ""
+  [ -n "$value" ] || return 0
+  _task_ships_to_staging "$1" || return 0
+  cfg_v staging git.staging_branch ""
+  if _cfg_agent_git_level "$value"; then
+    printf 'autopilot git on %s: %s (agent.git_staging)\n' "$staging" "$value"
+  else
+    printf 'autopilot git on %s: invalid agent.git_staging %s (expected none|commit|push|pr|merge)\n' "$staging" "$value"
   fi
 }
 
@@ -7568,7 +7622,8 @@ task_land() {
 # _task_land_refusal printed, for a person's landing.
 _task_land_refusal_code() {
   case "$1" in
-    *"is not on the staging flow"* | *"is cut from "* | *"git.staging_land is external"*) printf 'wrong-flow\n' ;;
+    *"is not on the staging flow"* | *"is cut from "* | *"git.staging_land is external"* \
+      | *"; landing is for a pull request into the staging branch"*) printf 'wrong-flow\n' ;;
     *"has no pull request"*) printf 'no-pull-request\n' ;;
     *" is closed; "*) printf 'pull-request-closed\n' ;;
     *"runs on autopilot"*) printf 'autopilot-running\n' ;;
@@ -7662,7 +7717,7 @@ _task_land_body() {
   refusal=$(_task_land_refusal "$id" "") || exit 1
   case "$refusal" in
     '') ;;
-    "task land: landing "*" needs agent.git: merge "*)
+    "task land: landing "*" needs agent.git"*": merge "*)
       pr=$(task_state_get "$id" pr_url)
       printf '%s; %s stays open, the person lands it\n' "$refusal" "${pr:-its pull request}" >&2
       jig_status_page_flush
@@ -7790,7 +7845,11 @@ _task_land_refusal() {
       return 0
     fi
     if [ "$level" != merge ]; then
-      printf 'task land: landing %s on %s needs agent.git: merge (git level %s (%s))\n' "$id" "${staging:-the staging branch}" "$level" "$key"
+      # The key named is the one that is the staging level's, else agent.git
+      # as ever: under autopilot.git the level in the brackets says who answered.
+      local need=agent.git
+      [ "$key" != agent.git_staging ] || need=agent.git_staging
+      printf 'task land: landing %s on %s needs %s: merge (git level %s (%s))\n' "$id" "${staging:-the staging branch}" "$need" "$level" "$key"
       return 0
     fi
   fi
@@ -7812,6 +7871,14 @@ _task_land_refusal() {
   task_state_var pr "$id" pr_url
   if [ -z "$pr" ]; then
     printf 'task land: %s has no pull request into %s; run jig task ship %s first\n' "$id" "$staging" "$id"
+    return 0
+  fi
+  # The command's own refusal (land_task), asked here too: a pull request a
+  # ship opened into another branch is not landed, so the row is not offered.
+  local into
+  task_state_var into "$id" pr_into
+  if [ -n "$into" ] && [ "$into" != "$staging" ]; then
+    printf 'task land: %s goes into %s, not %s; landing is for a pull request into the staging branch\n' "$pr" "$into" "$staging"
     return 0
   fi
   case "$pr_state" in
@@ -8107,6 +8174,30 @@ EOF
   # request goes is decided here, never after the commit or the push.
   local staging="" land=""
   _task_ship_flow_v staging land "$id" "$level" "$base"
+  # The level above was read as the staging branch's (agent.git_staging) before
+  # the flow was known. A task that changes the flow itself goes into its base
+  # as on the direct flow, and the base answers to agent.git: read again, before
+  # anything is committed (adr-20261114-landing-on-staging-has-its-own-git-level).
+  if [ -z "$staging" ] && [ "$key" = agent.git_staging ]; then
+    local own_level
+    cfg_v own_level agent.git none
+    key=agent.git
+    level=$own_level
+    if ! _cfg_agent_git_level "$level"; then
+      jig_die "task ship: invalid agent.git: $level (expected none|commit|push|pr|merge)"
+    fi
+    if [ "$level" = none ]; then
+      local own_none
+      own_none=$(_task_ship_refusal "$id" "$draft") || exit 1
+      [ -n "$own_none" ] || _task_ship_resumed_done "$id" "$dir" "$draft" ""
+      printf 'task ship: agent.git is none in this clone; the human commits\n' >&2
+      exit 3
+    fi
+    # The flow was asked at the staging level; at agent.git's it may fetch the
+    # base it skipped, so ask it again before the flow's answer is trusted.
+    _task_ship_flow_v staging land "$id" "$level" "$base"
+    [ -z "$staging" ] || jig_die "task ship: the git flow $base has on origin changed between two reads; nothing was committed. Run again."
+  fi
   # An open pull request into another branch is refused here, before the
   # commit, not where the pull request is opened: by then the push would
   # already have added this commit to it (adr-20260925-a-ship-refuses-before-it-sends).
@@ -8333,6 +8424,10 @@ EOF
   case "$JIG_SHIP_URL" in
     https://*)
       _task_rewrite_state "$dir" pr_url "$JIG_SHIP_URL"
+      # Where it goes, kept beside it: the staging level answers only for a
+      # pull request into the staging branch (_task_ships_to_staging), and a
+      # task that changes the flow opens its own into the base.
+      _task_rewrite_state "$dir" pr_into "$pr_base"
       # The open P2/P3 go to one triage task once a pull request exists to
       # link, before the merge and before the autopilot's `end` names it
       # (adr-20261029-a-ship-hands-open-findings-to-one-triage-task). A draft

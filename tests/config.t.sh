@@ -287,6 +287,10 @@ test_config_set_agent_git_validation() {
   _config_rejects autopilot.git MERGE
   _config_rejects agent.git yolo
   _config_rejects agent.git PR
+  _config_accepts agent.git_staging merge
+  _config_accepts agent.git_staging none
+  _config_rejects agent.git_staging yolo
+  _config_rejects agent.git_staging MERGE
 }
 
 # autopilot.parallel bounds how many task agents a phase run builds at once;
@@ -1032,6 +1036,8 @@ test_config_keys_json_pins_the_shape_of_one_key() {
   # A key with no default and no answer has no value, not an empty one.
   assert_eq '{"key":"autopilot.git","value":null,"set":false,"source":"default","scope":"local only","kind":"choice","allowed":["none","commit","push","pr","merge"],"default":null,"description":"The git level of an autopilot run; when unset, agent.git answers.","secret":false}' \
     "$(_cj_entry autopilot.git)"
+  assert_eq '{"key":"agent.git_staging","value":null,"set":false,"source":"default","scope":"local only","kind":"choice","allowed":["none","commit","push","pr","merge"],"default":null,"description":"The git level for a task whose pull request goes into the staging branch; when unset, agent.git answers.","secret":false}' \
+    "$(_cj_entry agent.git_staging)"
   assert_contains "$(_cj_entry git.delete_merged_branches)" '"kind":"boolean","allowed":["true","false"]'
   assert_contains "$(_cj_entry housekeeping.trash_ttl)" '"kind":"duration","allowed":null'
   assert_contains "$(_cj_entry autopilot.parallel)" '"kind":"number","allowed":null'

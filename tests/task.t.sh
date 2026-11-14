@@ -15285,3 +15285,258 @@ test_task_pause_stash_that_fails_puts_the_request_back() {
   fi
   assert_eq "" "$( (cd .ai/workspace/tasks/fresh && ls -a) | grep '^state\.tmp' || true)" "a failed pause left its new state behind"
 }
+
+# --- agent.git_staging: the git level of a task whose pull request goes into
+# the staging branch (adr-20261114-landing-on-staging-has-its-own-git-level)
+
+# At `agent.git: none` the ship goes on when the staging level allows it, and
+# lands the task on the staging branch.
+test_task_ship_staging_level_lands_at_agent_git_none() {
+  sship_setup none
+  ship_cfg_local agent.git_staging merge
+  printf 'APPROVED|APPROVED\n' > gh-review
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: git level merge (agent.git_staging)"
+  assert_contains "$OUT" "landed https://github.com/example/example/pull/99 on staging (merged on the forge)"
+  assert_pr_base staging
+  assert_file gh-merge.argv
+}
+
+# The staging level lowers as well as raises: agent.git merge does not land a
+# staging task when agent.git_staging says pr.
+test_task_ship_staging_level_below_agent_git_stops_at_the_pull_request() {
+  sship_setup merge
+  ship_cfg_local agent.git_staging pr
+  printf 'APPROVED|APPROVED\n' > gh-review
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: git level pr (agent.git_staging)"
+  assert_pr_base staging
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_staging_level_none_leaves_the_commit_to_the_human() {
+  sship_setup merge
+  ship_cfg_local agent.git_staging none
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: agent.git_staging is none in this clone; the human commits"
+}
+
+# A task that changes the flow itself goes into main: its level is agent.git's,
+# read again before anything is committed.
+test_task_ship_own_flow_change_reads_agent_git_not_the_staging_level() {
+  sship_setup pr
+  ship_cfg_local agent.git_staging merge
+  sed -e 's/^git.staging_branch:.*/git.staging_branch: stage/' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git add .ai/config.yaml
+  printf 'APPROVED|APPROVED\n' > gh-review
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: T-1 changes the git flow; its pull request goes into main, as on the direct flow"
+  assert_contains "$OUT" "task ship: git level pr (agent.git)"
+  assert_pr_base main
+  assert_no_file gh-merge.argv
+}
+
+# The pull request of a task that changes the flow went into main: the agent's
+# land answers to agent.git, and no landing merges it, whoever asks.
+test_task_land_of_an_own_flow_pull_request_into_main_merges_nothing() {
+  sship_setup pr
+  ship_cfg_local agent.git_staging merge
+  sed -e 's/^git.staging_branch:.*/git.staging_branch: stage/' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git add .ai/config.yaml
+  printf 'APPROVED|APPROVED\n' > gh-review
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_pr_base main
+  run jig task show T-1
+  assert_contains "$OUT" "pr_into: main"
+
+  run jig task land T-1
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "needs agent.git: merge (git level pr (agent.git))"
+  assert_no_file gh-merge.argv
+
+  run jig task land T-1 --by human --json
+  assert_contains "$OUT" '"code":"wrong-flow"'
+  assert_contains "$OUT" "landing is for a pull request into the staging branch"
+  [ "$RC" -ne 0 ] || fail "a person's land of a pull request into main must refuse: $OUT"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_own_flow_change_at_agent_git_none_commits_nothing() {
+  sship_setup none
+  ship_cfg_local agent.git_staging merge
+  sed -e 's/^git.staging_branch:.*/git.staging_branch: stage/' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git add .ai/config.yaml
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: agent.git is none in this clone; the human commits"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+  assert_no_file gh-create.argv
+}
+
+# On the direct flow nothing goes into a staging branch: the key is not read.
+test_task_ship_direct_flow_does_not_read_the_staging_level() {
+  sship_setup pr 'git.flow: direct'
+  ship_cfg_local agent.git_staging merge
+  printf 'APPROVED|APPROVED\n' > gh-review
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: git level pr (agent.git)"
+  assert_pr_base main
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_invalid_staging_level_names_its_key_and_does_not_fall_back() {
+  sship_setup merge
+  ship_cfg_local agent.git_staging yolo
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task ship: invalid agent.git_staging: yolo (expected none|commit|push|pr|merge)"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+}
+
+# A run with autopilot.git answers it, whatever the staging level says.
+test_task_ship_autopilot_git_answers_a_run_over_the_staging_level() {
+  sship_setup none
+  ship_cfg_local agent.git_staging merge
+  ship_cfg_local autopilot.git pr
+  jig task set T-1 class T1 >/dev/null
+  jig task autopilot T-1 start >/dev/null
+  printf 'APPROVED|APPROVED\n' > gh-review
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: git level pr (autopilot.git)"
+  assert_no_file gh-merge.argv
+}
+
+# Without autopilot.git a run on a staging task goes by the staging level.
+test_task_ship_run_without_autopilot_git_goes_by_the_staging_level() {
+  sship_setup pr
+  ship_cfg_local agent.git_staging merge
+  jig task set T-1 class T1 >/dev/null
+  jig task autopilot T-1 start >/dev/null
+  printf 'APPROVED|APPROVED\n' > gh-review
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: git level merge (agent.git_staging)"
+}
+
+test_task_land_by_the_agent_reads_the_staging_level() {
+  sship_setup pr
+  printf 'APPROVED|APPROVED\n' > gh-review
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_no_file gh-merge.argv
+
+  ship_cfg_local agent.git_staging merge
+  run jig task land T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "landed https://github.com/example/example/pull/99 on staging"
+  assert_file gh-merge.argv
+}
+
+test_task_land_by_the_agent_below_merge_at_the_staging_level_names_that_key() {
+  sship_setup merge
+  ship_cfg_local agent.git_staging pr
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+
+  run jig task land T-1
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "task land: landing T-1 on staging needs agent.git_staging: merge (git level pr (agent.git_staging)); https://github.com/example/example/pull/99 stays open, the person lands it"
+  assert_no_file gh-merge.argv
+}
+
+# An autopilot run answers autopilot.git for a landing as for a ship: the
+# refusal names the level and the key it came from, and is still exit 3.
+test_task_land_by_the_agent_in_a_run_below_merge_is_still_the_persons() {
+  sship_setup pr
+  ship_cfg_local agent.git_staging merge
+  ship_cfg_local autopilot.git pr
+  jig task set T-1 class T1 >/dev/null
+  jig task autopilot T-1 start >/dev/null
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+
+  run jig task land T-1
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "task land: landing T-1 on staging needs agent.git: merge (git level pr (autopilot.git))"
+  assert_no_file gh-merge.argv
+}
+
+# A task of an epic ships into its epic, which agent.git governs.
+test_task_ship_epic_task_on_the_staging_flow_reads_agent_git() {
+  sship_setup pr
+  ship_cfg_local agent.git_staging merge
+  git branch -q epic/x main
+  git push -q origin epic/x
+  git fetch -q origin
+  sed 's|^base_branch:.*|base_branch: epic/x|' .ai/workspace/tasks/T-1/state > state.tmp
+  mv state.tmp .ai/workspace/tasks/T-1/state
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: git level pr (agent.git)"
+  assert_pr_base epic/x
+  assert_no_file gh-merge.argv
+}
+
+test_task_land_by_human_reads_no_staging_level() {
+  shuman_setup
+  ship_cfg_local agent.git_staging none
+  printf 'APPROVED|APPROVED\n' > gh-review
+
+  shuman_land
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"outcome":"landed"'
+  assert_file gh-merge.argv
+}
+
+# A staging task's pull request is the agent's to ask a review for at pr.
+test_task_request_review_reads_the_staging_level() {
+  sship_setup none
+  ship_cfg_local agent.git_staging pr
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  ship_cfg_local agent.git_staging commit
+
+  run jig task request-review T-1 --reviewer bob
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "this needs agent.git_staging: pr or merge (git level commit (agent.git_staging))"
+}
+
+test_task_route_names_the_staging_level_when_it_differs() {
+  sship_setup pr
+  ship_cfg_local agent.git_staging merge
+  jig task set T-1 class T1 >/dev/null
+
+  run jig task route T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "autopilot git: pr (agent.git)"
+  assert_contains "$OUT" "autopilot git on staging: merge (agent.git_staging)"
+
+  ship_cfg_local autopilot.git pr
+  run jig task route T-1
+  assert_not_contains "$OUT" "autopilot git on staging"
+}

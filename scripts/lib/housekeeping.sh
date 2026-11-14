@@ -1312,8 +1312,8 @@ _hk_branch_forge_merged() {
 #
 # Only in the clone's main checkout: a worktree borrows `tasks/`, finds no
 # workspace of its own, and would take every task's branch for an orphan.
-# Off with git.delete_merged_branches: false; nothing remote below agent.git
-# or autopilot.git push, without housekeeping.fetch, on a dry run, or without origin.
+# Off with git.delete_merged_branches: false; nothing remote below agent.git,
+# autopilot.git or agent.git_staging push, without housekeeping.fetch, on a dry run, or without origin.
 _hk_branch_sweep() {
   local dry="$1" keep="$2" lvl def_ref remote_ok=0 remote_rights=0 heads="" b tip sha merged landed have_local have_track rsha out origin_go=()
   cfg_bool git.delete_merged_branches true || return 0
@@ -1322,11 +1322,12 @@ _hk_branch_sweep() {
   def_ref=$(jig_base_ref "$_HK_DEFAULT_BASE")
   [ -n "$def_ref" ] || return 0
   # origin is shared: housekeeping writes to it only for a person whose own
-  # agent may push (agent.git or autopilot.git at push or above, local-only
-  # keys), the same right `task ship` needs to put the branch there in the
-  # first place; a run that pushed under autopilot.git leaves a branch behind
-  # that agent.git alone would never sweep.
-  for lvl in "$(jig_agent_git 2>/dev/null || true)" "$(cfg autopilot.git "" 2>/dev/null || true)"; do
+  # agent may push (agent.git, autopilot.git or agent.git_staging at push or
+  # above, local-only keys), the same right `task ship` needs to put the
+  # branch there in the first place; a run that pushed under autopilot.git, or a task shipped
+  # at agent.git_staging, leaves a branch behind that agent.git alone would
+  # never sweep.
+  for lvl in "$(jig_agent_git 2>/dev/null || true)" "$(cfg autopilot.git "" 2>/dev/null || true)" "$(cfg agent.git_staging "" 2>/dev/null || true)"; do
     case "$lvl" in
       push | pr | merge) remote_rights=1 ;;
     esac
