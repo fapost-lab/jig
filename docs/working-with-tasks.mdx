@@ -288,6 +288,28 @@ findings, the review, the route — have passed.
 - **It is the team's rule.** Jig reads these keys from `.ai/config.yaml` only; set in your own
   `config.local.yaml` they are ignored, and `jig status` says so.
 
+When a hook is wrong for one task — it misreads the change, a tool it needs is missing here, its
+path was renamed — a person can let that one task through, with a reason:
+
+```bash
+jig task waive <id> consolidate .ai/hooks/docs-site-check.sh --reason "internal refactor, no public API changed"
+```
+
+- **One hook, one gate, one task.** The same script at another gate, and every other script of the
+  gate, still stop the task. The path must be one the gate names in `.ai/config.yaml`.
+- **The hook still runs.** Its refusal is shown as a warning with your reason and what it printed,
+  so you see whether it still objects. A path that is not there can be waived the same way.
+- **A hook that changed files still stops the task**: a waiver sets aside the script's verdict, not
+  the check that nothing reaches a commit unreviewed.
+- **It is never quiet.** `jig status` names the waiver under the task and lists the task with what
+  needs you; the status page marks it; `jig task ship` adds a `Hook waivers:` block to the commit
+  and to the pull request, so the reviewer reads it with the change.
+- **Take it back** with `jig task waive <id> <gate> <path> --withdraw`; running it again with a new
+  reason replaces the old one.
+- **Autopilot never waives.** `jig task waive` refuses while the task's autopilot run is on. A
+  refusal the agent cannot fix by changing the work is one of its stops: it asks you for a waiver,
+  or, unattended, stops and opens a draft that names the hook. Waive it, then resume the run.
+
 A hook guards the way a task is finished with Jig, not the repository: CI does not run it, and it
 reads the script from the task's own tree, so a change to the script is part of what review reads.
 A script that never ends holds the task: keep hooks quick, and away from the network and from

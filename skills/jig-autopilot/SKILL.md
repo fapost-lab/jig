@@ -71,6 +71,9 @@ entered. End the session there — say the task is paused at their request and h
   refuses, the refusal is the process working: go back to the stage it names. A refusal that
   says `the route of <id> is missing:` names a stage of the route that left no record — the
   gate, a review receipt, verify's `status ready` — and the command that records it.
+  A refusal by the project's `hooks.<gate>` is a gate too: when it names something the task's
+  work left undone, doing it is a repair. Never run `jig task waive`: a waiver is a person's, and
+  the script refuses it while the run is on.
 
 ## 3. Stop only here
 
@@ -86,6 +89,7 @@ In an unattended run there are no stops: §5. Otherwise, on a stop, record it, t
 | `repair` exited 3 | How to proceed: another approach, dismissing the finding (a P0/P1 only with them), dropping the task, or taking it over (§5, "A person takes the task over") |
 | Re-classification to T3 or T4 | The gate for the new design. Up to T2, continue and say so in the report |
 | A decision nobody made | The decision: a product choice not settled in `task.md`, the spec or knowledge. Never guess one |
+| A gate hook refused and the task's work cannot satisfy it | A waiver with their reason (`jig task waive <id> <gate> <path> --reason <text>`), or a fix to the hook |
 | A destructive operation | Permission, or another way |
 
 A reason says **what you need from the human**, and nothing about the state of the task. It is
@@ -145,6 +149,7 @@ request or its body, write it in the commit message and the hand-back instead.
 | The gate of a T3/T4 task, or a re-classification into one | Write the design as usual, then `jig task gate <id> approved --by agent`, `jig task autopilot <id> approve --reason "<what was approved>"`, and in `task.md` (`jig task artifact append <id> task --from -`): "Human gate — approved by the agent (unattended)". The approve reason, in English, says what was approved and names the ADR or knowledge holding the detail; it is the design's only trace in the pull request, which never carries `design.md` |
 | A decision nobody made | The most cautious option that is easiest to undo. `jig task autopilot <id> decide --reason "<what you chose, and why>"` |
 | A destructive operation | Never. Find another way or leave that part out, and say so with `decide --reason` |
+| A gate hook refused and the task's work cannot satisfy it | Never waive. `stop --reason` naming the hook, then `jig task ship <id> --message-file <file> --draft` (a draft runs no hook), its body starting `Not finished: hooks.<gate> refused: <why>`. The run stays `stopped`; a person waives it and resumes with `--by human` |
 | `repair` exited 3 | The run ends unfinished: stage what there is and run `jig task ship <id> --message-file <file> --draft`. The body starts with `Not finished: <why>`, in English like the rest of it. A draft is never merged — under `git.staging_land: external` it is committed and not pushed, since CI lands whatever is pushed; the run stays `stopped`, and the status page shows it waiting. `resume` is refused after the repair limit, including with `--by human`; a person who takes the task on is the one other ending (below) |
 | The class turns out lower | Lower it with `jig task set <id> class <Tn> --reason "<why>"`, except out of T3/T4 below T3: the script refuses that unattended, so keep the route. `end` comes after the knowledge decision, never to start a fresh run |
 

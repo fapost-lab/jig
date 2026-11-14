@@ -402,7 +402,7 @@ test_task_new_json_answers_with_the_filed_task() {
   assert_eq "" "$ERR"
   _tl_cut_actions
   # The filed task is the object `task list --json` lists for it.
-  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"task\":{\"id\":\"T-1\",\"class\":\"T1\",\"status\":\"active\",\"issue\":null,\"goal\":\"File \\\"it\\\" from the page\",\"knowledge_consolidated\":false,\"paused\":false,\"pause_request\":null,\"created_at\":\"$today\",\"updated_at\":\"$today\",\"archived_at\":null,\"archived_reason\":null,\"archived_from\":null,\"absorbed_into\":null,\"absorbs\":[],\"absorbs_partly\":[],\"partly_in\":[],\"branch\":null,\"base_branch\":\"main\",\"worktree\":null,\"gate\":null,\"autopilot\":null,\"pull_request\":null,\"housekeeping_flags\":[]}}}" "$OUT"
+  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"task\":{\"id\":\"T-1\",\"class\":\"T1\",\"status\":\"active\",\"issue\":null,\"goal\":\"File \\\"it\\\" from the page\",\"knowledge_consolidated\":false,\"paused\":false,\"pause_request\":null,\"created_at\":\"$today\",\"updated_at\":\"$today\",\"archived_at\":null,\"archived_reason\":null,\"archived_from\":null,\"absorbed_into\":null,\"absorbs\":[],\"absorbs_partly\":[],\"partly_in\":[],\"branch\":null,\"base_branch\":\"main\",\"worktree\":null,\"gate\":null,\"autopilot\":null,\"pull_request\":null,\"housekeeping_flags\":[],\"waivers\":[]}}}" "$OUT"
   local actions=$ACTIONS
   _tl_json
   _tl_cut_actions
@@ -11750,7 +11750,7 @@ test_task_list_json_pins_a_task_with_every_fact() {
   assert_eq 0 "$RC" "$ERR"
   _tl_cut_actions
   assert_eq '[{"id":"start","command":"jig task start SRD-9-full","offered":true,"reason":null},{"id":"pause","command":"jig task pause SRD-9-full","offered":false,"reason":"task pause: already paused: SRD-9-full"},{"id":"resume","command":"jig task resume SRD-9-full","offered":true,"reason":null},{"id":"request-pause","command":"jig queue request task:SRD-9-full pause","offered":false,"reason":"queue request: task SRD-9-full is already paused"},{"id":"cancel-pause-request","command":"jig queue cancel task:SRD-9-full pause","offered":false,"reason":"queue cancel: no pause of task:SRD-9-full is requested"},{"id":"approve-gate","command":"jig task gate SRD-9-full approved","offered":false,"reason":"task gate: SRD-9-full is stopped; if a human answered, run: jig task autopilot SRD-9-full resume --answer <text> --by human; then approve with --by agent; or, if a person takes the task on: jig task autopilot SRD-9-full handover --by human --answer <text>"},{"id":"answer-stop","command":"jig task autopilot SRD-9-full resume --answer <text> --by human","offered":true,"reason":null},{"id":"handover","command":"jig task autopilot SRD-9-full handover --by human --answer <text>","offered":true,"reason":null},{"id":"set-class","command":"jig task set SRD-9-full class <Tn>","offered":true,"reason":null},{"id":"ship","command":"jig task ship SRD-9-full --message-file <file>","offered":false,"reason":"task ship: agent.git is none in this clone; the human commits"},{"id":"land","command":"jig task land SRD-9-full","offered":false,"reason":"task land: SRD-9-full is not on the staging flow; a task in this project lands with jig task ship"},{"id":"close","command":"jig task set SRD-9-full status consolidated","offered":false,"reason":"task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set SRD-9-full knowledge_consolidated true"},{"id":"abandon","command":"jig task abandon SRD-9-full","offered":true,"reason":null},{"id":"archive","command":"jig task archive SRD-9-full","offered":true,"reason":null},{"id":"unarchive","command":"jig task unarchive SRD-9-full","offered":false,"reason":"task unarchive: task SRD-9-full is not archived"},{"id":"reopen","command":"jig task set SRD-9-full status active","offered":false,"reason":"task SRD-9-full is active, not abandoned"}]' "$ACTIONS"
-  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"pause_request\":null,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"archived_at\":null,\"archived_reason\":null,\"archived_from\":null,\"absorbed_into\":null,\"absorbs\":[],\"absorbs_partly\":[],\"partly_in\":[],\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\",\"handover_at\":null},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\",\"state\":\"open\",\"ci\":\"red\",\"fetched_at\":\"2026-10-02T12:00:00Z\"},\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"archived\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
+  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"pause_request\":null,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"archived_at\":null,\"archived_reason\":null,\"archived_from\":null,\"absorbed_into\":null,\"absorbs\":[],\"absorbs_partly\":[],\"partly_in\":[],\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\",\"handover_at\":null},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\",\"state\":\"open\",\"ci\":\"red\",\"fetched_at\":\"2026-10-02T12:00:00Z\"},\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"],\"waivers\":[]}],\"hidden\":0,\"archived\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
 }
 
 test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
@@ -11760,7 +11760,7 @@ test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
   assert_eq 0 "$RC" "$ERR"
   _tl_cut_actions
   assert_eq 16 "$(printf '%s\n' "$ACTIONS" | grep -o '{"id":' | wc -l | tr -d ' ')"
-  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"tasks":[{"id":"bare","class":null,"status":"active","issue":null,"goal":null,"knowledge_consolidated":false,"paused":false,"pause_request":null,"created_at":"2026-10-01","updated_at":"2026-10-01","archived_at":null,"archived_reason":null,"archived_from":null,"absorbed_into":null,"absorbs":[],"absorbs_partly":[],"partly_in":[],"branch":null,"base_branch":"main","worktree":null,"gate":null,"autopilot":null,"pull_request":null,"housekeeping_flags":[]}],"hidden":0,"archived":0,"housekeeping":null}}' "$OUT"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"tasks":[{"id":"bare","class":null,"status":"active","issue":null,"goal":null,"knowledge_consolidated":false,"paused":false,"pause_request":null,"created_at":"2026-10-01","updated_at":"2026-10-01","archived_at":null,"archived_reason":null,"archived_from":null,"absorbed_into":null,"absorbs":[],"absorbs_partly":[],"partly_in":[],"branch":null,"base_branch":"main","worktree":null,"gate":null,"autopilot":null,"pull_request":null,"housekeeping_flags":[],"waivers":[]}],"hidden":0,"archived":0,"housekeeping":null}}' "$OUT"
 }
 
 # _tl_staging_of <id> — the `staging` value OUT gives the task <id>: on,
@@ -12183,9 +12183,9 @@ test_task_list_json_reports_the_housekeeping_flags_that_still_stand() {
   assert_eq 0 "$RC"
   _tl_cut_actions
   assert_contains "$OUT" '"id":"closed-since",'
-  assert_contains "$OUT" '"pull_request":null,"housekeeping_flags":[]},{"id":"open-still"'
+  assert_contains "$OUT" '"pull_request":null,"housekeeping_flags":[],"waivers":[]},{"id":"open-still"'
   # Only the last run counts: the older abandoned? is not repeated.
-  assert_contains "$OUT" '"housekeeping_flags":["needs-consolidation"]}]'
+  assert_contains "$OUT" '"housekeeping_flags":["needs-consolidation"],"waivers":[]}]'
   assert_contains "$OUT" '"housekeeping":{"ran_at":"2026-09-25T12:00:00Z","forge":"failed"}'
 }
 
@@ -12269,7 +12269,7 @@ test_task_list_json_joins_the_pull_request_to_the_forge_cache() {
   assert_contains "$OUT" '"pull_request":{"url":"https://github.com/example/example/pull/3","state":null,"ci":null,"fetched_at":null}'
   # No pull request opened: the cache does not invent one.
   assert_contains "$OUT" '"id":"d-no-pr",'
-  assert_contains "$OUT" '"pull_request":null,"housekeeping_flags":[]}]'
+  assert_contains "$OUT" '"pull_request":null,"housekeeping_flags":[],"waivers":[]}]'
 }
 
 # A worktree borrows the owner's task directory (ADR-0029), and so reads the
@@ -14799,4 +14799,275 @@ test_task_gate_hook_ready_that_leaves_a_new_file_refuses() {
   assert_eq 1 "$RC"
   assert_contains "$OUT" "hooks.ready changed files git can see"
   assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: ready"
+}
+
+# --- hook waivers (adr-20261114-a-person-waives-a-gate-hooks-refusal-for-one-task)
+
+# waive_setup — a task T-1 at a class, with `hooks.ready` naming a refusing
+# hook and a passing one.
+waive_setup() {
+  task_setup
+  jig task new T-1 >/dev/null
+  task_route_class T-1
+  gate_hook .ai/hooks/check.sh 3 "docs not updated"
+  gate_hook .ai/hooks/other.sh 1 "other refuses"
+  printf 'hooks.ready: [.ai/hooks/check.sh, .ai/hooks/other.sh]\n' >> .ai/config.yaml
+}
+
+test_task_hook_waiver_lets_its_own_pair_through() {
+  waive_setup
+  # One hook only: the config's first `hooks.ready` line is the one read.
+  awk '/^hooks\.ready:/ { print "hooks.ready: [.ai/hooks/check.sh]"; next } { print }' .ai/config.yaml > cfg.tmp
+  mv cfg.tmp .ai/config.yaml
+  run jig task waive T-1 ready .ai/hooks/check.sh --reason "docs land in the next task"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "waived: hooks.ready .ai/hooks/check.sh for T-1"
+
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "hook .ai/hooks/check.sh (hooks.ready) exited 3, waived for T-1: docs land in the next task"
+  assert_contains "$OUT" "ready says docs not updated"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: ready"
+  assert_eq "$(printf 'ready\t.ai/hooks/check.sh\t%s\tdocs land in the next task' "$(date +%Y-%m-%d)")" "$(cat .ai/workspace/tasks/T-1/waivers)"
+}
+
+test_task_hook_waiver_leaves_another_hook_of_the_gate_refusing() {
+  waive_setup
+  jig task waive T-1 ready .ai/hooks/check.sh --reason "known" >/dev/null
+
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "hook .ai/hooks/other.sh exited 1"
+  assert_not_contains "$OUT" "hook .ai/hooks/check.sh exited 3
+"
+  assert_contains "$OUT" "waived for T-1: known"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: ready"
+}
+
+test_task_hook_waiver_at_one_gate_does_not_cover_another() {
+  task_setup
+  jig task new T-1 >/dev/null
+  task_route_done T-1
+  gate_hook .ai/hooks/check.sh 1 "no docs line"
+  printf 'hooks.ready: [.ai/hooks/check.sh]\nhooks.consolidate: [.ai/hooks/check.sh]\n' >> .ai/config.yaml
+  jig task waive T-1 ready .ai/hooks/check.sh --reason "only at ready" >/dev/null
+
+  run jig task set T-1 knowledge_consolidated true
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "hooks.consolidate refused T-1"
+  assert_file_contains .ai/workspace/tasks/T-1/state "knowledge_consolidated: false"
+}
+
+test_task_hook_waiver_needs_a_reason_on_one_line() {
+  waive_setup
+  run jig task waive T-1 ready .ai/hooks/check.sh
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason is required"
+  run jig task waive T-1 ready .ai/hooks/check.sh --reason ""
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason must not be empty"
+  run jig task waive T-1 ready .ai/hooks/check.sh --reason "$(printf 'two\nlines')"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "single line with no tab"
+  run jig task waive T-1 ready .ai/hooks/check.sh --reason "$(printf 'a\tb')"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "single line with no tab"
+  run jig task waive T-1 ready .ai/hooks/check.sh --reason x --withdraw
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "exclude each other"
+  assert_no_file .ai/workspace/tasks/T-1/waivers
+}
+
+test_task_hook_waiver_refuses_an_unknown_gate_and_an_unnamed_path() {
+  waive_setup
+  run jig task waive T-1 deploy .ai/hooks/check.sh --reason x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid gate: deploy (expected ready|consolidate|ship)"
+  run jig task waive T-1 ready .ai/hooks/chek.sh --reason x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" ".ai/hooks/chek.sh is not named by hooks.ready"
+  assert_contains "$OUT" ".ai/hooks/check.sh"
+  run jig task waive T-1 ship .ai/hooks/check.sh --reason x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is not named by hooks.ship"
+  run jig task waive nope ready .ai/hooks/check.sh --reason x
+  assert_eq 1 "$RC"
+  assert_no_file .ai/workspace/tasks/T-1/waivers
+}
+
+test_task_hook_waiver_again_replaces_the_reason() {
+  waive_setup
+  jig task waive T-1 ready .ai/hooks/check.sh --reason "first" >/dev/null
+  jig task waive T-1 ready .ai/hooks/other.sh --reason "second hook" >/dev/null
+  jig task waive T-1 ready .ai/hooks/check.sh --reason "better reason" >/dev/null
+
+  assert_eq 2 "$(wc -l < .ai/workspace/tasks/T-1/waivers | tr -d ' ')"
+  assert_file_contains .ai/workspace/tasks/T-1/waivers "better reason"
+  assert_file_contains .ai/workspace/tasks/T-1/waivers "second hook"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/waivers)" "first"
+}
+
+test_task_hook_waiver_a_backslash_in_the_reason_stays_a_backslash() {
+  waive_setup
+  jig task waive T-1 ready .ai/hooks/check.sh --reason 'a\tb' >/dev/null
+  assert_eq 1 "$(wc -l < .ai/workspace/tasks/T-1/waivers | tr -d ' ')"
+  assert_eq 'a\tb' "$(cut -f4 .ai/workspace/tasks/T-1/waivers)"
+}
+
+test_task_hook_waiver_withdrawn_makes_the_gate_refuse_again() {
+  waive_setup
+  printf 'hooks.ready: [.ai/hooks/check.sh]\n' >> .ai/config.yaml
+  jig task waive T-1 ready .ai/hooks/check.sh --reason "known" >/dev/null
+  run jig task waive T-1 ready .ai/hooks/check.sh --withdraw
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "withdrawn: hooks.ready .ai/hooks/check.sh for T-1"
+  assert_eq "" "$(cat .ai/workspace/tasks/T-1/waivers)"
+
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "hook .ai/hooks/check.sh exited 3"
+}
+
+test_task_hook_waiver_withdrawing_a_missing_one_refuses() {
+  waive_setup
+  run jig task waive T-1 ready .ai/hooks/check.sh --withdraw
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "has no waiver of .ai/hooks/check.sh at hooks.ready"
+}
+
+test_task_hook_waiver_is_refused_while_autopilot_is_on_and_allowed_once_stopped() {
+  waive_setup
+  jig task autopilot T-1 start >/dev/null
+  run jig task waive T-1 ready .ai/hooks/check.sh --reason "known"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "T-1 has an autopilot run on; a hook refusal is a stop of the run: stop it (jig task autopilot T-1 stop --reason <text>) and a person waives it"
+  assert_no_file .ai/workspace/tasks/T-1/waivers
+
+  jig task autopilot T-1 stop --reason "hook refused" >/dev/null
+  run jig task waive T-1 ready .ai/hooks/check.sh --reason "known"
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/waivers "known"
+}
+
+test_task_hook_waiver_lets_a_missing_hook_path_pass_with_a_warning() {
+  task_setup
+  jig task new T-1 >/dev/null
+  task_route_class T-1
+  printf 'hooks.ready: [.ai/hooks/gone.sh]\n' >> .ai/config.yaml
+  jig task waive T-1 ready .ai/hooks/gone.sh --reason "path fixed in main" >/dev/null
+
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "hook .ai/hooks/gone.sh does not exist in"
+  assert_contains "$OUT" "waived for T-1: path fixed in main"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: ready"
+}
+
+test_task_hook_waiver_does_not_cover_a_hook_that_writes_files() {
+  task_setup
+  jig task new T-1 >/dev/null
+  task_route_class T-1
+  mkdir -p .ai/hooks
+  printf '#!/usr/bin/env bash\ntouch hook-was-here.txt\nexit 1\n' > .ai/hooks/w.sh
+  chmod +x .ai/hooks/w.sh
+  printf 'hooks.ready: [.ai/hooks/w.sh]\n' >> .ai/config.yaml
+  jig task waive T-1 ready .ai/hooks/w.sh --reason "known" >/dev/null
+
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "hooks.ready changed files git can see"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: ready"
+}
+
+test_task_hook_waiver_is_named_in_an_unwaived_refusal() {
+  waive_setup
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "a person can waive one for this task, with a reason: jig task waive T-1 ready <path> --reason <text>"
+}
+
+test_task_hook_waiver_is_listed_by_usage_and_help() {
+  task_setup
+  run_split jig task help
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "|gate|waive|route"
+  run_split jig task waive --help
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "usage: jig task waive <id> ready|consolidate|ship <path> --reason <text>"
+  assert_contains "$OUT" "--withdraw"
+  run jig task waive
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig task waive"
+}
+
+test_task_hook_waiver_reaches_the_commit_message() {
+  gate_hook_ship_setup 1
+  jig task waive T-1 ship .ai/hooks/ship.sh --reason "CI covers it" >/dev/null
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: hook waivers named: 1"
+  assert_contains "$OUT" "waived for T-1: CI covers it"
+  assert_contains "$(git log -1 --format=%B)" "$(printf 'Hook waivers:\n- hooks.ship .ai/hooks/ship.sh: CI covers it')"
+}
+
+test_task_hook_waiver_block_is_not_added_twice() {
+  gate_hook_ship_setup 1
+  jig task waive T-1 ship .ai/hooks/ship.sh --reason "CI covers it" >/dev/null
+  printf '\nHook waivers:\n- hooks.ship .ai/hooks/ship.sh: written by hand\n' >> msg.txt
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq 1 "$(git log -1 --format=%B | grep -c '^Hook waivers:')"
+}
+
+test_task_hook_waiver_reaches_the_pull_request_body() {
+  gate_hook_ship_setup 1
+  ship_cfg forge github
+  mship_stub_gh
+  ship_cfg_local agent.git pr
+  jig task waive T-1 ship .ai/hooks/ship.sh --reason "CI covers it" >/dev/null
+  printf 'Body from a file.\n' > body.txt
+
+  run jig task ship T-1 --message-file msg.txt --body-file body.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$(cat gh-create.body)" "Body from a file."
+  assert_contains "$(cat gh-create.body)" "$(printf 'Hook waivers:\n- hooks.ship .ai/hooks/ship.sh: CI covers it')"
+  assert_eq 1 "$(grep -c '^Hook waivers:' gh-create.body)"
+}
+
+test_task_hook_waiver_reaches_the_pull_request_body_from_the_message() {
+  gate_hook_ship_setup 1
+  ship_cfg forge github
+  mship_stub_gh
+  ship_cfg_local agent.git pr
+  jig task waive T-1 ship .ai/hooks/ship.sh --reason "CI covers it" >/dev/null
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$(cat gh-create.body)" "- hooks.ship .ai/hooks/ship.sh: CI covers it"
+}
+
+test_task_hook_waiver_is_named_on_a_draft_ship() {
+  gate_hook_ship_setup 0
+  jig task waive T-1 ship .ai/hooks/ship.sh --reason "kept for the draft" >/dev/null
+  ship_cfg forge github
+  mship_stub_gh
+  ship_cfg_local agent.git pr
+
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: hook waivers named: 1"
+  assert_contains "$(git log -1 --format=%B)" "- hooks.ship .ai/hooks/ship.sh: kept for the draft"
+}
+
+test_task_hook_waiver_is_in_the_list_json() {
+  waive_setup
+  jig task waive T-1 ready .ai/hooks/check.sh --reason 'say "hi"' >/dev/null
+  run jig task list --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "$(printf '"waivers":[{"gate":"ready","path":".ai/hooks/check.sh","date":"%s","reason":"say \\"hi\\""}]' "$(date +%Y-%m-%d)")"
+  jig task new T-2 >/dev/null
+  run jig task list --json
+  assert_contains "$OUT" '"waivers":[]'
 }

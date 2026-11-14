@@ -194,6 +194,14 @@ A project's own script named in `.ai/config.yaml` under `hooks.ready`, `hooks.co
 checks and never writes (adr-20261113-a-project-script-can-refuse-a-completion-gate). Not a Session
 Hook or Notify Hook, which a Runtime runs.
 
+## Hook Waiver
+
+A person's record, with a reason, that sets aside one Gate Hook's refusal at one gate for one task:
+`jig task waive <id> <gate> <path> --reason <text>`, kept in the task's `waivers` file. The waived
+hook still runs and its refusal becomes a warning; the check that it wrote nothing is never waived.
+Shown by `jig status` and in the commit and pull request; autopilot never waives
+(adr-20261114-a-person-waives-a-gate-hooks-refusal-for-one-task).
+
 ## Domain Pack
 
 The three documents a domain may keep under `.ai/knowledge/domains/<domain>/`:
