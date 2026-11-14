@@ -4127,6 +4127,26 @@ test_housekeeping_deletes_on_origin_when_autopilot_git_may_push() {
   rm -rf "$remote"
 }
 
+# agent.git_staging is a push right as well: a task shipped under it leaves its
+# branch on origin.
+test_housekeeping_deletes_on_origin_when_agent_git_staging_may_push() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local remote tip
+  remote=$(hk_squash_origin task/sq)
+  hk_cfg_local agent.git none
+  hk_cfg_local agent.git_staging push
+  tip=$(git rev-parse task/sq)
+  hk_stub_gh_rows "task/sq$(printf '\t')main$(printf '\t')MERGED$(printf '\t')$tip"
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "on origin"
+  if git -C "$remote" show-ref --verify --quiet refs/heads/task/sq; then fail "origin's branch stayed with agent.git_staging push"; fi
+  rm -rf "$remote"
+}
+
 test_housekeeping_leaves_origin_alone_when_neither_git_level_may_push() {
   hk_setup
   git add -A

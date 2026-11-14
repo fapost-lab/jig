@@ -457,6 +457,22 @@ test_prdo_merge_pr_refuses_a_stale_revision_before_merging() {
   pd_refused stale-revision
 }
 
+# A pull request into the base branch is agent.git's, whatever the staging
+# level says: a staging task is the only one that reads it.
+test_prdo_merge_pr_without_by_human_ignores_the_staging_level() {
+  pd_setup github
+  printf 'git.flow: staging\ngit.staging_branch: staging\n' >> .ai/config.yaml
+  git add .ai/config.yaml
+  git commit -q -m "fixture: the staging flow"
+  git branch -q staging main
+  git push -q origin main staging
+  pd_cfg_local agent.git pr
+  pd_cfg_local agent.git_staging merge
+  pd_split jig task merge-pr T-1 --json
+  pd_refused git-level
+  assert_contains "$ERR$OUT" "this needs agent.git: merge (git level pr (agent.git))"
+}
+
 test_prdo_merge_pr_without_by_human_needs_the_merge_level() {
   pd_setup github
   pd_split jig task merge-pr T-1 --json

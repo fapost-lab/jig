@@ -2395,13 +2395,23 @@ UPR
     _task_parked_lookup_v parked "$_ST_ID"
     if [ "$_ST_STATUS" = ready ] && [ "$_ST_KC" = true ] && [ -z "$_ST_PR_URL" ] && [ -z "$parked" ]; then
       queue=""
-      case "$level" in
+      # The task's own level: agent.git_staging for a task whose pull request
+      # goes into the staging branch (_task_ship_git_v), else the agent.git
+      # read once above.
+      local task_line task_level task_key
+      if _task_ship_git_v task_line "$_ST_ID"; then
+        task_level=${task_line%%$'\t'*}
+        task_key=${task_line#*$'\t'}
+      else
+        task_level=$level task_key=agent.git
+      fi
+      case "$task_level" in
         none) queue="Review the changes and commit them: the agent may not commit in this clone." ;;
         commit) queue="Push the task's branch: the agent may commit but not push in this clone." ;;
         push) queue="Open a pull request for the task's branch: the agent may push but not open one here." ;;
       esac
       [ -z "$queue" ] || git_steps="$git_steps$(_status_attn git-step task "$_ST_ID" "$_ST_ID" \
-        "Ready for your step in git" "agent.git: $level" "$queue")
+        "Ready for your step in git" "$task_key: $task_level" "$queue")
 "
     fi
   done <<LIVE
