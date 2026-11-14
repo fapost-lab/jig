@@ -365,8 +365,8 @@ line of its own:
 parked: booking-form (signal), booking-report (review, landing)
 ```
 
-`review` waits for a review of its pull request into the staging branch — `landing` when you land it
-yourself (`agent.git` below `merge`) — and `signal` waits on the staging branch for "prepare for
+`review` waits for a review of its pull request into the staging branch — `landing` when its review is
+approved (or `git.staging_review` is `none`) and you land it yourself (`agent.git` below `merge`) — and `signal` waits on the staging branch for "prepare for
 prod". `jig task list` marks it `parked=signal`. A parked task is not the current task, `jig queue
 next` does not offer it, and another task may start in the checkout it was landed from.
 `jig task resume <id>` takes it back for a fix: it becomes `active` and appears among the tasks

@@ -163,8 +163,11 @@ task booking-message class=T2 status=active staging=behind
 parked: booking-form (signal), booking-report (review, landing)
 ```
 
-- `review` — its pull request into staging still waits for a review (`landing` when you land it
-  yourself).
+- `review` — its pull request into staging still waits for a review. `landing` is added once the
+  pull request is approved (or `git.staging_review` is `none`) and you land it yourself: while it
+  waits for a reviewer, has changes requested, or nobody has looked, `jig status` says so and a board
+  built on `jig task list --json` offers no landing. Jig reads the review from what the last
+  `jig housekeeping` heard from the forge, so run it to refresh.
 - `signal` — it is on staging, waiting for someone to say "prepare for prod".
 - `staging=behind` — a task you took back for a fix: its branch has commits the staging branch does
   not have yet.

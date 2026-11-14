@@ -2138,11 +2138,14 @@ _status_attn() {
     "$5" "$us" "$6" "$us" "$7" "$us" "${8:-}" "$us" "${9:-}"
 }
 
-# _status_pr_item_v <id> <fallback-detail> <task-url> <move> — for an attention item about a
+# _status_pr_item_v <id> <fallback-detail> <task-url> <move> [<review>] — for an attention item about a
 # task's open pull request, from the forge cache housekeeping wrote (never the
 # forge): sets _STATUS_PR_DETAIL, the words for its state, and _STATUS_PR_EXTRA,
 # the item's data (tab-separated, `-` for none: branch, base, state,
-# fetched_at, url, ci, mergeable, move) read by `jig status --json`. <move> is
+# fetched_at, url, ci, mergeable, move, review, waiting_for) read by `jig status
+# --json`. <review> is "<review><TAB><waiting>" (as _task_parked_review_lookup_v
+# gives it) when the caller knows the pull request's review better than the
+# cache line found here does, e.g. the one a parked task waits on. <move> is
 # `land` or `merge`, the person's action on it: `land` when the caller says so,
 # or when the cache holds the pull request as going into the staging branch,
 # which is where a task of the staging flow's pull request goes. The cache and
@@ -2155,7 +2158,7 @@ _STATUS_PR_EXTRA=""
 _STATUS_PR_MOVE=""
 _STATUS_PR_CMD=""
 _status_pr_item_v() {
-  local id="$1" fallback="$2" task_url="$3" move="$4" branch base state at url ci mergeable t=$'\t' words flow
+  local id="$1" fallback="$2" task_url="$3" move="$4" branch base state at url ci mergeable t=$'\t' words flow review waiting
   [ -n "$_STATUS_PR_CACHE_READ" ] || {
     _STATUS_PR_CACHE=$(forgecache_read)
     _STATUS_PR_CACHE_READ=1
@@ -2169,7 +2172,15 @@ _status_pr_item_v() {
     task_state_var branch "$id" branch
     jig_task_base_v base "$id"
   fi
-  forgecache_entry "$_STATUS_PR_CACHE" "$branch" "$base"
+  # A task parked at the staging branch (<move> `land` from the caller) is
+  # judged by its pull request into staging, the one its review was read from
+  # (_task_parked_read), never by a promotion into its base.
+  _forgecache_clear
+  if [ "$move" = land ] && [ -n "$_STATUS_PR_STAGING" ] && [ -n "$branch" ]; then
+    forgecache_entry "$_STATUS_PR_CACHE" "$branch" "$_STATUS_PR_STAGING"
+    [ -z "$_FORGECACHE_STATE" ] || base=$_STATUS_PR_STAGING
+  fi
+  [ -n "$_FORGECACHE_STATE" ] || forgecache_entry "$_STATUS_PR_CACHE" "$branch" "$base"
   if [ -z "$_FORGECACHE_STATE" ] && [ -n "$_STATUS_PR_STAGING" ] && [ -n "$branch" ]; then
     forgecache_entry "$_STATUS_PR_CACHE" "$branch" "$_STATUS_PR_STAGING"
     if [ -n "$_FORGECACHE_STATE" ]; then
@@ -2180,6 +2191,13 @@ _status_pr_item_v() {
   [ "$move" != land ] || [ -z "$_STATUS_PR_STAGING" ] || base=$_STATUS_PR_STAGING
   state=$_FORGECACHE_STATE at=$_FORGECACHE_AT url=${_FORGECACHE_URL:-$task_url}
   ci=$_FORGECACHE_CI mergeable=$_FORGECACHE_MERGEABLE
+  review=$_FORGECACHE_REVIEW waiting=$_FORGECACHE_WAITING
+  if [ -n "${5:-}" ]; then
+    review=${5%%"$t"*}
+    waiting=${5#*"$t"}
+    [ "$review" != "-" ] || review=""
+    [ "$waiting" != "-" ] || waiting=""
+  fi
   words=$fallback
   if [ -n "$state" ] && [ -n "$at" ]; then
     case "$state:$mergeable:$ci" in
@@ -2194,7 +2212,19 @@ _status_pr_item_v() {
   fi
   _STATUS_PR_DETAIL=$words
   _STATUS_PR_MOVE=$move
-  _STATUS_PR_EXTRA="${branch:--}$t${base:--}$t${state:--}$t${at:--}$t${url:--}$t${ci:--}$t${mergeable:--}$t$move"
+  _STATUS_PR_EXTRA="${branch:--}$t${base:--}$t${state:--}$t${at:--}$t${url:--}$t${ci:--}$t${mergeable:--}$t$move$t${review:--}$t${waiting:--}"
+}
+
+# _status_pr_move_v <move> — set the move (the eighth field) of
+# _STATUS_PR_EXTRA, after _status_pr_item_v: the action row the item carries
+# beside pr-status.
+_status_pr_move_v() {
+  local t=$'\t' f1 f2 f3 f4 f5 f6 f7 f9 f10
+  IFS="$t" read -r f1 f2 f3 f4 f5 f6 f7 _ f9 f10 <<X
+$_STATUS_PR_EXTRA
+X
+  _STATUS_PR_MOVE=$1
+  _STATUS_PR_EXTRA="$f1$t$f2$t$f3$t$f4$t$f5$t$f6$t$f7$t$1$t$f9$t$f10"
 }
 
 # _status_pr_todo_v <var> <id> — the words that name the person's move on a waiting
@@ -2221,6 +2251,7 @@ _status_attention() {
   local stopped="" gates="" git_steps="" rec id stop_reason stop_at ago level queue url live hk_note pr_ids="" parked
   [ -n "$_STATUS_PARKED_READY" ] || _status_parked_read
   local nc wrong kept closed open open_closed settled phase phase_stops="" todo
+  local rvl rv rw rwl title t=$'\t'
   hk_note=""
   [ -z "$_STATUS_HK_AT" ] || hk_note="housekeeping at $_STATUS_HK_WHEN"
   level=$(jig_agent_git 2>/dev/null) || level=none
@@ -2434,6 +2465,36 @@ OPEN
           "A pull request is waiting for review and for you to land it" "$_STATUS_PR_DETAIL" \
           "$todo" "$url" "$_STATUS_PR_EXTRA"
         continue ;;
+      review$'\t'*)
+        # Parked for review and not landing yet: it waits for a review, or
+        # was sent back for changes. Approved and not landing (the person's
+        # agent.git is `merge`) is judged below as any open pull request.
+        _task_parked_review_lookup_v rvl "$id"
+        rv=${rvl%%"$t"*}
+        rw=${rvl#*"$t"}
+        [ "$rw" != "-" ] || rw=""
+        if [ "$rv" != approved ]; then
+          _status_pr_item_v "$id" "parked at the staging branch" "$url" land "$rvl"
+          if [ -n "$rw" ]; then
+            _jig_replace_all_v rwl "$rw" , ", "
+            rwl="waiting for review from $rwl"
+            _STATUS_PR_DETAIL="$rwl; $_STATUS_PR_DETAIL"
+          fi
+          case "$rv" in
+            changes)
+              # Its move is the fix, not a landing the command refuses:
+              # the item carries the resume row instead of land.
+              title="Changes were requested on a pull request"
+              todo="Take it back for a fix: jig task resume $id; see the review: jig task pr-status $id --json"
+              _status_pr_move_v resume ;;
+            *)
+              title="A pull request is waiting for review"
+              todo="Land it once it is approved: jig task land $id --by human; see where the review stands: jig task pr-status $id --json" ;;
+          esac
+          _status_attn pull-request-waiting task "$id" "$id" \
+            "$title" "$_STATUS_PR_DETAIL" "$todo" "$url" "$_STATUS_PR_EXTRA"
+          continue
+        fi ;;
     esac
     if [ "$live" = consolidated ] && [ -n "$url" ] && _status_in "$id" "$open" \
       && ! _status_in "$id" "$open_closed"; then
@@ -2650,7 +2711,7 @@ _status_attention_phase_stops() {
 # _status_json [--json] — the producer json_run runs for `jig status --json`.
 _status_json() {
   local arg attn rec kind stype sid tasks title detail todo url extra objs="" o t tl hk stale root vers
-  local xb xbase xst xat xto xk xl extra0 xt=$'\t' xurl xci xmg xa xo xc xr xmove xrows
+  local xb xbase xst xat xto xk xl extra0 xt=$'\t' xurl xci xmg xa xo xc xr xmove xrows xrv xwf xrj xparked xparkedrv
   for arg in "$@"; do
     [ "$arg" = --json ] || jig_fail usage "status --json: unknown argument: $arg (usage: jig status --json)"
   done
@@ -2725,10 +2786,11 @@ X
       # A task's open pull request: the forge cache's data and the task's own
       # action rows, the objects `jig task list --json` prints (schemas/json.md).
       pull-request-waiting | pull-request-was-open)
-        IFS="$xt" read -r xb xbase xst xat xurl xci xmg xmove <<X
+        IFS="$xt" read -r xb xbase xst xat xurl xci xmg xmove xrv xwf <<X
 $extra
 X
         [ "$xb" != - ] || xb=""
+        [ "$xrv" != - ] || xrv=""
         [ "$xbase" != - ] || xbase=""
         [ "$xst" != - ] || xst=""
         [ "$xat" != - ] || xat=""
@@ -2741,8 +2803,20 @@ X
         json_str_or_null "$xat"; o="$o,\"fetched_at\":$_JSON"
         json_str_or_null "$xurl"; o="$o,\"url\":$_JSON"
         json_str_or_null "$xci"; o="$o,\"ci\":$_JSON"
-        json_str_or_null "$xmg"; o="$o,\"mergeable\":$_JSON}"
-        _task_actions_v xrows "$sid" "$xst" "$xci" "$xmg"
+        json_str_or_null "$xmg"; o="$o,\"mergeable\":$_JSON"
+        _task_review_json_v xrj "$xrv" "$xwf"
+        o="$o,\"review\":$xrj}"
+        # The resume row asks whether the task is parked, which the records
+        # were drawn from in another shell: read it for this task alone, and
+        # leave what this shell holds as it was.
+        if [ "$xmove" = resume ]; then
+          xparked=$_TASK_PARKED xparkedrv=$_TASK_PARKED_REVIEW
+          _task_parked_read "$sid"
+          _task_actions_v xrows "$sid" "$xst" "$xci" "$xmg"
+          _TASK_PARKED=$xparked _TASK_PARKED_REVIEW=$xparkedrv
+        else
+          _task_actions_v xrows "$sid" "$xst" "$xci" "$xmg"
+        fi
         xl=""
         while IFS="$xt" read -r xa xo xc xr; do
           case "$xa" in "$xmove" | pr-status) ;; *) continue ;; esac

@@ -100,3 +100,5 @@ meant to limit the person.
   the same objects without raising `schema`.
 - "working here" records outlive sessions by hours because they expire by mtime
   (`checkout.busy_ttl`, 12 h), not by liveness; `shipping` does not use them.
+
+> **Amended 2026-11-14.** The Consequences line "The forge cache carries no review state" no longer holds: housekeeping keeps `<review>` and `<waiting_for>` for open pull requests (adr-20261113-reviewers-are-read-from-the-forge as amended), the pull-request attention items carry `pull_request.review`, and a task parked for review that is not approved yet gets its own item titled by that review. The actions table is fed what it was fed before; the review does not change which rows are offered.
