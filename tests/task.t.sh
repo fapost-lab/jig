@@ -12705,6 +12705,17 @@ test_task_close_names_a_promotion_that_is_not_merged() {
   assert_contains "$OUT" "$(_scl_close on true)"
 }
 
+# A promotion the owner linked and the cache has no line for is not merged as
+# far as the table knows: the close waits and names it as open.
+test_task_close_names_a_promotion_the_cache_does_not_know_as_open() {
+  _park_repo
+  _scl_ready on
+  printf 'pr_url: https://forge.test/pr/7\npromote_url: https://forge.test/pr/8\n' >> .ai/workspace/tasks/on/state
+  _park_cache task/on staging merged https://forge.test/pr/7
+  _tl_json
+  assert_contains "$OUT" "$(_scl_close on false "$(_scl_wait on "its promotion https://forge.test/pr/8 is open; close it once the promotion merged")")"
+}
+
 # The command asks the forge about the promotion; one it cannot reach is said
 # to be unknown, with why, and not taken for a refusal of the promotion.
 test_task_close_says_when_the_forge_cannot_tell_whether_the_promotion_merged() {
@@ -12803,6 +12814,20 @@ test_task_close_is_allowed_for_a_task_that_never_reached_staging() {
   assert_contains "$OUT" "$(_scl_close never true)"
   run jig task set never status consolidated
   assert_eq 0 "$RC" "$OUT"
+}
+
+# An epic's task is not the staging flow's business: its pull request goes into
+# the epic, and once that merged it closes, with no wait for the base.
+test_task_close_is_allowed_for_an_epics_task_whose_pull_request_merged() {
+  _park_repo
+  ship_cfg forge github
+  pr_check_stub_gh "" MERGED
+  git branch epic/x main
+  _scl_ready never
+  printf 'base_branch: epic/x\npr_url: https://github.com/example/example/pull/7\n' >> .ai/workspace/tasks/never/state
+  run jig task set never status consolidated
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/never/state "status: consolidated"
 }
 
 # `pull_request` reads the pull request `pr_url` names by its url, so on the
@@ -14491,6 +14516,15 @@ PROBE
   wc -l < "$log" | tr -d ' '
 }
 
+# _tl_execs <jig args> — like _tl_forks, but only the external programs the run
+# started: git above all. For a listing whose subshells grow with the tasks for a
+# reason of another action's (the `land` row of a task with a pull request), and
+# whose git processes must not.
+_tl_execs() {
+  _tl_forks "$@" >/dev/null || return 1
+  grep -c '^E ' "$JIG_TEST_TMP.forks" || true
+}
+
 # _tl_same_cost <few> <many> — fail unless 4 tasks with many fields started
 # as many processes as 4 with few. One either way is allowed: what a run does
 # once (a revision claimed, a record written) need not land in the same run.
@@ -14565,6 +14599,92 @@ test_task_list_json_on_the_staging_flow_starts_no_process_per_task() {
   run_split jig task list --json
   assert_contains "$OUT" '"id":"s-6"'
   assert_contains "$OUT" '"staging":"behind"'
+  _tl_same_cost $((staged_two - direct_two)) $((staged_six - direct_six))
+}
+
+# The close action in the table is judged per task, and what it reads of git is
+# one answer for the whole listing (_task_list_staging_read): four more ready
+# tasks, some whose staging pull request merged and some pushed and not landed,
+# start no more external programs (git) on the staging flow than on the direct
+# one. Subshells are left out: the `land` row of a task with a pull request
+# asks its own questions per task, and is not what this pins.
+test_task_list_json_close_on_the_staging_flow_starts_no_process_per_task() {
+  fixture_staging_repo
+  local i staged_two direct_two staged_six direct_six
+  _tl_close_flow() {
+    sed "s|^git.flow:.*|git.flow: $1|" .ai/config.yaml > c.tmp
+    mv c.tmp .ai/config.yaml
+  }
+  # _tl_close_task <n>: odd n has a staging pull request that merged and a
+  # branch the staging branch lacks; even n is pushed with no pull request.
+  _tl_close_task() {
+    git branch "task/c-$1" task/never
+    if [ $(($1 % 2)) -eq 1 ]; then
+      fixture_task "c-$1" "task/c-$1" ready "class:T2" "knowledge_consolidated:true" "pr_url:https://forge.test/pr/$1"
+      _park_cache "task/c-$1" staging merged "https://forge.test/pr/$1"
+    else
+      git push -q origin "task/c-$1"
+      fixture_task "c-$1" "task/c-$1" ready "class:T2" "knowledge_consolidated:true"
+    fi
+  }
+  rm -rf .ai/workspace/tasks/*
+  mkdir -p .ai/runtime
+  : > .ai/runtime/forge-cache
+  for i in 1 2; do
+    _tl_close_task "$i"
+  done
+  _tl_execs task list --all --json >/dev/null || fail "task list --json failed under the probe"
+  staged_two=$(_tl_execs task list --all --json) || fail "task list --json failed under the probe"
+  _tl_close_flow direct
+  direct_two=$(_tl_execs task list --all --json) || fail "task list --json failed under the probe"
+  for i in 3 4 5 6 7 8; do
+    _tl_close_task "$i"
+  done
+  direct_six=$(_tl_execs task list --all --json) || fail "task list --json failed under the probe"
+  _tl_close_flow staging
+  staged_six=$(_tl_execs task list --all --json) || fail "task list --json failed under the probe"
+  # Not vacuous: on the staging flow the table withholds both kinds of close.
+  _tl_json --all
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" "$(_scl_close c-1 false "$(_scl_wait c-1)")"
+  assert_contains "$OUT" "$(_scl_close c-8 false "task set: c-8 is pushed and not in main yet: once it lands on staging, prepare for prod, then close it once the promotion merged")"
+  _tl_same_cost $((staged_two - direct_two)) $((staged_six - direct_six))
+}
+
+# The same, counting subshells too, for the tasks no other row asks about per
+# task: ready, pushed and not landed, with no pull request. A `$(...)` brought
+# back into the close path shows here though no program runs in it.
+test_task_list_json_close_of_pushed_tasks_starts_no_subshell_per_task() {
+  fixture_staging_repo
+  local i staged_two direct_two staged_six direct_six
+  _tl_push_flow() {
+    sed "s|^git.flow:.*|git.flow: $1|" .ai/config.yaml > c.tmp
+    mv c.tmp .ai/config.yaml
+  }
+  _tl_push_task() {
+    git branch "task/p-$1" task/never
+    git push -q origin "task/p-$1"
+    fixture_task "p-$1" "task/p-$1" ready "class:T2" "knowledge_consolidated:true"
+  }
+  rm -rf .ai/workspace/tasks/*
+  mkdir -p .ai/runtime
+  : > .ai/runtime/forge-cache
+  for i in 1 2; do
+    _tl_push_task "$i"
+  done
+  _tl_forks task list --all --json >/dev/null || fail "task list --json failed under the probe"
+  staged_two=$(_tl_forks task list --all --json) || fail "task list --json failed under the probe"
+  _tl_push_flow direct
+  direct_two=$(_tl_forks task list --all --json) || fail "task list --json failed under the probe"
+  for i in 3 4 5 6; do
+    _tl_push_task "$i"
+  done
+  direct_six=$(_tl_forks task list --all --json) || fail "task list --json failed under the probe"
+  _tl_push_flow staging
+  staged_six=$(_tl_forks task list --all --json) || fail "task list --json failed under the probe"
+  _tl_json --all
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" "$(_scl_close p-6 false "task set: p-6 is pushed and not in main yet: once it lands on staging, prepare for prod, then close it once the promotion merged")"
   _tl_same_cost $((staged_two - direct_two)) $((staged_six - direct_six))
 }
 

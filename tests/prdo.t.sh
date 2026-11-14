@@ -323,6 +323,45 @@ test_prdo_merge_pr_leaves_the_task_open_when_knowledge_is_not_recorded() {
   assert_eq active "$(pd_state T-1 status)"
 }
 
+# A close the staging flow's wait for the base refuses is not a knowledge
+# problem: a pull request into some other branch merges, the task's work is in
+# neither the base nor merged into it, and the answer says `not-in-base`.
+test_prdo_merge_pr_says_not_in_base_when_the_close_waits_for_the_base() {
+  pd_setup github
+  printf 'git.flow: staging\ngit.staging_branch: staging\n' >> .ai/config.yaml
+  git checkout -q task/T-1
+  printf 'work\n' > work.txt
+  git add work.txt
+  git commit -q -m work
+  git checkout -q main
+  git push -q origin main:staging
+  git fetch -q origin
+  printf 'OPEN|false|release|abc|MERGEABLE|APPROVED\n' > gh-view
+  pd_split jig task merge-pr T-1 --by human --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"outcome":"merged","closed":false,"close_blocked":"not-in-base"'
+  assert_eq active "$(pd_state T-1 status)"
+}
+
+# A pull request into the task's own base puts its work there as it merges:
+# on the staging flow the close does not wait for the base this merge reached,
+# though this checkout has not fetched it yet.
+test_prdo_merge_pr_closes_a_staging_task_whose_pull_request_went_into_its_base() {
+  pd_setup github
+  printf 'git.flow: staging\ngit.staging_branch: staging\n' >> .ai/config.yaml
+  git checkout -q task/T-1
+  printf 'work\n' > work.txt
+  git add work.txt
+  git commit -q -m work
+  git checkout -q main
+  git push -q origin main:staging
+  git fetch -q origin
+  pd_split jig task merge-pr T-1 --by human --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"outcome":"merged","closed":true,"close_blocked":null'
+  assert_eq consolidated "$(pd_state T-1 status)"
+}
+
 test_prdo_merge_pr_closes_for_a_pull_request_already_merged() {
   pd_setup github
   printf 'MERGED|false|main|abc|UNKNOWN|UNKNOWN\n' > gh-view

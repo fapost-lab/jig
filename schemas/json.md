@@ -953,7 +953,7 @@ be `merge`.
 | `merge.pull_request` | string | the pull request |
 | `merge.outcome` | string | `merged`, or `already-merged` when the forge already had it merged |
 | `merge.closed` | boolean | the task is `consolidated` now |
-| `merge.close_blocked` | string or null | `knowledge-not-recorded`: the pull request is merged and the task waits for its knowledge decision (`jig task set <id> knowledge_consolidated true`); `null` otherwise |
+| `merge.close_blocked` | string or null | `knowledge-not-recorded`: the pull request is merged and the task waits for its knowledge decision (`jig task set <id> knowledge_consolidated true`); `not-in-base`: the pull request is merged but, on the staging flow, the task's work is not in the base yet, so the close waits for the promotion; `null` otherwise |
 
 Refusals: `usage`, `not-found`, `wrong-flow`, `no-pull-request`, `pull-request-closed`, `draft`,
 `conflict`, `mergeable-unknown`, `not-approved`, `ci-red`, `ci-pending`, `ci-none`, `notes-stale`,
