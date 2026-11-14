@@ -276,7 +276,7 @@ autopilot.git||choice|none,commit,push,pr,merge|The git level of an autopilot ru
 agent.git_staging||choice|none,commit,push,pr,merge|The git level for a task whose pull request goes into the staging branch; when unset, agent.git answers.
 agent.ci_timeout|30|number||Minutes a merge waits for the pull request's checks; 0 looks once.
 autopilot.unattended|false|boolean|true,false|Whether an autopilot run asks nothing and decides each stop itself.
-autopilot.parallel|2|number||How many tasks of a roadmap phase are built at once, 1 to 16.
+autopilot.parallel|2|number||How many tasks autopilot builds at once, 1 to 16; a run stopped for a person holds none.
 route.depth|full|choice|full,lean|How much of its route a task runs.
 release.merge|agent|choice|agent,human|Who merges a release in an unattended run.
 knowledge.require_frontmatter|true|boolean|true,false|Whether jig knowledge check fails on a document without frontmatter.
@@ -723,13 +723,16 @@ jig_unattended() {
   [ "$value" = true ]
 }
 
-# jig_autopilot_parallel — print autopilot.parallel, how many tasks of a
-# roadmap phase a coordinator may have agents building at once (default 2), and
-# exit 0; for anything but a whole number in 1..16, print the value read and
-# exit 1, like jig_agent_git. Only agents *building* a task count: one whose
-# work is consolidated and waiting for its turn to ship holds no slot, and the
+# jig_autopilot_parallel — print autopilot.parallel, how many tasks autopilot
+# may have agents building at once (default 2): a phase run's wave
+# (`jig spec plan`) and a run over a set of tasks (`jig queue next`'s `slots`).
+# Exit 0; for anything but a whole number in 1..16, print the value read and
+# exit 1, like jig_agent_git. Only agents *building* a task count
+# (jig_autopilot_building): one whose work is consolidated and waiting for its
+# turn to ship holds no slot, nor does a run stopped for a person, and the
 # short-lived agents that repair the merge queue are outside the limit
-# (adr-20260922-a-phase-run-is-coordinated).
+# (adr-20260922-a-phase-run-is-coordinated,
+# adr-20261114-a-waiting-run-holds-no-slot).
 jig_autopilot_parallel() {
   local value
   value=$(cfg autopilot.parallel 2)

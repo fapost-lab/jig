@@ -114,6 +114,11 @@ It resets the repair count: the human gave the run a new direction. The answer g
 report as given, so never resume without one; in the pull request it gets an English gloss
 (§4). Continue from the stage you stopped in.
 
+A stopped run holds no slot (§7). An answer that arrives while you work on something else, or in
+another session — `jig status` lists every run waiting, with its question — is recorded, not
+acted on: `jig task autopilot <id> answer --answer "<their words>"`. Whoever has a free slot resumes
+it with `jig task autopilot <id> resume`, which takes the recorded answer.
+
 ## 4. End
 
 Finish with `jig-consolidate`: it records the knowledge decision and ships the change as far
@@ -220,6 +225,13 @@ ask:
 ```
 .ai/scripts/jig queue next
 ```
+
+- **`slots:` says whether a slot is free.** A run that stopped for a person holds none: record the
+  stop, put its question to the person, and go on with the next task. Nothing waiting is ever a
+  reason to stop the set, however many wait.
+- **`resume first:` goes before `next:`.** An answered run resumes on the next free slot, before
+  any new task, in the order the line names; never by taking a slot from a run that is on. Resume it
+  with `jig task autopilot <id> resume` and continue from the stage it stopped in.
 
 - **It names a task of the set**, or one outside it with no higher priority than the set's next:
   start the set's next. When that is not the task it names, the plain start is refused: use

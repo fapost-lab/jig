@@ -952,8 +952,10 @@ EOF
 # the one awk that decides (_queue_next_decide): the queue's items and
 # dependencies as jig_queue_items prints them, then `tf` (a queued task's state
 # facts), `tk` (a queued task another session holds: jig_checkout_taken,
-# adr-20261030-a-task-another-session-works-on-is-not-advised) and `ds` (the
-# state of every dependency's target) lines.
+# adr-20261030-a-task-another-session-works-on-is-not-advised), `ds` (the
+# state of every dependency's target), `rs` (a stopped run a person already
+# answered, which waits for a free slot) and `sl` (the slot limit and how many
+# runs are building) lines (adr-20261114-a-waiting-run-holds-no-slot).
 _queue_next() {
   [ $# -eq 0 ] || jig_fail usage "queue next: unexpected argument: $1"
   jig_require_init
@@ -975,7 +977,7 @@ _queue_next_gather() {
   # shellcheck source=lib/hklog.sh
   . "$JIG_LIB/hklog.sh"
   local file items="" facts="" kind f2 f3 f4 f5 id tasks_dir notq=0 d st
-  local seen=" " merged open_ids nl=$'\n' queued=$'\n'
+  local seen=" " merged open_ids nl=$'\n' queued=$'\n' building=0 limit ans stopped ev at
   file=$(queue_file)
   if [ -f "$file" ]; then
     _jig_queue_readable "$file" \
@@ -1010,6 +1012,7 @@ EOF
   _QN_TABLE=$(printf '%s\n%s' "$items" "$facts")
   _QN_NOTQ=0
   [ "$1" = 1 ] || return 0
+  limit=$(jig_autopilot_parallel) || limit=1
   # An epic's dependencies are inherited by its tasks, so the epic itself is
   # asked about only through them; a task that is not queued is only counted.
   # Every workspace is asked, so none of them costs a process: the id comes off
@@ -1021,14 +1024,31 @@ EOF
     id=${d%/}
     id=${id##*/}
     jig_valid_id "$id" || continue
+    # Every workspace: a run an agent is building holds a slot, and a stopped
+    # run a person answered waits for one (queued or not).
+    if jig_autopilot_building "$id"; then building=$((building + 1)); fi
     jig_task_state_var st "$id" status
     [ "$st" = active ] || continue
+    jig_task_state_var ans "$id" autopilot_answered
+    if [ -n "$ans" ]; then
+      jig_task_state_var stopped "$id" autopilot
+      if [ "$stopped" = stopped ] && [ -z "$(jig_checkout_taken "$id")" ]; then
+        stopped="-"
+        if [ -f "${d}autopilot" ]; then
+          while IFS=$'\t' read -r at ev _; do
+            [ "$ev" != stop ] || stopped=$at
+          done < "${d}autopilot"
+        fi
+        _QN_TABLE="$_QN_TABLE${nl}rs"$'\t'"task:$id"$'\t'"$stopped"$'\t'"$ans"
+      fi
+    fi
     jig_task_state_var st "$id" paused
     [ "$st" != true ] || continue
     case "$queued" in *"${nl}task:$id$nl"*) continue ;; esac
     notq=$((notq + 1))
   done
   _QN_NOTQ=$notq
+  _QN_TABLE="$_QN_TABLE${nl}sl"$'\t'"$limit"$'\t'"$building"
 }
 
 # jig_queue_ahead_v <var> <id> — set <var> to `task:Y<TAB><priority or ->` of the
@@ -1081,11 +1101,12 @@ _queue_next_task_fact() {
 }
 
 # _queue_next_dep_state <on-ref> <merged ids> <open ids> — what a dependency's
-# target stands at: finished, open, broken or unknown.
+# target stands at: finished, waiting, open, broken or unknown.
 #
 # A task is finished when it is consolidated or housekeeping saw it merged;
 # broken when it was abandoned or archived or its workspace is gone (the dependency can
-# never be met — the person drops it); open when housekeeping saw its pull
+# never be met — the person drops it); waiting when its autopilot run is
+# stopped, answered or not (a person holds it up: `jig status`); open when housekeeping saw its pull
 # request open or closed unmerged; unknown otherwise, which is what a task
 # housekeeping never ran for answers. An epic is open or finished by its
 # spec's Epic: line; a spec this checkout does not have is read by the branch
@@ -1105,6 +1126,9 @@ _queue_next_dep_state() {
         abandoned | archived) printf 'broken'; return 0 ;;
       esac
       case "$merged" in *" $id "*) printf 'finished'; return 0 ;; esac
+      # A run stopped for a person is not moving; what is waited for is the
+      # person, not the pull request (adr-20261114-a-waiting-run-holds-no-slot).
+      [ "$(_jig_task_state_value "$id" autopilot)" != stopped ] || { printf 'waiting'; return 0; }
       case "$open_ids" in *" $id "*) printf 'open'; return 0 ;; esac
       printf 'unknown' ;;
     epic:*)
@@ -1136,6 +1160,8 @@ _queue_next_dep_state() {
 #   wait <holder> <on> <state> <reason>                                  (each unfinished dependency holding a candidate)
 #   taken <ref> <checkout> <since> <idle seconds> <command>              (each candidate another session holds)
 #   progress <ref> <priority>                                            (each started task, in queue order)
+#   resume <ref> <priority> <stopped at> <answered at>                   (each answered stopped run: priority, earlier stop, ref)
+#   slots <limit> <building> <free>
 # With Q_AHEAD set it prints instead one line per queued task that the advice
 # outranks: `ahead <ref> <advised ref> <advised priority>` (jig_queue_ahead_v).
 #
@@ -1181,6 +1207,18 @@ _queue_next_decide() {
     $1 == "tf" { st[$2] = $3; pz[$2] = $4; sd[$2] = $5; rq[$2] = $6 }
     $1 == "ds" { dst[$2] = $3 }
     $1 == "tk" { tk[$2] = substr($0, length($1) + length($2) + 3) }
+    $1 == "rs" { ansd[$2] = 1; nr++; rr[nr] = $2; rst[nr] = $3; ran[nr] = $4 }
+    $1 == "sl" { limit = $2 + 0; building = $3 + 0 }
+    # rbetter(a, b): answered run a resumes before b — priority (`-` and an
+    # unqueued run last), then the earlier stop (none last), then the ref.
+    function rpri(a) { return (rr[a] in idx) ? pnum(pri[idx[rr[a]]]) : 6 }
+    function rbetter(a, b,   x, y) {
+      x = rpri(a); y = rpri(b)
+      if (x != y) return x < y
+      x = (rst[a] == "-") ? "~" : rst[a]; y = (rst[b] == "-") ? "~" : rst[b]
+      if (x != y) return x < y
+      return rr[a] < rr[b]
+    }
     END {
       ahead = ENVIRON["Q_AHEAD"] != ""
       for (i = 1; i <= n; i++) {
@@ -1188,6 +1226,8 @@ _queue_next_decide() {
         if (r !~ /^task:/ || st[r] != "active") continue
         if (pz[r] == "true" || rq[r] == 1) { paused++; continue }
         if (r in tk) { taken++; tl[++nt] = "taken\t" r "\t" tk[r]; continue }
+        # An answered stopped run waits for a free slot: it is in `resume`, not in progress.
+        if (sd[r] == 1 && (r in ansd)) continue
         if (sd[r] == 1) { inprog++; pl[++np] = "progress\t" r "\t" pri[i]; continue }
         unfinished = 0
         note(i)
@@ -1212,6 +1252,17 @@ _queue_next_decide() {
       for (i = 1; i <= nw; i++) print wl[i]
       for (i = 1; i <= nt; i++) print tl[i]
       for (i = 1; i <= np; i++) print pl[i]
+      # Answered runs, best first: a selection pass over a handful of rows.
+      for (k = 1; k <= nr; k++) {
+        b = 0
+        for (i = 1; i <= nr; i++) if (!used[i] && (!b || rbetter(i, b))) b = i
+        used[b] = 1
+        p = (rr[b] in idx) ? pri[idx[rr[b]]] : "-"
+        printf "resume\t%s\t%s\t%s\t%s\n", rr[b], p, rst[b], ran[b]
+      }
+      free = limit - building
+      if (free < 0) free = 0
+      printf "slots\t%d\t%d\t%d\n", limit, building, free
     }
   '
 }
@@ -1219,7 +1270,7 @@ _queue_next_decide() {
 # _queue_next_json <result> <not queued> — the producer's data for `jig queue
 # next --json` (schemas/json.md, "jig queue next --json").
 _queue_next_json() {
-  local kind f2 f3 f4 f5 f6 f7 f8 next=null reason=null waiting="" taken="" progress=""
+  local kind f2 f3 f4 f5 f6 f7 f8 next=null reason=null waiting="" taken="" progress="" resume="" slots='{"limit":1,"building":0,"free":1}'
   while IFS=$'\t' read -r kind f2 f3 f4 f5 f6 f7 f8; do
     case "$kind" in
       next)
@@ -1250,11 +1301,19 @@ _queue_next_json() {
         json_quote "$f2"; progress="$progress{\"ref\":$_JSON"
         json_quote "${f2#task:}"; progress="$progress,\"id\":$_JSON"
         json_int_or_null "$f3"; progress="$progress,\"priority\":$_JSON}" ;;
+      resume)
+        resume="$resume${resume:+,}"
+        json_quote "$f2"; resume="$resume{\"ref\":$_JSON"
+        json_quote "${f2#task:}"; resume="$resume,\"id\":$_JSON"
+        json_int_or_null "$f3"; resume="$resume,\"priority\":$_JSON"
+        if [ "$f4" = "-" ]; then resume="$resume,\"stopped_at\":null"; else json_quote "$f4"; resume="$resume,\"stopped_at\":$_JSON"; fi
+        if [ "$f5" = "-" ]; then resume="$resume,\"answered_at\":null}"; else json_quote "$f5"; resume="$resume,\"answered_at\":$_JSON}"; fi ;;
+      slots) slots="{\"limit\":$f2,\"building\":$f3,\"free\":$f4}" ;;
     esac
   done <<EOF
 $1
 EOF
-  printf '{"next":%s,"reason":%s,"waiting":[%s],"taken":[%s],"in_progress":[%s],"not_queued":%s}\n' "$next" "$reason" "$waiting" "$taken" "$progress" "$2"
+  printf '{"next":%s,"reason":%s,"waiting":[%s],"taken":[%s],"in_progress":[%s],"not_queued":%s,"resume":[%s],"slots":%s}\n' "$next" "$reason" "$waiting" "$taken" "$progress" "$2" "$resume" "$slots"
 }
 
 # _queue_taken_words <checkout> <since> <idle seconds> — who holds a task and
@@ -1278,7 +1337,7 @@ _queue_taken_words() {
 # dependency is only the way things are while something is advised, so it is
 # printed when nothing is; a `broken` or `unknown` one is a thing to fix.
 _queue_next_text() {
-  local kind f2 f3 f4 f5 f6 f7 f8 advised="" progress="" pword
+  local kind f2 f3 f4 f5 f6 f7 f8 advised="" progress="" pword resume="" ago slots=""
   while IFS=$'\t' read -r kind f2 f3 f4 f5 f6 f7 f8; do
     case "$kind" in
       next)
@@ -1298,6 +1357,7 @@ _queue_next_text() {
       wait)
         case "$f4" in
           broken) printf '  %s waits for %s: broken — jig queue undepend %s --on %s\n' "$f2" "$f3" "$f2" "$f3" ;;
+          waiting) printf '  %s waits for %s: its autopilot run is stopped, waiting for an answer or a free slot — jig status\n' "$f2" "$f3" ;;
           unknown)
             case "$f3" in
               task:*) printf '  %s waits for %s: unknown — jig housekeeping\n' "$f2" "$f3" ;;
@@ -1309,12 +1369,24 @@ _queue_next_text() {
       progress)
         if [ "$f3" = "-" ]; then pword="no priority"; else pword="P$f3"; fi
         progress="$progress${progress:+, }$f2 ($pword)" ;;
+      resume)
+        if [ "$f3" = "-" ]; then pword="no priority"; else pword="P$f3"; fi
+        ago=$(jig_utc_ago "$f5")
+        case "$ago" in
+          '') ago="answered" ;;
+          "just now") ago="answered just now" ;;
+          *) ago="answered $ago ago" ;;
+        esac
+        resume="$resume${resume:+, }$f2 ($pword, $ago)" ;;
+      slots) slots="$f4 of $f2 free ($f3 building)" ;;
     esac
   done <<EOF
 $1
 EOF
   [ -z "$progress" ] || printf 'in progress: %s\n' "$progress"
+  [ -z "$resume" ] || printf 'resume first: %s\n' "$resume"
   if [ "$2" -gt 0 ]; then
     printf 'not queued: %s %s — jig queue set <id> --priority <p>\n' "$2" "$([ "$2" = 1 ] && printf task || printf tasks)"
   fi
+  [ -z "$slots" ] || printf 'slots: %s\n' "$slots"
 }

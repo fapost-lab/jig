@@ -353,7 +353,8 @@ $rel"
   _status_drift
   [ -z "$_STATUS_DRIFT" ] || jig_staging_drift_lines "$_STATUS_DRIFT_STAGING" "$_STATUS_DRIFT"
   _status_parked_read "$_STATUS_STAGING"
-  local staging_state sid sst parked parked_line=""
+  local staging_state sid sst parked parked_line="" waiting_rows="" wt=$'\t'
+  local wf_reason wf_at wf_phase wf_answered wf_mark
   while IFS= read -r rec; do
     [ -n "$rec" ] || continue
     _status_rec "$rec"
@@ -460,12 +461,36 @@ EOF
       autopilot_note=$(_task_autopilot_note "$_ST_ID")
       [ -z "$autopilot_note" ] || line="$line $autopilot_note"
     fi
+    # A run waiting for a person and not yet answered goes to the `waiting for
+    # you:` block below, with its question verbatim (the journal's last stop,
+    # facts field 5); an answered run waits for a slot, not for a person.
+    if [ "$_ST_AUTOPILOT" = stopped ]; then
+      # The facts are collected for the page only: read them here, for a
+      # stopped run alone.
+      [ -n "$_ST_APFACTS" ] || _task_autopilot_facts_v _ST_APFACTS "$_ST_ID"
+      IFS="$wt" read -r _ _ _ _ wf_reason wf_at wf_phase _ wf_answered <<EOF
+$_ST_APFACTS
+EOF
+      if [ -z "$wf_answered" ] || [ "$wf_answered" = "-" ]; then
+        [ -n "$wf_reason" ] && [ "$wf_reason" != "-" ] || wf_reason="no reason recorded"
+        wf_mark=""
+        if _task_autopilot_at_limit "$_ST_ID"; then wf_mark="repairs used up: its draft, or a handover"; fi
+        if [ -n "$wf_phase" ] && [ "$wf_phase" != "-" ]; then
+          wf_mark="phase $wf_phase${wf_mark:+; $wf_mark}"
+        fi
+        if [ "$(_task_autopilot_mode "$_ST_ID")" = unattended ] && ! _task_autopilot_at_limit "$_ST_ID"; then
+          wf_mark="unattended${wf_mark:+; $wf_mark}"
+        fi
+        waiting_rows="$waiting_rows${wf_at:--}$wt$_ST_ID$wt${wf_mark:+ ($wf_mark)}: $wf_reason"$'\n'
+      fi
+    fi
     printf '%s\n%s' "$line" "$qlines"
   done <<EOF
 $_STATUS_LIVE
 EOF
   [ "$found" = 1 ] || [ -n "$parked_line" ] || printf '%s\n' "no active tasks"
   [ -z "$parked_line" ] || printf 'parked: %s\n' "$parked_line"
+  [ -z "$waiting_rows" ] || _status_waiting_block "$waiting_rows"
   [ "$_STATUS_FINISHED" -gt 0 ] && printf '(%d finished; jig task list --all)\n' "$_STATUS_FINISHED"
   [ "$_STATUS_ARCHIVED" -gt 0 ] && printf 'archived: %d (jig task list --status archived)\n' "$_STATUS_ARCHIVED"
   # Which queued task to take next, when the clone keeps a queue.
@@ -499,6 +524,24 @@ EOF
   _status_session_hook
   _status_notify_hook
   _status_instructions
+}
+
+# _status_waiting_block <rows> — the `waiting for you:` block: one header and a
+# line per autopilot run stopped for a person, from `<stop time><TAB><id><TAB>
+# <marker and reason>` rows, oldest stop first. The command in the header is
+# the one that answers a run without resuming it; a run started unattended is
+# marked `unattended` and answered `--by human` (its recorded mode, not the
+# clone's setting now).
+_status_waiting_block() {
+  local n by="" word=run id rest at tab=$'\t'
+  n=$(printf '%s' "$1" | grep -c '^')
+  [ "$n" -eq 1 ] || word=runs
+  case "$1" in *"(unattended"*) by="; add --by human for a run marked unattended" ;; esac
+  printf 'waiting for you: %s autopilot %s (answer: jig task autopilot <id> answer --answer <text>%s)\n' "$n" "$word" "$by"
+  while IFS="$tab" read -r at id rest; do
+    [ -n "$id" ] || continue
+    printf '  %s%s\n' "$id" "$rest"
+  done < <(printf '%s' "$1" | LC_ALL=C sort -t "$tab" -k1,1 -k2,2)
 }
 
 # _status_flow — the `flow:` line, printed only off the default `direct` flow:
@@ -673,7 +716,7 @@ _status_need() {
 }
 
 # _status_task_needs <task line> — exit 0 when a `task ...` line asks for the
-# reader: paused, blocking findings, a stale review, a stopped run, a lowered
+# reader: paused, blocking findings, a stale review, a lowered
 # class (adr-20261004-a-route-stage-is-proven-by-its-record), a start ahead of
 # the queue. Only the fields
 # the line builder writes are looked at, never the text a person wrote — a
@@ -690,8 +733,8 @@ _status_task_needs() {
     last=${t##* }
     case "$last" in
       blocking=*[!0-9]* | blocking=) break ;;
-      blocking=* | review=stale | autopilot=stopped) return 0 ;;
-      autopilot=on) ;;
+      blocking=* | review=stale) return 0 ;;
+      autopilot=on | autopilot=answered | autopilot=stopped) ;;
       *) break ;;
     esac
     t=${t% *}
@@ -713,7 +756,7 @@ _status_need_detail() {
 # _status_terminal — read the plain report on stdin and print its terminal
 # form.
 _status_terminal() {
-  local l t v m version="" prev_need="" list="" tline="" finished="" ntasks=0 hk=""
+  local l t v m version="" prev_need="" list="" tline="" waitb="" finished="" ntasks=0 hk=""
   _STT_NEED_LEVEL=() _STT_NEED_TEXT=() _STT_NEED_DETAIL=() _STT_TASKS=() _STT_OTHERS=()
   _STT_INSTALL=() _STT_KNOW=() _STT_CFG=() _STT_REST=() _STT_HOOKS=() _STT_INSTR=()
   _STT_INSTR_OWN=()
@@ -726,6 +769,17 @@ _status_terminal() {
     # needs the reader.
     case "$l" in
       "  "*)
+        # A run of the `waiting for you:` block: its id (with a marker in
+        # parentheses, if any) is the label, its question the text.
+        if [ -n "$waitb" ]; then
+          t=${l#  }
+          v=${t%% *}
+          case "$v" in
+            *:) _status_need_detail "${t%%: *}" "${t#*: }" ;;
+            *) _status_need_detail "${t%%): *})" "${t#*): }" ;;
+          esac
+          continue
+        fi
         if [ -n "$list" ]; then
           _status_need_detail "$list" "${l#  }"
           continue
@@ -740,6 +794,7 @@ _status_terminal() {
     esac
     list=""
     tline=""
+    waitb=""
     # A hint is a detail of the line it follows; the newer-release hint is
     # an item of its own, since nothing above it asked for it.
     case "$l" in
@@ -850,6 +905,11 @@ _status_terminal() {
       "staging: "*) _status_need warn "$l" ;;
       # Waiting at the staging branch is a fact about the tasks, not an ask.
       "parked: "*) _STT_PARKED=${l#parked: } ;;
+      # Runs waiting for a person: one item, each run a detail under it.
+      "waiting for you: "*)
+        _status_need warn "$l"
+        waitb=1
+        ;;
       "working here: "*" (jig "*", "*" ago)")
         t=${l#working here: }
         v=${t%% (jig *}
@@ -2251,7 +2311,7 @@ _status_attention() {
   local stopped="" gates="" git_steps="" rec id stop_reason stop_at ago level queue url live hk_note pr_ids="" parked
   [ -n "$_STATUS_PARKED_READY" ] || _status_parked_read
   local nc wrong kept closed open open_closed settled phase phase_stops="" todo
-  local rvl rv rw rwl title t=$'\t'
+  local rvl rv rw rwl title t=$'\t' verbatim by
   hk_note=""
   [ -z "$_STATUS_HK_AT" ] || hk_note="housekeeping at $_STATUS_HK_WHEN"
   level=$(jig_agent_git 2>/dev/null) || level=none
@@ -2332,9 +2392,13 @@ UPR
 "
     fi
     # 1. A stopped autopilot run waits on an answer (its journal's last stop).
-    if [ "$_ST_AUTOPILOT" = stopped ]; then
+    # An answered run is not here: it waits for a free slot, not for a person.
+    if [ "$_ST_AUTOPILOT" = stopped ] && [ -z "$(printf '%s\n' "$_ST_APFACTS" | cut -f 9 | tr -d '-')" ]; then
       stop_reason=$(printf '%s\n' "$_ST_APFACTS" | cut -f 5)
       stop_at=$(printf '%s\n' "$_ST_APFACTS" | cut -f 6)
+      # The question as the journal has it, for the item's own data.
+      verbatim=$stop_reason
+      [ "$verbatim" != "-" ] || verbatim=""
       if [ -z "$stop_reason" ] || [ "$stop_reason" = "-" ]; then
         stop_reason="no reason recorded"
       fi
@@ -2366,12 +2430,14 @@ UPR
       # An unattended run at its repair limit is resumed by nothing: what is
       # left is its draft, or a person taking the task over
       # (adr-20261108-a-person-takes-over-a-stopped-run).
-      todo="Answer the agent in this task's session; it resumes the run."
+      by=""
+      [ "$(_task_autopilot_mode "$_ST_ID")" != unattended ] || by=" --by human"
+      todo="Answer from any session: jig task autopilot $_ST_ID answer --answer <text>$by; the run resumes when a session with a free slot runs jig task autopilot $_ST_ID resume (jig queue next lists it under resume first)."
       if _task_autopilot_at_limit "$_ST_ID"; then
         todo="Nothing resumes this run: it ships a draft. To finish the task yourself, tell the agent in this task's session; it hands the run over to you."
       fi
       stopped="$stopped$(_status_attn autopilot-stopped task "$_ST_ID" "$_ST_ID" \
-        "Autopilot stopped and is waiting for you" "$stop_reason" "$todo")
+        "Autopilot stopped and is waiting for you" "$stop_reason" "$todo" "" "${verbatim:--}$t${stop_at:--}")
 "
       continue
     fi
@@ -2689,22 +2755,24 @@ IDS
 # says the same thing rather than handing them a card each
 # (adr-20260922-a-phase-run-is-coordinated).
 _status_attention_phase_stops() {
-  local lines="$1" phases="" phase id reason detail n ids todo
+  local lines="$1" phases="" phase id reason detail n ids todo by
   [ -n "$lines" ] || return 0
   phases=$(printf '%s\n' "$lines" | cut -f 1 | grep -v '^$' | sort -u)
   while IFS= read -r phase; do
     [ -n "$phase" ] || continue
-    detail="" n=0 ids=""
+    detail="" n=0 ids="" by=""
     while IFS="$(printf '\t')" read -r _ id reason; do
       [ -n "$id" ] || continue
       n=$((n + 1))
+      # The answer form follows each run's recorded mode.
+      [ "$(_task_autopilot_mode "$id")" != unattended ] || by=" --by human" 
       detail="$detail${detail:+; }$id — $reason"
       ids="$ids${ids:+ }$id"
     done < <(printf '%s\n' "$lines" | awk -F '\t' -v p="$phase" '$1 == p')
     if [ "$n" -gt 1 ]; then
-      todo="Answer in the coordinator's session; it resumes the tasks."
+      todo="Answer each from any session: jig task autopilot <id> answer --answer <text>$by; the coordinator resumes them."
     else
-      todo="Answer in the coordinator's session; it resumes the task."
+      todo="Answer from any session: jig task autopilot <id> answer --answer <text>$by; the coordinator resumes it."
     fi
     _status_attn phase-stopped phase "$phase" "$ids" "A phase run is waiting for you" "$detail" "$todo"
   done < <(printf '%s\n' "$phases")
@@ -2782,6 +2850,16 @@ REC
     # An upgrade's pull request: which branch, into what, as of when, and the
     # version it brings (schemas/json.md).
     case "$kind" in
+      # A stopped run's question as the journal has it, and when it stopped.
+      autopilot-stopped)
+        IFS="$xt" read -r xb xat <<X
+$extra
+X
+        [ "$xb" != - ] || xb=""
+        [ "$xat" != - ] || xat=""
+        json_str_or_null "$xb"; o="$o,\"question\":$_JSON"
+        json_str_or_null "$xat"; o="$o,\"stopped_at\":$_JSON"
+        ;;
       upgrade-pull-request-*)
         IFS="$(printf '\t')" read -r xb xbase xst xat xto <<X
 $extra
@@ -3265,9 +3343,10 @@ _status_html_stage() {
   # A run a person took over: no stage is tracked from here on, and the
   # gate, when there is one, follows.
   if [ "$_ST_AUTOPILOT" = "done" ]; then
-    # The handover time is the facts line's last field: read without a
+    # The handover time is the facts line's eighth field: read without a
     # process, as every per-row reader here must (conventions/shell.md).
-    handover=${_ST_APFACTS##*$'\t'}
+    handover=${_ST_APFACTS#*$'\t'*$'\t'*$'\t'*$'\t'*$'\t'*$'\t'*$'\t'}
+    handover=${handover%%$'\t'*}
     case "$handover" in
       '' | -) ;;
       *) printf '<span class="badge">taken over by a person</span> ' ;;

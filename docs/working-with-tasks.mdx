@@ -513,7 +513,7 @@ It answers four questions, in this order:
 
    | Card | What to do |
    |---|---|
-   | Autopilot stopped and is waiting for you | Answer the agent in that task's conversation; the card shows its question |
+   | Autopilot stopped and is waiting for you | Answer from any session: `jig task autopilot <id> answer --answer <text>`; the card shows its question, and a session with a free slot resumes the run (`jig queue next` lists it under `resume first:`) |
    | A design is waiting for your decision | Read the design the agent showed you, then approve it or say what to change |
    | A design changed after you approved it | Read what changed and approve it again |
    | Ready for your step in git | Commit, push or open the pull request — whichever step the agent may not take in your project |

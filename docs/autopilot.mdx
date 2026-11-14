@@ -186,7 +186,11 @@ block. The agent never approves its own edit, so the new text waits for you in `
 block does not stop the run or the merge.
 
 `jig status` marks a task that is running with `autopilot=on`, one waiting for you with
-`autopilot=stopped`, and one a person took over with `autopilot=handed-over`.
+`autopilot=stopped`, one a person answered that waits for a free slot with `autopilot=answered`, and
+one a person took over with `autopilot=handed-over`. Every run waiting for an answer is also listed
+in a `waiting for you:` block of `jig status`, each with its question word for word, so you can
+answer them all in one go from any session: `jig task autopilot <id> answer --answer <text>`
+(`--by human` for an unattended run).
 
 ## Watching a run
 
@@ -435,6 +439,15 @@ asks [`jig queue next`](/manual-control#order-the-work) which task to take:
 - Once you have chosen, or the decision was made for you, a task the queue would not name is started
   with `jig task start <id> --out-of-order --reason "<why>"`: without it `jig task start` refuses,
   and the reason is shown by `jig status`.
+
+A run that stops to ask you something gives its place up: the next task starts while the question
+waits, and there is no limit to how many may wait. `jig queue next` counts the places
+(`slots: 1 of 2 free (1 building)`: runs that are on and not consolidated yet, across the clone).
+Answer from any session with `jig task autopilot <id> answer --answer <text>`; the answer is
+recorded, and the run resumes on the next free place, before any new task: `jig queue next` lists
+answered runs under `resume first:`, most urgent first, then the one that stopped first. A running
+task is never pushed out to make room. A task that depends on a waiting one in the queue waits too
+(`its autopilot run is stopped, waiting for an answer or a free slot`).
 
 A [whole phase](#running-a-whole-phase) asks the queue the same way before starting each of its
 tasks.

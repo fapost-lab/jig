@@ -2013,7 +2013,7 @@ test_status_page_shows_a_stopped_run_first_with_its_reason() {
   # after one existed.
   assert_contains "$needs" "<code>run-1</code> · stopped <age>: which &lt;db&gt; to use &amp; why"
   assert_not_contains "$needs" "which &lt;db&gt; to use &amp; why ("
-  assert_contains "$needs" "Answer the agent in this task&#39;s session; it resumes the run."
+  assert_contains "$needs" "Answer from any session: jig task autopilot run-1 answer --answer &lt;text&gt;; the run resumes when a session with a free slot runs jig task autopilot run-1 resume (jig queue next lists it under resume first)."
   # Shown once: a stopped run is a card, not also a row under "Running now".
   assert_not_contains "$(status_page_section "$page" tasks)" "<code>run-1</code>"
 }
@@ -2032,8 +2032,8 @@ test_status_page_sends_a_phase_runs_question_to_the_coordinator() {
   local needs
   needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
   assert_contains "$needs" 'A phase run is waiting for you <span class="badge warn">autopilot stopped</span>'
-  assert_contains "$needs" "Answer in the coordinator&#39;s session; it resumes the task."
-  assert_not_contains "$needs" "Answer the agent in this task&#39;s session"
+  assert_contains "$needs" "Answer from any session: jig task autopilot &lt;id&gt; answer --answer &lt;text&gt;; the coordinator resumes it."
+  assert_not_contains "$needs" "the run resumes when a session"
 }
 
 # Several stops of one phase are one card: in a phase run the person is asked
@@ -2056,7 +2056,7 @@ test_status_page_gathers_a_phases_stops_into_one_card() {
   # different moments and each reason is prose from that moment.
   assert_contains "$needs" "run-1 — stopped <age>: question from run-1"
   assert_contains "$needs" "run-2 — stopped <age>: question from run-2"
-  assert_contains "$needs" "Answer in the coordinator&#39;s session; it resumes the tasks."
+  assert_contains "$needs" "Answer each from any session: jig task autopilot &lt;id&gt; answer --answer &lt;text&gt;; the coordinator resumes them."
 }
 
 # The "Phase run" section: the waves and free slots are `spec plan`'s answer,
@@ -3306,11 +3306,15 @@ test_status_a_terminal_judges_a_task_by_its_own_words_only() {
       'task a class=T2 status=active out_of_order=task:b worktree=/x' \
       'task a class=T2 status=active worktree=/x uncommitted=1 blocking=2' \
       'task a class=T2 status=active review=stale autopilot=on' \
-      'task a class=T2 status=active autopilot=stopped'; do
+      'task a class=T2 status=active autopilot=stopped' \
+      'task a class=T2 status=active blocking=1 autopilot=answered' \
+      'task a class=T2 status=active autopilot=answered'; do
       if _status_task_needs "$l"; then printf 'need\n'; else printf 'fine\n'; fi
     done
   )
-  assert_eq "$(printf 'fine\nfine\nfine\nneed\nneed\nneed\nneed\nneed\nneed\nneed')" "$f"
+  # A stopped or answered run is no need of its own: the `waiting for you:`
+  # block carries it, and blocking findings left of the marker still count.
+  assert_eq "$(printf 'fine\nfine\nfine\nneed\nneed\nneed\nneed\nneed\nneed\nfine\nneed\nfine')" "$f"
 }
 
 test_status_a_terminal_keeps_a_pause_reason_whole() {
@@ -4822,4 +4826,177 @@ test_status_names_a_personal_pr_review_skill_that_shadows_the_projects() {
   assert_not_contains "$OUT" "pr-review skill"
 
   rm -rf "$stub_root" "$stub_bin" "$me"
+}
+
+# --- waiting for you: autopilot runs stopped for a person ----------------------
+
+# _status_stop_run <id> <question> [<stop time>] — a started task whose
+# autopilot run stopped with <question>; the journal's stop time is rewritten
+# to <stop time> when given, so the order of the block is not a matter of the
+# clock.
+_status_stop_run() {
+  jig task new "$1" --class T2 >/dev/null
+  jig task start "$1" >/dev/null
+  jig task autopilot "$1" start >/dev/null
+  jig task autopilot "$1" stop --reason "$2" >/dev/null
+  [ -z "${3:-}" ] || sed "s/^[^	]*	stop	/$3	stop	/" ".ai/workspace/tasks/$1/autopilot" > .ai/runtime/ap.tmp \
+    && mv .ai/runtime/ap.tmp ".ai/workspace/tasks/$1/autopilot"
+}
+
+test_status_waiting_block_lists_stopped_runs_with_their_question_oldest_first() {
+  fixture_jig_repo
+  mkdir -p .ai/runtime
+  _status_stop_run run-b "which <db> to use & why?" 2026-01-02T00:00:00Z
+  _status_stop_run run-a "say which base to land on" 2026-01-03T00:00:00Z
+  _status_stop_run run-c "no" 2026-01-01T00:00:00Z
+  run env JIG_TERMINAL=0 "$JIG_BIN" status
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "$(printf '%s\n' \
+    'waiting for you: 3 autopilot runs (answer: jig task autopilot <id> answer --answer <text>)' \
+    '  run-c: no' \
+    '  run-b: which <db> to use & why?' \
+    '  run-a: say which base to land on')"
+  # Each run is named in the block and on its own task line, nowhere else.
+  assert_contains "$OUT" "task run-a class=T2 status=active autopilot=stopped"
+}
+
+test_status_waiting_block_says_run_for_one_and_leaves_out_an_answered_run() {
+  fixture_jig_repo
+  mkdir -p .ai/runtime
+  _status_stop_run run-1 "first question"
+  _status_stop_run run-2 "second question"
+  jig task autopilot run-2 answer --answer "use sqlite" >/dev/null
+  run env JIG_TERMINAL=0 "$JIG_BIN" status
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "waiting for you: 1 autopilot run (answer: jig task autopilot <id> answer --answer <text>)"
+  assert_contains "$OUT" "  run-1: first question"
+  assert_not_contains "$OUT" "run-2: second question"
+  assert_contains "$OUT" "task run-2 class=T2 status=active autopilot=answered"
+}
+
+test_status_has_no_waiting_block_when_no_run_waits() {
+  fixture_jig_repo
+  mkdir -p .ai/runtime
+  _status_stop_run run-1 "a question"
+  jig task autopilot run-1 answer --answer "go" >/dev/null
+  jig task new other --class T1 >/dev/null
+  run env JIG_TERMINAL=0 "$JIG_BIN" status
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "waiting for you"
+}
+
+test_status_waiting_block_marks_a_phase_task_and_a_run_at_its_repair_limit() {
+  fixture_jig_repo
+  mkdir -p .ai/runtime
+  jig task new run-1 --class T2 >/dev/null
+  jig task start run-1 >/dev/null
+  jig task autopilot run-1 start --phase alpha/1 >/dev/null
+  jig task autopilot run-1 stop --reason "which index" >/dev/null
+  printf 'autopilot.unattended: true\n' >> .ai/config.local.yaml
+  jig task new run-2 --class T2 >/dev/null
+  jig task start run-2 >/dev/null
+  jig task autopilot run-2 start >/dev/null
+  jig task autopilot run-2 repair --reason r1 >/dev/null
+  jig task autopilot run-2 repair --reason r2 >/dev/null
+  jig task autopilot run-2 stop --reason "out of repairs" >/dev/null
+  jig task new run-3 --class T2 >/dev/null
+  jig task start run-3 >/dev/null
+  jig task autopilot run-3 start >/dev/null
+  jig task autopilot run-3 stop --reason "which colour" >/dev/null
+  run env JIG_TERMINAL=0 "$JIG_BIN" status
+  assert_eq 0 "$RC" "$OUT"
+  # Each run is answered in the form of its recorded mode: run-1 started
+  # attended, run-3 unattended; run-2 at its limit takes no answer at all.
+  assert_contains "$OUT" "waiting for you: 3 autopilot runs (answer: jig task autopilot <id> answer --answer <text>; add --by human for a run marked unattended)"
+  assert_contains "$OUT" "  run-1 (phase alpha/1): which index"
+  assert_contains "$OUT" "  run-2 (repairs used up: its draft, or a handover): out of repairs"
+  assert_contains "$OUT" "  run-3 (unattended): which colour"
+}
+
+test_status_waiting_block_header_has_no_by_human_when_no_run_is_unattended() {
+  fixture_jig_repo
+  mkdir -p .ai/runtime
+  jig task new run-1 --class T2 >/dev/null
+  jig task start run-1 >/dev/null
+  jig task autopilot run-1 start >/dev/null
+  jig task autopilot run-1 stop --reason "which index" >/dev/null
+  # The clone turns unattended after the run started: the run keeps its mode.
+  printf 'autopilot.unattended: true\n' >> .ai/config.local.yaml
+  run env JIG_TERMINAL=0 "$JIG_BIN" status
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "waiting for you: 1 autopilot run (answer: jig task autopilot <id> answer --answer <text>)"
+  assert_contains "$OUT" "  run-1: which index"
+}
+
+test_status_a_terminal_shows_the_waiting_runs_as_one_item_with_details() {
+  fixture_jig_repo
+  mkdir -p .ai/runtime
+  _status_stop_run run-1 "which db: sqlite or pg?" 2026-01-01T00:00:00Z
+  _status_stop_run run-2 "second" 2026-01-02T00:00:00Z
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "  warn  waiting for you: 2 autopilot runs (answer: jig task autopilot <id> answer --answer <text>)"
+  assert_contains "$OUT" "        run-1: which db: sqlite or pg?"
+  assert_contains "$OUT" "        run-2: second"
+  assert_not_contains "$OUT" "warn  task run-1"
+  assert_not_contains "$OUT" "Other"
+  # The tasks themselves are in the Tasks section, not named again as needs.
+  assert_contains "$OUT" "  T2  run-1               autopilot=stopped"
+}
+
+test_status_a_terminal_labels_a_marked_run_by_its_id_and_marker() {
+  fixture_jig_repo
+  mkdir -p .ai/runtime
+  jig task new run-1 --class T2 >/dev/null
+  jig task start run-1 >/dev/null
+  jig task autopilot run-1 start --phase alpha/1 >/dev/null
+  jig task autopilot run-1 stop --reason "which index: a or b" >/dev/null
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "run-1 (phase alpha/1): which index: a or b"
+}
+
+test_status_an_answered_run_with_blocking_findings_is_still_a_need() {
+  fixture_jig_repo
+  mkdir -p .ai/runtime
+  _status_stop_run run-1 "a question"
+  jig task autopilot run-1 answer --answer "go" >/dev/null
+  printf 'F1\tP1\topen\ta.sh:1\tsomething wrong\t2026-09-08\t\n' \
+    > .ai/workspace/tasks/run-1/findings
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "warn  task run-1 class=T2 status=active blocking="
+  assert_contains "$OUT" "autopilot=answered"
+}
+
+test_status_json_autopilot_stopped_carries_the_question_and_the_stop_time() {
+  fixture_jig_repo
+  mkdir -p .ai/runtime
+  _status_stop_run run-1 "which <db> to use & why?" 2026-01-01T00:00:00Z
+  run jig status --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"kind":"autopilot-stopped"'
+  assert_contains "$OUT" '"question":"which <db> to use & why?"'
+  assert_contains "$OUT" '"stopped_at":"2026-01-01T00:00:00Z"'
+  assert_contains "$OUT" 'Answer from any session: jig task autopilot run-1 answer --answer <text>; the run resumes when a session with a free slot runs jig task autopilot run-1 resume (jig queue next lists it under resume first).'
+}
+
+test_status_json_has_no_item_for_an_answered_run() {
+  fixture_jig_repo
+  mkdir -p .ai/runtime
+  _status_stop_run run-1 "a question"
+  jig task autopilot run-1 answer --answer "go" >/dev/null
+  run jig status --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "autopilot-stopped"
+  assert_not_contains "$OUT" "phase-stopped"
+}
+
+test_status_page_still_renders_a_stopped_run_with_its_item_data() {
+  fixture_jig_repo
+  mkdir -p .ai/runtime
+  _status_stop_run run-1 "a question"
+  run jig status --html
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$(cat .ai/runtime/status.html)" 'Autopilot stopped and is waiting for you'
 }

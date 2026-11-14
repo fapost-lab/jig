@@ -110,3 +110,10 @@ another can be started first. The next-task-advice spec settled the rules with t
 > badge, and the `started-out-of-order` kind of `--json`) while the task is live. A task that is not
 > queued still starts as before, and `autopilot.parallel` is not enforced by `task start`: that limit
 > belongs to the coordinator.
+
+> **Amendment (2026-11-14).** `jig queue next` also names the answered autopilot runs to resume before
+> anything new (`resume first:`, `--json` `resume`: by priority, then the earlier stop, held by no other
+> session; not in `in_progress`) and the free slots (`slots:`, `--json` `slots`: `autopilot.parallel`
+> against the runs `on` and not consolidated in the clone). A dependency on a task whose run is stopped
+> reads `waiting`. `next`, `reason` and the order `task start` reads are unchanged
+> (adr-20261114-a-waiting-run-holds-no-slot).

@@ -1124,7 +1124,9 @@ ROW
         fi
         autopilot=$(spec_task_state "$tdir" autopilot)
         [ -n "$autopilot" ] || autopilot=-
-        if [ "$autopilot" = on ] && [ "$(spec_task_state "$tdir" knowledge_consolidated)" != true ]; then
+        # The shared rule (adr-20261114-a-waiting-run-holds-no-slot); `tdir` is
+        # `.../tasks/<id>` and <tid> the same id.
+        if jig_autopilot_building "$tid"; then
           building=1
         fi
       else

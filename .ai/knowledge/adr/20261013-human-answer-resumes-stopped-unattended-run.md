@@ -41,3 +41,5 @@ A person can unblock an already stopped unattended task without editing protecte
 This narrows the unattended no-resume rule in ADR 20261004 and ADR 20260922; their repair-limit guarantee remains in force.
 
 > **Amendment (2026-11-08).** A person who takes a stopped run on, at the repair limit too, ends it with `handover --by human --answer`. A stop after two repairs stays final for the run, not for the task: no `resume` and no new `start` reopen it, and the work the person takes on goes on without autopilot and without a repair count. The run is not switched to attended, the alternative rejected above: it ends, its mode and repair count stay as recorded, and no run starts after it (adr-20261108-a-person-takes-over-a-stopped-run).
+
+> **Amendment (2026-11-14).** The person's answer may be recorded first, with `jig task autopilot <id> answer --answer <text> --by human` under the same refusals, and the run resumed later by whoever has a free slot with `resume` and no `--answer`, which needs no `--by human`: the person's form already wrote the answer. The repair count is preserved as before (adr-20261114-a-waiting-run-holds-no-slot).

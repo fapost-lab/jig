@@ -99,3 +99,8 @@ findings and receipt gates refuse to finish a task that is not reviewed as it st
 > ordering of its own (adr-20261022-the-next-task-is-advised-from-the-queue).
 
 > **Amendment (2026-11-08).** A `stopped` run may also end in `jig task autopilot <id> handover --by human --answer <text>`: a person takes the task over, the run is `done`, `autopilot_handover` is recorded and `start` is refused from then on. The repair limit is unchanged (adr-20261108-a-person-takes-over-a-stopped-run).
+
+> **Amendment (2026-11-14).** A stop no longer holds a run over a set: a `stopped` run holds no slot
+> of `autopilot.parallel`, the next task starts, and the person's answer may be recorded from any
+> session with `jig task autopilot <id> answer`; the run resumes on the next free slot, before any new
+> task, with `resume` (adr-20261114-a-waiting-run-holds-no-slot).
